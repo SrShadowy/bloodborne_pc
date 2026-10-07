@@ -11,7 +11,8 @@ During our pair-programming sessions, we tackled several critical hurdles preven
 2. **Inverted Reflection Artifacts:** Fixed planar reflection projections where upside-down buildings and geometry were drawn in the skybox when SSR was active.
 3. **Vertex Explosions & Geometry Glitches:** Solved severe facial and cutscene vertex distortions during animation / Havok worker passes by enforcing strict memory barrier readbacks and object motion isolation.
 4. **Modular Architecture for Internationalization (i18n):** Refactored the monolithic, hardcoded in-game ImGui overlay into a clean, decoupled string catalog system supporting **English**, **Portuguese (Brazil)**, and **Russian**.
-5. **Startup Black Screen Freeze:** Diagnosed and fixed the intermitent hang at 62 FPS on boot caused by AvPlayer's video stream races, double-indexing bugs, and unskipped intro cutscenes.
+5. **Startup Black Screen Freeze:** Diagnosed and fixed the intermittent hang at 62 FPS on boot caused by AvPlayer's video stream races, double-indexing bugs, and unskipped intro cutscenes.
+6. **In-Game Reverse Engineering Suite:** Implemented a full native memory scanner, interactive watchlist with live freezing, write watchpoint hit counter, and x86-64 disassembler with reversible NOP patching.
 
 ---
 
@@ -26,17 +27,17 @@ On PC Vulkan via shadPS4:
 3. The inverted camera draws also contaminated the camera motion depth buffer whenever `gbuffer_draw` misclassified the pass as the main camera.
 
 ### Changes Implemented
-- **Dynamic Draw Call Filtering ([`gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp)):**
+- **Dynamic Draw Call Filtering (`gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp`):**
   - Integrated `regs.clipper_control.user_clip_plane_enable != 0` check into `Rasterizer::FilterDraw()` and `Rasterizer::FilterDrawPasses()`.
   - When `puddle_reflections` is disabled (the new default), any draw call utilizing user clip planes is discarded prior to pipeline binding or draw pipe submission.
   - Guarded `gbuffer_draw` in `PrepareRenderState()` with `Regs().clipper_control.user_clip_plane_enable == 0` so inverted passes never overwrite the main camera depth or motion vectors.
 - **Real-Time Setting & Persistence:**
-  - Added `std::atomic<bool> puddle_reflections{false}` to `BbSettings` ([`gpu/shim/bbport_settings.h`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_settings.h)).
+  - Added `std::atomic<bool> puddle_reflections{false}` to `BbSettings` (`gpu/shim/bbport_settings.h`).
   - Persisted as `puddle_reflections=0` in `bbport.ini`.
-  - Added an interactive checkbox under **Section Game Effects** in [`gpu/shim/bbport_overlay.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_overlay.cpp).
+  - Added an interactive checkbox under **Section Game Effects** in `gpu/shim/bbport_overlay.cpp`.
   - Operates dynamically in real time without requiring a restart!
 - **Internationalization:**
-  - Added localized strings in [`gpu/shim/bbport_strings.h`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_strings.h) and [`gpu/shim/bbport_strings.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_strings.cpp):
+  - Added localized strings in `gpu/shim/bbport_strings.h` and `gpu/shim/bbport_strings.cpp`:
     - EN: *"Water Puddle Reflections"* — *"Disabled: fixes inverted buildings, flickering and streaks in the sky. Enabled: renders the game's planar reflections."*
     - PT-BR: *"Reflexos em Poças d'Água"* — *"Desativado: remove prédios invertidos, falhas e faixas no céu. Ativado: renderiza os reflexos planares originais."*
     - RU: *"Отражения в лужах"* — *"Выключено: убирает перевёрнутые здания и полосы на небе. Включено: исходные плоские отражения."*
@@ -65,29 +66,29 @@ In Bloodborne cutscenes and character close-ups, dynamic geometry (e.g., hair, f
 ## 4. Full Modular Internationalization (i18n) & Code Hygiene
 
 ### Problem Statement
-The in-game configuration overlay ([`gpu/shim/bbport_overlay.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_overlay.cpp)) contained thousands of lines of monolithic, hardcoded Russian strings embedded directly within ImGui widget calls. This made adding new languages unwieldy, bloated function size, and degraded maintainability.
+The in-game configuration overlay (`gpu/shim/bbport_overlay.cpp`) contained thousands of lines of monolithic, hardcoded Russian strings embedded directly within ImGui widget calls. This made adding new languages unwieldy, bloated function size, and degraded maintainability.
 
 ### Architecture & Modular Design
 We introduced a clean, type-safe localization subsystem:
 
-1. **[`gpu/shim/bbport_strings.h`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_strings.h) [NEW]:**
+1. **`gpu/shim/bbport_strings.h` [NEW]:**
    - Declared enum `StringId` with 65+ discrete identifiers covering all menu titles, section headers, hints, control names, and notifications.
    - Declared `Get(StringId id, int lang)` and `EffectLabel(int effect_index, int lang)`.
    - Provided shorthand inline macro `S(id)` resolving dynamically against `BbSettings::Values::menu_language`.
 
-2. **[`gpu/shim/bbport_strings.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_strings.cpp) [NEW]:**
+2. **`gpu/shim/bbport_strings.cpp` [NEW]:**
    - Implemented a structured `TextGroup` table with parallel columns for:
      - **English (`en`)**
      - **Portuguese - Brazil (`pt_br`)**
      - **Russian (`ru`)**
    - Implemented localized labels for all 10 engine effect patches: Chromatic Aberration, DoF, Motion Blur, SSAO, Native AA, Dynamic Light Shadows, SSR, Skip Intro, Free Camera, and Debug Menu.
 
-3. **[`gpu/shim/bbport_settings.h`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_settings.h) & [`gpu/shim/bbport_settings.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_settings.cpp):**
+3. **`gpu/shim/bbport_settings.h` & `gpu/shim/bbport_settings.cpp`:**
    - Added `enum Language { LangEnglish = 0, LangPortuguese = 1, LangRussian = 2, LangCount = 3 }`.
    - Added `menu_language` property to `BbSettings::Values` with persistence in `bbport.ini`.
    - Exposed helper functions `LanguageCode(int)` and `LanguageName(int)`.
 
-4. **[`gpu/shim/bbport_overlay.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_overlay.cpp) Refactoring:**
+4. **`gpu/shim/bbport_overlay.cpp` Refactoring:**
    - Stripped away hundreds of lines of duplicated inline string definitions.
    - Replaced verbose UI blocks with elegant, single-line calls:
      ```cpp
@@ -98,7 +99,7 @@ We introduced a clean, type-safe localization subsystem:
    - Added an interactive **Language Selector Combo** (`English`, `Português (Brasil)`, `Русский`) at the top of the menu with instant live switching without restart.
 
 5. **Build System Updates:**
-   - Updated [`gpu/CMakeLists.txt`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/CMakeLists.txt) to include `shim/bbport_strings.cpp` in both `libbbgpu` and the unit test executables (`upscaler-support-test`, `motion-history-test`, `ui-composition-test`).
+   - Updated `gpu/CMakeLists.txt` to include `shim/bbport_strings.cpp` in both `libbbgpu` and the unit test executables (`upscaler-support-test`, `motion-history-test`, `ui-composition-test`).
 
 ---
 
@@ -115,7 +116,7 @@ Runtime: gamepad connected: Xbox 360 Controller
 1. **Unstable Video Playback on Boot:**
    When `skip_intro=0`, Bloodborne initializes `AvPlayer` to stream opening videos (SCE logo, FromSoftware logo, and `dvdroot_ps4/movie/sprj_opening.mp4`, a 40.68-second video).
 2. **Severe Stream Double-Indexing Bug in AvPlayer:**
-   In [`gpu/shadps4/core/libraries/avplayer/avplayer_source.cpp`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shadps4/core/libraries/avplayer/avplayer_source.cpp):
+   In `gpu/shadps4/core/libraries/avplayer/avplayer_source.cpp`:
    - `EnableStream(stream_index)` resolved `m_streams[stream_index].ffmpeg_index` and stored it in `m_video_stream_index` and `m_audio_stream_index`.
    - Throughout `Start()`, `DurationMillis()`, `DemuxerThread()`, `PrepareVideoFrame()`, and `PrepareAudioFrame()`, the code was re-indexing:
      ```cpp
@@ -132,9 +133,9 @@ Runtime: gamepad connected: Xbox 360 Controller
 
 ### Solutions Applied
 1. **Default `skip_intro=1`:**
-   - Updated `skip_intro=1` in [`bbport.ini`](file:///home/shadowy/Documentos/GitHub/BBPort/bbport.ini) and `~/.local/share/bbport/bbport.ini`.
-   - Changed default in [`launcher/bbport_launcher.py`](file:///home/shadowy/Documentos/GitHub/BBPort/launcher/bbport_launcher.py) and [`gpu/shim/bbport_settings.h`](file:///home/shadowy/Documentos/GitHub/BBPort/gpu/shim/bbport_settings.h) from `False` to `True`.
-   - Regenerated [`out/patches.bin`](file:///home/shadowy/Documentos/GitHub/BBPort/out/patches.bin) with `Skip Intro` applied (`0x04d99138`, `0x04d99154`, `0x04d9916e` set to `0`), allowing the game to bypass intro movie initialization entirely and boot directly into the main menu in ~1.5 seconds.
+   - Updated `skip_intro=1` in `bbport.ini` and `~/.local/share/bbport/bbport.ini`.
+   - Changed default in `launcher/bbport_launcher.py` and `gpu/shim/bbport_settings.h` from `False` to `True`.
+   - Regenerated `out/patches.bin` with `Skip Intro` applied (`0x04d99138`, `0x04d99154`, `0x04d9916e` set to `0`), allowing the game to bypass intro movie initialization entirely and boot directly into the main menu in ~1.5 seconds.
 2. **Fixed `AvPlayerSource` Stream Indexing:**
    - Eliminated all double-indexing accesses across `Start()`, `DurationMillis()`, `DemuxerThread()`, `PrepareVideoFrame()`, and `PrepareAudioFrame()`.
    - Direct stream indexing now safely reads `m_avformat_context->streams[index]`.
@@ -177,63 +178,36 @@ To access the in-game overlay menu during gameplay:
 
 ---
 
-## 8. Sky Streaks Investigation & Post-Processing Isolation (Test A)
+## 8. Sky Streaks Investigation: Diagnostic Trials & Attempted Solutions
 
-### Diagnostic Findings
-- The presence of streaks in the Hunter's Dream confirmed the issue was distinct from puddle planar reflections.
-- Morphological analysis of user captures revealed strict raster scanline horizontal lines (rows 14, 66/67, 88/89) on the top-left and vertical bands on the right.
-- This pattern matches a 2D separable post-processing pass (X-axis horizontal blur followed by Y-axis vertical blur) sampling invalid depth or border pixels.
+During the investigation of horizontal raster scanline artifacts across the upper sky dome and vertical bands on the right side of the screen, several preliminary hypotheses were tested:
 
-### Actions Applied for Test A
-- Generated patched binary `out/patches.bin` disabling:
-  - Depth of Field (`Disable DoF`)
-  - Motion Blur (`Disable Motion Blur`)
-  - Screen Space Ambient Occlusion (`Disable SSAO`)
-  - Dynamic Light Shadows (`Disable Dynamic Light Shadows`)
-  - Chromatic Aberration (`Disable Chromatic Aberration`)
-- Both local and user configuration files (`bbport.ini` and `~/.local/share/bbport/bbport.ini`) updated and synchronized.
+### Tentativa 1: Post-Processing Shader Isolation (Test A)
+- **Hypothesis:** One or more screen-space post-processing shaders were sampling out-of-bounds depth pixels at the viewport perimeter.
+- **Diagnostic Action:** Generated an experimental binary patch disabling five post-processing passes simultaneously: Depth of Field (`Disable DoF`), Motion Blur (`Disable Motion Blur`), Screen Space Ambient Occlusion (`Disable SSAO`), Dynamic Light Shadows, and Chromatic Aberration.
+- **Outcome:** The sky streaks disappeared, confirming that post-processing was the responsible subsystem. However, disabling all post-processing severely degraded image quality, proving that wholesale shader disabling was merely an isolation test rather than a viable permanent fix.
 
----
-
-## 9. AMD RDNA 4 (RX 9070 XT / GFX1201) Driver & HiZ Mitigation (Test B)
-
-### Root Cause
-The AMD Radeon RX 9070 XT is based on the latest RDNA 4 (GFX1201) architecture. In the open-source Mesa RADV Vulkan driver (Mesa 26-devel), RDNA 4 uses an overhauled **HiZ (Hierarchical Z-buffer)** and **DCC (Delta Color Compression)** pipeline.
-
-Under complex rendering workloads in shadPS4 where the camera looks directly at the sky (depth $\approx 1.0$), depth and color tile metadata become out of sync between compute and graphics passes. This results in:
-1. Horizontal raster scanline artifacts across the upper viewport.
-2. Vertical banding where hierarchical depth blocks fail compression.
-3. Implicit Vulkan layer warnings/conflicts from third-party tools (`liblsfg-vk-layer.so`).
-
-### Changes Implemented ([`run.sh`](file:///home/shadowy/Documentos/GitHub/BBPort/run.sh))
-Integrated targeted driver flags directly into the startup pipeline so both terminal and GUI launcher executions inherit them:
-```bash
-# AMD RDNA 4 (GFX1201 / RX 9070 XT) driver fixes & VRAM cleanliness (Test B)
-export radv_gfx12_hiz_wa=${radv_gfx12_hiz_wa:-full}
-export RADV_DEBUG=${RADV_DEBUG:-zerovram,nodcc}
-export DISABLE_LSFGVK=${DISABLE_LSFGVK:-1}
-export VK_LOADER_LAYERS_DISABLE=${VK_LOADER_LAYERS_DISABLE:-*lsfg*}
-```
-
-- **`radv_gfx12_hiz_wa=full`**: Activates Mesa's official hardware HiZ workaround specifically designed for GFX1201, stabilizing depth buffer metadata and preventing depth-test clipping artifacts.
-- **`RADV_DEBUG=zerovram,nodcc`**: Zero-initializes all newly allocated VRAM pages (preventing stale memory streaks) and disables Delta Color Compression to avoid tiled texture corruption.
-- **`VK_LOADER_LAYERS_DISABLE=*lsfg*`**: Suppresses the broken Lossless Scaling implicit layer from crashing `vkGetInstanceProcAddr`.
-
-### Verification
-- Boot confirmed in 8.1s direct to title screen with active audio and presentation.
-- All unit tests (`build.sh --test`, `upscaler-support-test`, `motion-history-test`, `ui-composition-test`) pass 100%.
+### Tentativa 2: AMD RDNA 4 (RX 9070 XT / GFX1201) Driver & HiZ Mitigation (Test B)
+- **Hypothesis:** Because the development machine utilized an AMD Radeon RX 9070 XT (RDNA 4 architecture, GFX1201) running Mesa RADV 26-devel, new HiZ (Hierarchical Depth) and DCC (Delta Color Compression) metadata handling were suspected of becoming unsynchronized when rendering distant sky geometry ($Z \approx 1.0$).
+- **Diagnostic Action:** Evaluated experimental driver mitigation variables in the launch environment:
+  ```bash
+  export radv_gfx12_hiz_wa=full
+  export RADV_DEBUG=zerovram,nodcc
+  export DISABLE_LSFGVK=1
+  export VK_LOADER_LAYERS_DISABLE=*lsfg*
+  ```
+- **Outcome:** While these environment flags helped identify implicit Vulkan layer conflicts (`liblsfg-vk-layer.so`) and confirmed memory cleanliness, the sky artifacts persisted, definitively demonstrating that the root cause was not an RDNA 4 driver bug, but game engine logic within a specific shader pass.
 
 ---
 
-## 10. Definitive Resolution: Motion Blur & Velocity Map (Velomap) Artifacts in the Sky
+## 9. Definitive Resolution: Motion Blur & Velocity Map (Velomap) Artifacts in the Sky
 
 ### The Discovery
-Through systematic isolation of individual post-processing shaders, the horizontal lines across the top-left sky dome (raster scanlines at rows 14, 66/67, 88/89) and vertical bands on the right were definitively identified as an artifact of **Motion Blur (`effect_motion_blur`)**.
+By testing each post-processing shader individually, the horizontal scanlines (rows 14, 66/67, 88/89) and vertical bands were isolated specifically to **Motion Blur (`effect_motion_blur`)**.
 
 ### Detailed Technical Breakdown
-
 1. **The Motion Blur Architecture in Bloodborne:**
-   The PlayStation 4 GNM engine in Bloodborne processes motion blur across three phases:
+   The PlayStation 4 GNM engine processes motion blur across three phases:
    - **Velocity Map (`velomap`) Generation:** Renders per-pixel motion vectors calculated from current and previous camera/world transforms.
    - **Tile-Max Velocity Filter:** Executes a 2D separable reduction (horizontal pass followed by vertical pass) downscaling velocity data into coarse tiles to find the maximum motion vector in neighboring regions.
    - **Reconstruction Gathering Pass:** Gathers multiple screen color samples along the velocity vector directed by the tile-max map to blur fast-moving pixels.
@@ -246,7 +220,7 @@ Through systematic isolation of individual post-processing shaders, the horizont
      - The **vertical pass** smears tile errors down column boundaries, producing the vertical bands along the right side of the screen.
 
 3. **Engine-Level Fix via Community Binary Patch:**
-   - Instead of running an unstable shader pass, the port disables the motion blur constructor:
+   - Instead of running an unstable shader pass or relying on external driver overrides, the port disables the motion blur constructor:
      ```xml
      <Metadata Title="Bloodborne" Name="Disable Motion Blur (perf increase)"
                Note="Disable Motion Blur constructor, which also disables the velomap render, performance increase."
@@ -274,13 +248,13 @@ Through systematic isolation of individual post-processing shaders, the horizont
 
 ---
 
-## 11. Modular In-Game Memory Scanner & Interactive Watchlist
+## 10. Modular In-Game Memory Scanner & Interactive Watchlist
 
 ### Problem & Objective
 Reverse-engineering game logic (e.g., player parameters, camera structs, cutscene flags, animation states) previously required external attach tools that often conflict with Proton/Wine or Linux memory permissions. We integrated a native, Cheat Engine-grade memory scanner and watchlist subsystem directly into the in-game Vulkan overlay.
 
 ### Architectural Implementation
-1. **Asynchronous Memory Scanner Engine ([`debugger/mem_scanner.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_scanner.h), [`debugger/mem_scanner.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_scanner.cpp), [`ui/tab_scanner.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_scanner.cpp)):**
+1. **Asynchronous Memory Scanner Engine (`debugger/mem_scanner.h`, `debugger/mem_scanner.cpp`, `ui/tab_scanner.cpp`):**
    - **Type Support:** Decodes and scans 10 data types: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `Float` (single precision), and `Double` (double precision).
    - **Scan Comparisons:** `Exact Value`, `Changed`, `Unchanged`, `Increased`, and `Decreased`.
    - **Scan Scopes:**
@@ -291,7 +265,7 @@ Reverse-engineering game logic (e.g., player parameters, camera structs, cutscen
    - **Atomic Cancellation & Progress:** Features `cancel_requested` atomic flag and live percentage progress bar (`GetProgress()`).
    - **Ergonomics:** Pressing <kbd>Enter</kbd> in the value input automatically initiates or refines the scan.
 
-2. **Interactive Watchlist ([`debugger/mem_editor.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_editor.h), [`debugger/mem_editor.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_editor.cpp), [`ui/tab_watchlist.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_watchlist.cpp)):**
+2. **Interactive Watchlist (`debugger/mem_editor.h`, `debugger/mem_editor.cpp`, `ui/tab_watchlist.cpp`):**
    - **Interactive Type Dropdown:** Directly switch between integer/floating-point interpretations in each row without deleting or recreating entries.
    - **Fast Row Deletion:** Quick-access `[ X ]` button positioned at the front of each row.
    - **Live Value Freezing:** 60Hz background freeze thread (`FreezeThread()`) rewrites pinned memory addresses every 16ms.
@@ -300,12 +274,12 @@ Reverse-engineering game logic (e.g., player parameters, camera structs, cutscen
 
 ---
 
-## 12. Real-Time Debugger, x86-64 Disassembler, CPU State, & NOP Patching
+## 11. Real-Time Debugger, x86-64 Disassembler, CPU State, & NOP Patching
 
 ### Objective
 Provide developers and modders with real-time insight into which assembly instructions access or modify game memory (Cheat Engine's "Find what writes to this address" equivalent) natively on Linux.
 
-### Key Capabilities ([`debugger/breakpoint.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/breakpoint.h), [`debugger/breakpoint.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/breakpoint.cpp), [`ui/tab_debugger.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_debugger.cpp))
+### Key Capabilities (`debugger/breakpoint.h`, `debugger/breakpoint.cpp`, `ui/tab_debugger.cpp`)
 
 1. **Hardware / Page-Level Write Watchpoints:**
    - Installs memory write protection via `mprotect(PROT_READ)` on the target page.
@@ -332,9 +306,9 @@ Provide developers and modders with real-time insight into which assembly instru
 
 ---
 
-## 13. Memory Hex Inspector & Multi-Type Data Inspector
+## 12. Memory Hex Inspector & Multi-Type Data Inspector
 
-### Implementation ([`ui/tab_hexview.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_hexview.h), [`ui/tab_hexview.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_hexview.cpp))
+### Implementation (`ui/tab_hexview.h`, `ui/tab_hexview.cpp`)
 1. **16-Byte Aligned Hex Grid:**
    - Dual 8-byte hexadecimal columns with full borders and a jitter-free 145px ASCII representation column.
    - Web browser-style history navigation (`<` Back / `>` Forward), address step offsets (`-4K`, `-256B`, `+256B`, `+4K`), and quick jump presets (`eboot.bin Base`, `Main Game Code`, `Globals & Params`, `PS4 Direct Heap`).
@@ -347,9 +321,9 @@ Provide developers and modders with real-time insight into which assembly instru
 
 ---
 
-## 14. Comprehensive UX/UI Modernization, Font Safety & Toasts
+## 13. Comprehensive UX/UI Modernization, Font Safety & Toasts
 
-### Visual Overhaul ([`ui/ui_manager.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/ui_manager.h), [`ui/ui_manager.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/ui_manager.cpp))
+### Visual Overhaul (`ui/ui_manager.h`, `ui/ui_manager.cpp`)
 1. **Deep Slate & Teal Theme (`UiManager::InitStyle()`):**
    - Modern dark slate / graphite palette with subtle borders (`FrameBorderSize = 1.0f`) and rounded corners (`8px` window, `6px` popups/tabs, `5px` buttons/inputs).
    - Window enlarged to `820x580` (proportionally scaled by DPI/screen scale) to accommodate 6–7 column tables without horizontal scrolling or clipping.
@@ -365,5 +339,3 @@ Provide developers and modders with real-time insight into which assembly instru
    - Replaced out-of-range Unicode symbols (`⏸`, `▶`, `●`, `✓`) with clean ASCII text (`Pause Game`, `[OK]`, `[BP]`, `[*]`) to eliminate missing-glyph diamond characters (``) when using the embedded `DejaVuSans.ttf` font.
 6. **Full Trilingual Localization:**
    - All newly added components, tooltips, dialogs, and table headers are completely localized across **English**, **Portuguese (Brazil)**, and **Russian** via `ui_strings.h`.
-
-
