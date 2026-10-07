@@ -67,10 +67,38 @@ static uint8_t trigger(int16_t v) { int x=v>>7; return (uint8_t)(x<0 ? 0 : x>255
 static uint16_t touch_axis(float v, int max) {
     return (uint16_t)(v<=0.0f ? 0 : v>=1.0f ? max : (int)(v*max+0.5f));
 }
+static struct {
+    int side;              /* 0 = left, 1 = right, -1 = none */
+    uint8_t touch_id;      /* tracking ID (1..127) */
+    uint64_t linger_until; /* monotonic timestamp (us) for capacitive touch linger */
+} synthetic_touch = {-1, 1, 0};
+
 static void touch_click(PadData *d, int right) {
     d->buttons|=BTN_TOUCHPAD;
     d->touch_count=1;
-    d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
+    d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=synthetic_touch.touch_id};
+}
+
+static void update_synthetic_touch(PadData *d, int req_left, int req_right) {
+    const uint64_t now = now_us();
+    if (req_right || req_left) {
+        const int side = req_right ? 1 : 0;
+        if (synthetic_touch.side != side || now >= synthetic_touch.linger_until) {
+            synthetic_touch.touch_id = (uint8_t)((synthetic_touch.touch_id % 127) + 1);
+        }
+        synthetic_touch.side = side;
+        synthetic_touch.linger_until = now + 150000; /* 150ms capacitive touch linger */
+        d->buttons |= BTN_TOUCHPAD;
+        d->touch_count = 1;
+        d->touches[0] = (PadTouch){.x = side ? 1440 : 480, .y = 471, .id = synthetic_touch.touch_id};
+    } else if (synthetic_touch.side >= 0 && now < synthetic_touch.linger_until) {
+        /* Physical button/key released: click button clears, but capacitive touch lingers */
+        d->buttons &= ~BTN_TOUCHPAD;
+        d->touch_count = 1;
+        d->touches[0] = (PadTouch){.x = synthetic_touch.side ? 1440 : 480, .y = 471, .id = synthetic_touch.touch_id};
+    } else {
+        synthetic_touch.side = -1;
+    }
 }
 
 /* BB_GAMEPAD (the launcher's controller choice): its SDL GUID, or part of its name. Issue #15:
@@ -107,8 +135,14 @@ static SDL_Gamepad *current_gamepad(void) {
             on_preferred=want && gamepad && is_preferred(ids[pick],want);
             if (gamepad) {
                 ++connected_count;
-                printf("Runtime: gamepad connected: %s%s\n",SDL_GetGamepadName(gamepad),
-                       !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
+                if (SDL_GamepadHasSensor(gamepad, SDL_SENSOR_ACCEL))
+                    SDL_SetGamepadSensorEnabled(gamepad, SDL_SENSOR_ACCEL, true);
+                if (SDL_GamepadHasSensor(gamepad, SDL_SENSOR_GYRO))
+                    SDL_SetGamepadSensorEnabled(gamepad, SDL_SENSOR_GYRO, true);
+                printf("Runtime: gamepad connected: %s%s (gyro: %s, accel: %s)\n",SDL_GetGamepadName(gamepad),
+                       !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)",
+                       SDL_GamepadHasSensor(gamepad, SDL_SENSOR_GYRO) ? "yes" : "no",
+                       SDL_GamepadHasSensor(gamepad, SDL_SENSOR_ACCEL) ? "yes" : "no");
             }
         }
         SDL_free(ids);
@@ -261,15 +295,20 @@ static void sample_host(PadData *d) {
     d->timestamp=now_us();
     SDL_Gamepad *g=current_gamepad();
     if (!bindings_ready) { load_bindings(); bindings_ready=1; }
-    if (bbgpu_overlay_captures_input()) return; /* settings menu open: neutral input */
+    if (bbgpu_overlay_captures_input()) {
+        synthetic_touch.side = -1;
+        synthetic_touch.linger_until = 0;
+        return; /* settings menu open: neutral input */
+    }
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
+    int req_touch_left = 0, req_touch_right = 0;
     if (g) {
-        int touch_right=0;
         for (int i=IN_CROSS;i<=IN_RIGHT;++i) {
             const int v=pad_value(g,i);
             if (i==IN_L2) d->l2=(uint8_t)v;
             if (i==IN_R2) d->r2=(uint8_t)v;
-            if (i==IN_TOUCHPAD_RIGHT) touch_right=v>30;
+            if (i==IN_TOUCHPAD_RIGHT) req_touch_right |= (v>30);
+            else if (i==IN_TOUCHPAD) req_touch_left |= (v>30);
             else if (v>30) d->buttons|=input_buttons[i];
         }
         d->left_x=axis(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFTX)); d->left_y=axis(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFTY));
@@ -285,18 +324,34 @@ static void sample_host(PadData *d) {
                 }
             }
         }
-        // Back/Select on pads without a touch surface is a left-side click.
-        if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
-        if (touch_right) touch_click(d,1);
-        if (k && key_down(k,IN_TOUCHPAD)) touch_click(d,0);
-        if (k && key_down(k,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
+        if (SDL_GamepadSensorEnabled(g, SDL_SENSOR_ACCEL)) {
+            float accel[3] = {0};
+            if (SDL_GetGamepadSensorData(g, SDL_SENSOR_ACCEL, accel, 3)) {
+                d->acceleration[0] = accel[0] / 9.80665f;
+                d->acceleration[1] = accel[1] / 9.80665f;
+                d->acceleration[2] = accel[2] / 9.80665f;
+            }
+        }
+        if (SDL_GamepadSensorEnabled(g, SDL_SENSOR_GYRO)) {
+            float gyro[3] = {0};
+            if (SDL_GetGamepadSensorData(g, SDL_SENSOR_GYRO, gyro, 3)) {
+                d->angular_velocity[0] = gyro[0] * (180.0f / 3.141592653589793f);
+                d->angular_velocity[1] = gyro[1] * (180.0f / 3.141592653589793f);
+                d->angular_velocity[2] = gyro[2] * (180.0f / 3.141592653589793f);
+            }
+        }
+        if (k && key_down(k,IN_TOUCHPAD)) req_touch_left = 1;
+        if (k && key_down(k,IN_TOUCHPAD_RIGHT)) req_touch_right = 1;
+        if (!d->touch_count) update_synthetic_touch(d, req_touch_left, req_touch_right);
+        else if (req_touch_left) d->buttons |= BTN_TOUCHPAD;
         return;
     }
     if (!k) return;
     for (int i=IN_CROSS;i<=IN_RIGHT;++i)
         if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
-    if (key_down(k,IN_TOUCHPAD)) touch_click(d,0);
-    if (key_down(k,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
+    if (key_down(k,IN_TOUCHPAD)) req_touch_left = 1;
+    if (key_down(k,IN_TOUCHPAD_RIGHT)) req_touch_right = 1;
+    update_synthetic_touch(d, req_touch_left, req_touch_right);
     if (d->buttons & BTN_L2) d->l2=255;
     if (d->buttons & BTN_R2) d->r2=255;
     d->left_x=(uint8_t)(128-(key_down(k,IN_MOVE_LEFT) ? 128 : 0)+(key_down(k,IN_MOVE_RIGHT) ? 127 : 0));
@@ -347,6 +402,10 @@ static void read_inject(void) {
         for (int i=0;i<4;++i) if (!strncmp(token,sticks[i],3)) { int v=atoi(token+3); injected.stick[i]=v<0 ? 0 : v>255 ? 255 : v; }
     }
     fclose(f);
+    if (!injected.buttons && injected.touch_side < 0) {
+        synthetic_touch.side = -1;
+        synthetic_touch.linger_until = 0;
+    }
     printf("Runtime: pad file: buttons 0x%x sticks %d %d %d %d\n",injected.buttons,
            injected.stick[0],injected.stick[1],injected.stick[2],injected.stick[3]);
 }

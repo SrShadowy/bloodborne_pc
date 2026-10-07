@@ -49,6 +49,10 @@ int main(void) {
     assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.touch_count==0);
 
     SDL_VirtualJoystickTouchpadDesc touch={.nfingers=2};
+    SDL_VirtualJoystickSensorDesc test_sensors[]={
+        { .type = SDL_SENSOR_ACCEL, .rate = 100.0f },
+        { .type = SDL_SENSOR_GYRO, .rate = 100.0f },
+    };
     SDL_VirtualJoystickDesc desc;
     SDL_INIT_INTERFACE(&desc);
     desc.type=SDL_JOYSTICK_TYPE_GAMEPAD;
@@ -61,6 +65,8 @@ int main(void) {
     desc.product_id=0x6189;
     desc.ntouchpads=1;
     desc.touchpads=&touch;
+    desc.nsensors=2;
+    desc.sensors=test_sensors;
     SDL_JoystickID id=SDL_AttachVirtualJoystick(&desc);
     assert(id!=0);
     SDL_Joystick *joystick=SDL_OpenJoystick(id);
@@ -92,6 +98,15 @@ int main(void) {
     assert(data.buttons==(BTN_CROSS|BTN_R2|BTN_R1) && data.r2==255);
     assert(bindings[IN_CROSS].key_count==2 && bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X &&
            bindings[IN_CROSS].keys[1]==SDL_SCANCODE_SPACE);
+    float t_accel[3]={0.0f, 9.80665f, 0.0f};
+    float t_gyro[3]={0.0f, 3.141592653589793f, 0.0f};
+    assert(SDL_SendJoystickVirtualSensorData(joystick,SDL_SENSOR_ACCEL,now_us()*1000,t_accel,3));
+    assert(SDL_SendJoystickVirtualSensorData(joystick,SDL_SENSOR_GYRO,now_us()*1000,t_gyro,3));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    assert(pad_read_state(1,&data)==0);
+    assert(data.acceleration[1]>0.99f && data.acceleration[1]<1.01f);
+    assert(data.angular_velocity[1]>179.0f && data.angular_velocity[1]<181.0f);
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;
