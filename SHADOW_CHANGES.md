@@ -272,3 +272,98 @@ Through systematic isolation of individual post-processing shaders, the horizont
 - **Enhanced Framerate & Pacing:** Eliminating the fullscreen velomap and tile-max passes saves hundreds of microseconds per frame, improving frame times and high-refresh-rate stability.
 - **Sharp Image Quality:** Eliminates undesirable camera smearing during high-FPS gameplay while retaining all other atmospheric post-processing effects.
 
+---
+
+## 11. Modular In-Game Memory Scanner & Interactive Watchlist
+
+### Problem & Objective
+Reverse-engineering game logic (e.g., player parameters, camera structs, cutscene flags, animation states) previously required external attach tools that often conflict with Proton/Wine or Linux memory permissions. We integrated a native, Cheat Engine-grade memory scanner and watchlist subsystem directly into the in-game Vulkan overlay.
+
+### Architectural Implementation
+1. **Asynchronous Memory Scanner Engine ([`debugger/mem_scanner.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_scanner.h), [`debugger/mem_scanner.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_scanner.cpp), [`ui/tab_scanner.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_scanner.cpp)):**
+   - **Type Support:** Decodes and scans 10 data types: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`, `Float` (single precision), and `Double` (double precision).
+   - **Scan Comparisons:** `Exact Value`, `Changed`, `Unchanged`, `Increased`, and `Decreased`.
+   - **Scan Scopes:**
+     - `Executable & .data`: Quick scan (<256MB) targeting static offsets and game globals in milliseconds.
+     - `Guest Memory (PS4 Direct Heap)`: Scans direct guest memory mappings starting at `0x1000000000`.
+     - `Full Process`: Scans all readable virtual memory mappings mapped in `/proc/self/maps`.
+   - **Non-Blocking Background Threading:** Scans execute inside a dedicated `std::thread`. UI frame rate remains completely fluid (60+ FPS) while searching gigabytes of memory.
+   - **Atomic Cancellation & Progress:** Features `cancel_requested` atomic flag and live percentage progress bar (`GetProgress()`).
+   - **Ergonomics:** Pressing <kbd>Enter</kbd> in the value input automatically initiates or refines the scan.
+
+2. **Interactive Watchlist ([`debugger/mem_editor.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_editor.h), [`debugger/mem_editor.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/mem_editor.cpp), [`ui/tab_watchlist.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_watchlist.cpp)):**
+   - **Interactive Type Dropdown:** Directly switch between integer/floating-point interpretations in each row without deleting or recreating entries.
+   - **Fast Row Deletion:** Quick-access `[ X ]` button positioned at the front of each row.
+   - **Live Value Freezing:** 60Hz background freeze thread (`FreezeThread()`) rewrites pinned memory addresses every 16ms.
+   - **Manual Addition Bar:** Bottom input bar to quickly add known addresses with custom labels, address strings (`0x...`), and data types.
+   - **Click-to-Copy Address:** Clicking on any address cell immediately copies `0x...` to the clipboard with an instant toast notification.
+
+---
+
+## 12. Real-Time Debugger, x86-64 Disassembler, CPU State, & NOP Patching
+
+### Objective
+Provide developers and modders with real-time insight into which assembly instructions access or modify game memory (Cheat Engine's "Find what writes to this address" equivalent) natively on Linux.
+
+### Key Capabilities ([`debugger/breakpoint.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/breakpoint.h), [`debugger/breakpoint.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/debugger/breakpoint.cpp), [`ui/tab_debugger.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_debugger.cpp))
+
+1. **Hardware / Page-Level Write Watchpoints:**
+   - Installs memory write protection via `mprotect(PROT_READ)` on the target page.
+   - **Lock-Free Signal Handlers:** `SIGSEGV` and `SIGTRAP` handlers catch faulting thread events asynchronously and push raw hit packets (`rip`, `fault_addr`, `tid`, `timestamp`, CPU registers) into a 256-entry lock-free ring buffer without allocating memory or acquiring mutexes.
+   - **Single-Step Recovery:** Temporarily grants `PROT_WRITE`, arms CPU trap flag (`RFLAGS.TF = 1`) to execute the faulting instruction, and restores protection upon `SIGTRAP`.
+   - **Dedicated Background Worker:** Worker thread polls the ring buffer, decodes instructions via Zydis, and updates live telemetry.
+   - **Unique RIP Aggregation with Live Hit Counter:** Groups events by unique instruction pointer and tracks real-time frequency in a sortable `Count` column (e.g. `1 x`, `24 x` in golden yellow).
+
+2. **Interactive Live x86-64 Disassembler:**
+   - Reads 256-byte code chunks at target instruction addresses and decodes them via `Zydis` (`Common::Decoder`).
+   - Dynamic jump/call instruction highlighting in vibrant cyan (`call`, `jbe`, `jle`, `jmp`).
+   - Active Hit RIP highlighted with an amber row background to immediately isolate the faulting instruction.
+   - Address navigation controls: manual hex input, `[Go]`, `[Jump to RIP]`, `-32B`, and `+32B`.
+
+3. **Dynamic Instruction NOP Patching & Instant Undo:**
+   - **One-Click NOP (`[NOP]`):** Replaces the instruction's exact opcode byte length with `0x90` NOP bytes.
+   - **Reversible Byte Backup:** Automatically saves original opcode bytes in an internal map (`patched_instructions`).
+   - **Dynamic Restore Button (`[Restore]` / `[Restaurar]`):** Changes button color to emerald green and restores original bytes with one click without needing to restart the game.
+
+4. **Live CPU Register Snapshot Panel:**
+   - Captures and displays 64-bit general-purpose registers (`RAX`, `RBX`, `RCX`, `RDX`, `RSI`, `RDI`, `RBP`, `RSP`, `R8`–`R15`, `RIP`, `RFLAGS`).
+   - **`[Copy Regs]` Toolbar Button:** Formats full register state into a multi-line string and copies it directly to the clipboard.
+   - **Snapshot Navigation:** Toggle between inspect snapshot of a selected hit row and viewing latest live state.
+
+---
+
+## 13. Memory Hex Inspector & Multi-Type Data Inspector
+
+### Implementation ([`ui/tab_hexview.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_hexview.h), [`ui/tab_hexview.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/tab_hexview.cpp))
+1. **16-Byte Aligned Hex Grid:**
+   - Dual 8-byte hexadecimal columns with full borders and a jitter-free 145px ASCII representation column.
+   - Web browser-style history navigation (`<` Back / `>` Forward), address step offsets (`-4K`, `-256B`, `+256B`, `+4K`), and quick jump presets (`eboot.bin Base`, `Main Game Code`, `Globals & Params`, `PS4 Direct Heap`).
+2. **Real-Time Data Inspector Card:**
+   - Live multi-type decoding of the currently selected address into `u8`, `u16`, `u32`, `i32`, `Float`, and `Double` simultaneously.
+   - Direct memory write bar with interactive data type selector.
+   - Quick action buttons: `[Write]`, `[+ Watchlist]`, and `[Who Writes?]`.
+3. **Context Menu (Right-Click):**
+   - Copy address, copy 16-byte raw hex string, copy ASCII text, add to watchlist, or attach write watchpoint.
+
+---
+
+## 14. Comprehensive UX/UI Modernization, Font Safety & Toasts
+
+### Visual Overhaul ([`ui/ui_manager.h`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/ui_manager.h), [`ui/ui_manager.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/ui/ui_manager.cpp))
+1. **Deep Slate & Teal Theme (`UiManager::InitStyle()`):**
+   - Modern dark slate / graphite palette with subtle borders (`FrameBorderSize = 1.0f`) and rounded corners (`8px` window, `6px` popups/tabs, `5px` buttons/inputs).
+   - Window enlarged to `820x580` (proportionally scaled by DPI/screen scale) to accommodate 6–7 column tables without horizontal scrolling or clipping.
+2. **Toast Status Notification Bar:**
+   - Non-intrusive bottom notification bar (`UiManager::SetStatus`) rendering auto-fading (3.5s) status alerts for copied addresses, saved entries, written memory, or restored patches.
+3. **Dynamic Tab Badges with Static ImGui IDs:**
+   - Tabs display live status: `Scanner (45%)###ScannerTab`, `Watchlist (3)###WatchlistTab`, and `Debugger (*)###DebuggerTab`.
+   - Utilizes `###StaticID` to prevent ImGui from resetting active tab selection when numbers update.
+4. **Seamless Cross-Tab 1-Click Navigation (`UiManager::RequestTab(TabId)`):**
+   - Click `[Hex]` in Scanner or Watchlist $\to$ instantly navigates Hex Inspector to that address and switches tabs.
+   - Click `[Who Writes?]` in Scanner, Watchlist, or Hex Inspector $\to$ attaches write watchpoint and switches to Debugger.
+5. **Zero-Glitch Font Safety:**
+   - Replaced out-of-range Unicode symbols (`⏸`, `▶`, `●`, `✓`) with clean ASCII text (`Pause Game`, `[OK]`, `[BP]`, `[*]`) to eliminate missing-glyph diamond characters (``) when using the embedded `DejaVuSans.ttf` font.
+6. **Full Trilingual Localization:**
+   - All newly added components, tooltips, dialogs, and table headers are completely localized across **English**, **Portuguese (Brazil)**, and **Russian** via `ui_strings.h`.
+
+
