@@ -17,6 +17,7 @@ inline bool IsFsr4(int upscaler) {
 }
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
+enum Language : int { LangEnglish = 0, LangPortuguese = 1, LangRussian = 2, LangCount = 3 };
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
@@ -28,12 +29,12 @@ struct Effect {
 inline constexpr Effect Effects[] = {
     {"effect_chromatic_aberration", "Хроматическая аберрация", true},
     {"effect_dof", "Глубина резкости (DoF)", true},
-    {"effect_motion_blur", "Размытие в движении", true},
+    {"effect_motion_blur", "Размытие в движении", false},
     {"effect_ssao", "Затенение SSAO", true},
     {"effect_game_aa", "Собственное сглаживание игры", true},
     {"effect_dynamic_shadows", "Тени от динамических источников", true},
     {"effect_ssr", "Отражения SSR (не было в игре)", false},
-    {"skip_intro", "Пропуск заставок при запуске", false},
+    {"skip_intro", "Пропуск заставок при запуске", true},
     {"debug_camera", "Свободная камера (Cross + L3)", false},
     {"debug_menu", "Debug menu (нужны файлы шрифтов)", false},
 };
@@ -60,6 +61,7 @@ struct Values {
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
     std::atomic<bool> fsr4_invert_jitter{false};
+    std::atomic<bool> puddle_reflections{false};
     std::atomic<int> active_render_width{1920}, active_render_height{1080};
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
@@ -68,6 +70,7 @@ struct Values {
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
     std::atomic<int> live_resolution{0};
+    std::atomic<int> menu_language{LangPortuguese};
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
@@ -99,5 +102,8 @@ void Save();
 float PresetScale(int preset);
 const char* PresetName(int preset);
 const char* UpscalerName(int upscaler);
+const char* LanguageCode(int lang);
+const char* LanguageName(int lang);
+const char* EffectLabel(int effect_index, int lang);
 
 } // namespace BbSettings

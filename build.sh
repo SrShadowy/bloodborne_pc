@@ -21,6 +21,12 @@ if ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3 && co
 fi
 read -r -a includes <<< "$(pkg-config --cflags vulkan sdl3)"
 read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3)"
+if [[ -d "$HOME/.local/include" ]]; then
+    includes+=("-I$HOME/.local/include")
+fi
+if [[ -d "$HOME/.local/lib" ]]; then
+    libraries+=("-L$HOME/.local/lib" "-Wl,-rpath,$HOME/.local/lib")
+fi
 # GPU library (shadPS4 video core + drivers), built by CMake into out/gpu/libbbgpu.so.
 # BB_PGO: generate (instrumented build that writes pgo/ while the game runs), use, off.
 # Default: use the profile in pgo/ when there is one. BB_LTO=OFF disables link-time optimization.

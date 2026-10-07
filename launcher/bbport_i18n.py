@@ -176,6 +176,8 @@ EN = {
     "Стабильнее, но медленнее": "More stable, but slower",
     "Чтение данных GPU процессором": "GPU data readbacks by the CPU",
     "По умолчанию": "Default",
+    "Быстрее, но лица могут искажаться": "Faster, but faces may glitch",
+    "Экспериментально; может зависать при запуске": "Experimental; may freeze at startup",
     "Фоновая загрузка в видеопамять": "Background pre-upload into VRAM",
     "Меньше рывков при подгрузке зон": "Fewer hitches when areas stream in",
     "Обычная": "Normal",

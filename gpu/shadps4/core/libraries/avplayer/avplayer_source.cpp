@@ -239,9 +239,9 @@ bool AvPlayerSource::Start() {
         return false;
     }
     if (m_video_stream_index) {
-        const auto stream_index = m_streams[m_video_stream_index.value()].ffmpeg_index;
+        const auto stream_index = m_video_stream_index.value();
         const auto stream = m_avformat_context->streams[stream_index];
-        avformat_seek_file(m_avformat_context.get(), m_video_stream_index.value(), 0, 0,
+        avformat_seek_file(m_avformat_context.get(), stream_index, 0, 0,
                            stream->duration, 0);
         const auto decoder = avcodec_find_decoder(stream->codecpar->codec_id);
         if (decoder == nullptr) {
@@ -267,9 +267,9 @@ bool AvPlayerSource::Start() {
         }
     }
     if (m_audio_stream_index) {
-        const auto stream_index = m_streams[m_audio_stream_index.value()].ffmpeg_index;
+        const auto stream_index = m_audio_stream_index.value();
         const auto stream = m_avformat_context->streams[stream_index];
-        avformat_seek_file(m_avformat_context.get(), m_audio_stream_index.value(), 0, 0,
+        avformat_seek_file(m_avformat_context.get(), stream_index, 0, 0,
                            stream->duration, 0);
         const auto decoder = avcodec_find_decoder(stream->codecpar->codec_id);
         if (decoder == nullptr) {
@@ -436,8 +436,8 @@ u64 AvPlayerSource::DurationMillis() const {
         if (stream_index.value() < 0) {
             return;
         }
-        const auto index = m_streams[stream_index.value()].ffmpeg_index;
-        if (index >= m_streams.size()) {
+        const auto index = stream_index.value();
+        if (index >= (s32)m_avformat_context->nb_streams) {
             return;
         }
         const auto stream = m_avformat_context->streams[index];
@@ -493,8 +493,13 @@ u64 AvPlayerSource::CurrentTime() {
 }
 
 bool AvPlayerSource::IsActive() {
-    return !m_is_eof || m_audio_packets.Size() != 0 || m_video_packets.Size() != 0 ||
-           m_video_frames.Size() != 0 || m_audio_frames.Size() != 0;
+    if (!m_is_eof) {
+        return true;
+    }
+    if (m_video_stream_index) {
+        return m_video_packets.Size() != 0 || m_video_frames.Size() != 0;
+    }
+    return m_audio_packets.Size() != 0 || m_audio_frames.Size() != 0;
 }
 
 void AvPlayerSource::ReleaseAVPacket(AVPacket* packet) {
@@ -558,13 +563,13 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
                     m_state.OnWarning(ORBIS_AVPLAYER_ERROR_WAR_LOOPING_BACK);
                     avio_seek(m_avformat_context->pb, 0, SEEK_SET);
                     if (m_video_stream_index.has_value()) {
-                        const auto index = m_streams[m_video_stream_index.value()].ffmpeg_index;
+                        const auto index = m_video_stream_index.value();
                         const auto stream = m_avformat_context->streams[index];
                         avformat_seek_file(m_avformat_context.get(), index, 0, 0, stream->duration,
                                            0);
                     }
                     if (m_audio_stream_index.has_value()) {
-                        const auto index = m_streams[m_audio_stream_index.value()].ffmpeg_index;
+                        const auto index = m_audio_stream_index.value();
                         const auto stream = m_avformat_context->streams[index];
                         avformat_seek_file(m_avformat_context.get(), index, 0, 0, stream->duration,
                                            0);
@@ -661,7 +666,7 @@ Frame AvPlayerSource::PrepareVideoFrame(GuestBuffer buffer, const AVFrame& frame
     auto p_buffer = buffer.GetBuffer();
     Videodec::CopyNV12Data(p_buffer, buffer.Size(), frame);
 
-    const auto stream_index = m_streams[m_video_stream_index.value()].ffmpeg_index;
+    const auto stream_index = m_video_stream_index.value();
     const auto stream = m_avformat_context->streams[stream_index];
     const auto timestamp = FrameTimestampMillis(frame, stream->time_base);
 
@@ -798,7 +803,7 @@ Frame AvPlayerSource::PrepareAudioFrame(GuestBuffer buffer, const AVFrame& frame
     const auto size = frame.ch_layout.nb_channels * frame.nb_samples * sizeof(u16);
     std::memcpy(p_buffer, frame.data[0], size);
 
-    const auto stream_index = m_streams[m_audio_stream_index.value()].ffmpeg_index;
+    const auto stream_index = m_audio_stream_index.value();
     const auto stream = m_avformat_context->streams[stream_index];
     const auto timestamp = FrameTimestampMillis(frame, stream->time_base);
 

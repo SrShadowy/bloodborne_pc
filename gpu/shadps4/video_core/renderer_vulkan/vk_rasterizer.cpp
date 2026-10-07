@@ -7,6 +7,7 @@
 #include "bbport_timeline.h"
 #include "bbport_sections.h"
 #include "bbport_toggles.h"
+#include "bbport_settings.h"
 #include "bbport_write_log.h"
 #include "bbport_free_check.h"
 #include "bbport_guest_memory.h"
@@ -387,6 +388,10 @@ bool IsKnownFormat(AmdGpu::DataFormat data_fmt, AmdGpu::NumberFormat num_fmt) {
 
 bool Rasterizer::FilterDraw() {
     const auto& regs = Regs();
+    if (regs.clipper_control.user_clip_plane_enable != 0 &&
+        !BbSettings::Get().puddle_reflections.load(std::memory_order_relaxed)) {
+        return false;
+    }
     if (regs.color_control.mode == AmdGpu::ColorControl::OperationMode::EliminateFastClear) {
         // Clears the render target if FCE is launched before any draws
         EliminateFastClear();
@@ -535,7 +540,8 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     }
     // bbport: the G-buffer pass (5+ color targets) holds the scene depth, and its constants the
     // main camera (shadow passes bind the same layout with the light's camera).
-    gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first;
+    gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first &&
+                   Regs().clipper_control.user_clip_plane_enable == 0;
     if (gbuffer_draw) {
         camera_motion->OnGBufferPass(db_desc.first);
     }
@@ -1217,6 +1223,10 @@ bool Rasterizer::FilterDrawPasses() const {
     // FilterDraw's checks without its side effects: false when it would skip the draw or run
     // a pass of its own (fast clear elimination, resolve, depth/stencil copy).
     const auto& regs = Regs();
+    if (regs.clipper_control.user_clip_plane_enable != 0 &&
+        !BbSettings::Get().puddle_reflections.load(std::memory_order_relaxed)) {
+        return false;
+    }
     using Mode = AmdGpu::ColorControl::OperationMode;
     const auto mode = regs.color_control.mode;
     if (mode == Mode::EliminateFastClear || mode == Mode::FmaskDecompress ||

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_settings.h"
+#include "bbport_strings.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -56,10 +57,20 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
         v.fsr4_invert_jitter = i != 0;
+    } else if (key == "puddle_reflections") {
+        v.puddle_reflections = i != 0;
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
+    } else if (key == "menu_language") {
+        if (value == "en" || value == "english" || value == "0") {
+            v.menu_language = LangEnglish;
+        } else if (value == "pt" || value == "pt_br" || value == "pt-br" || value == "portuguese" || value == "1") {
+            v.menu_language = LangPortuguese;
+        } else if (value == "ru" || value == "russian" || value == "2") {
+            v.menu_language = LangRussian;
+        }
     } else if (key == "output_res") {
         for (int r = 0; r < OutputCount; ++r) {
             if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
@@ -86,6 +97,18 @@ void Load() {
     auto& v = Get();
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
+    }
+    for (const char* var : {"LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"}) {
+        if (const char* val = std::getenv(var)) {
+            if (std::strstr(val, "pt") || std::strstr(val, "PT")) {
+                v.menu_language = LangPortuguese;
+                break;
+            }
+            if (std::strstr(val, "ru") || std::strstr(val, "RU")) {
+                v.menu_language = LangRussian;
+                break;
+            }
+        }
     }
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
@@ -182,6 +205,7 @@ void Save() {
                  v.reactive_scale.load(), v.reactive_threshold.load(), v.reactive_max.load(),
                  v.debug_view.load(), int(v.show_fps.load()),
                  int(v.fsr4_auto_exposure.load()), int(v.fsr4_invert_jitter.load()));
+    std::fprintf(file, "puddle_reflections=%d\n", int(v.puddle_reflections.load()));
     // Read by patches.py at start.
     for (int e = 0; e < EffectCount; ++e) {
         std::fprintf(file, "%s=%d\n", Effects[e].key, int(v.effects[e].load()));
@@ -191,6 +215,7 @@ void Save() {
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
+    std::fprintf(file, "menu_language=%s\n", LanguageCode(v.menu_language.load()));
     std::fclose(file);
 }
 
@@ -208,6 +233,20 @@ const char* PresetName(int preset) {
 const char* UpscalerName(int upscaler) {
     static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
+}
+
+const char* LanguageCode(int lang) {
+    static constexpr const char* codes[LangCount] = {"en", "pt_br", "ru"};
+    return codes[std::clamp(lang, 0, LangCount - 1)];
+}
+
+const char* LanguageName(int lang) {
+    static constexpr const char* names[LangCount] = {"English", "Português (Brasil)", "Русский"};
+    return names[std::clamp(lang, 0, LangCount - 1)];
+}
+
+const char* EffectLabel(int effect_index, int lang) {
+    return BbStrings::EffectLabel(effect_index, lang);
 }
 
 } // namespace BbSettings

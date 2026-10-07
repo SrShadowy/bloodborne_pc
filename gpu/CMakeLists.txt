@@ -40,6 +40,10 @@ elseif (BB_PGO STREQUAL "use")
                         -fprofile-correction -Wno-missing-profile -Wno-coverage-mismatch)
 endif()
 
+if(IS_DIRECTORY "$ENV{HOME}/.local/lib")
+    link_directories("$ENV{HOME}/.local/lib")
+endif()
+
 find_package(Vulkan REQUIRED)
 find_package(fmt REQUIRED)
 find_package(Boost REQUIRED)
@@ -140,6 +144,9 @@ target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-f
 target_compile_options(bbgpu PRIVATE -ftls-model=initial-exec)
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
+if(IS_DIRECTORY "$ENV{HOME}/.local/lib")
+    target_link_options(bbgpu PRIVATE -Wl,-rpath,"$ENV{HOME}/.local/lib")
+endif()
 target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
@@ -179,7 +186,8 @@ add_dependencies(camera-motion-test host_shaders)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
-    shim/bbport_settings.cpp)
+    shim/bbport_settings.cpp
+    shim/bbport_strings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
