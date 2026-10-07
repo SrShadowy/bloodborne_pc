@@ -388,10 +388,6 @@ bool IsKnownFormat(AmdGpu::DataFormat data_fmt, AmdGpu::NumberFormat num_fmt) {
 
 bool Rasterizer::FilterDraw() {
     const auto& regs = Regs();
-    if (regs.clipper_control.user_clip_plane_enable != 0 &&
-        !BbSettings::Get().puddle_reflections.load(std::memory_order_relaxed)) {
-        return false;
-    }
     if (regs.color_control.mode == AmdGpu::ColorControl::OperationMode::EliminateFastClear) {
         // Clears the render target if FCE is launched before any draws
         EliminateFastClear();
@@ -540,8 +536,7 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     }
     // bbport: the G-buffer pass (5+ color targets) holds the scene depth, and its constants the
     // main camera (shadow passes bind the same layout with the light's camera).
-    gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first &&
-                   Regs().clipper_control.user_clip_plane_enable == 0;
+    gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first;
     if (gbuffer_draw) {
         camera_motion->OnGBufferPass(db_desc.first);
     }
@@ -658,7 +653,11 @@ u32 VerifyInterval() {
 bool Rasterizer::DrawPipeWanted() {
     const char* env = std::getenv("BB_DRAW_PIPE");
     if (env && env[0]) {
-        return env[0] == '1';
+        return env[0] != '0';
+    }
+    const auto& s = BbSettings::Get();
+    if (s.draw_pipe.load() == BbSettings::DrawPipeOff) {
+        return false;
     }
     // Stage B spins while draws flow. Measured ahead with 16 threads (+19%) and with 4 cores /
     // 8 threads (taskset, Steam Deck-like: +18%).
@@ -666,7 +665,21 @@ bool Rasterizer::DrawPipeWanted() {
 }
 
 bool Rasterizer::UseDrawPipe() const {
-    return draw_pipe && !host_markers_enabled && !BbToggle::Disabled(BbToggle::DrawPipeline);
+    if (!draw_pipe || host_markers_enabled || BbToggle::Disabled(BbToggle::DrawPipeline)) {
+        return false;
+    }
+    const int mode = BbSettings::Get().draw_pipe.load();
+    if (mode == BbSettings::DrawPipeOff) {
+        return false;
+    }
+    if (mode == BbSettings::DrawPipeHybrid) {
+        // Hybrid mode: cutscenes and cinematic camera passes use user clip planes.
+        // Run them synchronously on Stage A to guarantee 100% texture and mesh fidelity.
+        if (Regs().clipper_control.user_clip_plane_enable != 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool Rasterizer::OnStageA() const {
@@ -1223,10 +1236,6 @@ bool Rasterizer::FilterDrawPasses() const {
     // FilterDraw's checks without its side effects: false when it would skip the draw or run
     // a pass of its own (fast clear elimination, resolve, depth/stencil copy).
     const auto& regs = Regs();
-    if (regs.clipper_control.user_clip_plane_enable != 0 &&
-        !BbSettings::Get().puddle_reflections.load(std::memory_order_relaxed)) {
-        return false;
-    }
     using Mode = AmdGpu::ColorControl::OperationMode;
     const auto mode = regs.color_control.mode;
     if (mode == Mode::EliminateFastClear || mode == Mode::FmaskDecompress ||

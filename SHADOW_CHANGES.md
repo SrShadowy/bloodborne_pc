@@ -271,3 +271,4 @@ Through systematic isolation of individual post-processing shaders, the horizont
 - **Pristine Skybox:** The sky across Central Yharnam and the Hunter's Dream is completely clear of scanlines, smears, and vertical bands.
 - **Enhanced Framerate & Pacing:** Eliminating the fullscreen velomap and tile-max passes saves hundreds of microseconds per frame, improving frame times and high-refresh-rate stability.
 - **Sharp Image Quality:** Eliminates undesirable camera smearing during high-FPS gameplay while retaining all other atmospheric post-processing effects.
+

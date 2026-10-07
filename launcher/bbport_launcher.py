@@ -36,7 +36,7 @@ CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
 
 # Choices: (label, value). The first entry is the default. Labels are translated when shown.
-UI_LANGUAGES = [("Как в системе", ""), ("Русский", "ru"), ("English", "en")]
+UI_LANGUAGES = [("Как в системе", ""), ("Português", "pt"), ("English", "en"), ("Русский", "ru")]
 UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
              ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
@@ -63,8 +63,9 @@ PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
                  ("FIFO Relaxed", "FifoRelaxed"), ("Immediate", "Immediate")]
 # A third element is a note shown under the row's title while that choice is selected: the
 # choice labels stay short, so the selected one is shown in full.
-DRAW_PIPE = [("Авто", "", "Включён при 8 и более потоках процессора"), ("Включён", "1"),
-             ("Выключен", "0", "Стабильнее, но медленнее")]
+DRAW_PIPE = [("Гибридный (Рекомендуется)", "2", "Ускорение в игре, стабильность в кат-сценах"),
+             ("Включён", "1"),
+             ("Выключен", "0", "Стабильнее, режим shadPS4 vanilla")]
 LANGUAGES = [("Английский", "1"), ("Русский", "8"), ("Японский", "0"), ("Французский", "2"),
              ("Испанский", "3"), ("Немецкий", "4"), ("Итальянский", "5")]
 LIVE_RESOLUTION = [("Авто (по видеокарте)", "auto"), ("Выключена (быстрее)", "0"), ("Включена", "1")]
@@ -89,7 +90,7 @@ DEFAULTS = {
     "gamepad_name": "",
     "fps_mode": "uncap",
     "fps_limit": 0,
-    "draw_pipe": "",
+    "draw_pipe": "2",
     "readbacks": "",
     "preupload": "",
     "mangohud": False,
@@ -113,6 +114,7 @@ INI_DEFAULTS = {
     "output_res": "1920x1080",
     "model_lod": "0",
     "live_resolution": "0",
+    "draw_pipe": "2",
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 

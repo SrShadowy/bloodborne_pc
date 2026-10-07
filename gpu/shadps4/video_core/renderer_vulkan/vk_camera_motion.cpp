@@ -268,14 +268,6 @@ void CameraMotion::OnConstants(const float* data) {
         std::abs(data[1] * data[0] - 1.0f) > 1e-3f) {
         return;
     }
-    // Reject planar reflection cameras (flipped Y or inverted determinant)
-    const float a = data[8], b = data[9], c = data[10];
-    const float d = data[12], e = data[13], f = data[14];
-    const float g = data[16], h = data[17], i = data[18];
-    const float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if (det < 0.5f || data[57] <= 0.0f) {
-        return;
-    }
     if (frame_has_camera) {
         return; // the first one of a frame is the main camera
     }

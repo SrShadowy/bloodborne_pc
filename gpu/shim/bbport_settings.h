@@ -45,6 +45,8 @@ inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
 inline constexpr int OutputCount = 4;
 inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 
+enum DrawPipeMode : int { DrawPipeOff = 0, DrawPipeOn = 1, DrawPipeHybrid = 2, DrawPipeCount = 3 };
+
 struct Values {
     std::atomic<int> upscaler{UpscalerFsr3};
     std::atomic<int> preset{NativeAA};
@@ -62,6 +64,7 @@ struct Values {
     std::atomic<bool> fsr4_auto_exposure{true};
     std::atomic<bool> fsr4_invert_jitter{false};
     std::atomic<bool> puddle_reflections{false};
+    std::atomic<int> draw_pipe{DrawPipeHybrid};
     std::atomic<int> active_render_width{1920}, active_render_height{1080};
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
@@ -83,6 +86,7 @@ struct Values {
     int startup_model_lod = 0;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
+    int startup_draw_pipe = DrawPipeHybrid;
 };
 
 Values& Get();

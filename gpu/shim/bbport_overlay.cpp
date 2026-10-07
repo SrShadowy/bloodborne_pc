@@ -362,6 +362,7 @@ void Menu() {
     bool restart = s.object_motion != s.startup_object_motion ||
                    s.model_lod != s.startup_model_lod ||
                    s.live_resolution != s.startup_live_resolution ||
+                   (s.startup_draw_pipe == BbSettings::DrawPipeOff && s.draw_pipe != BbSettings::DrawPipeOff) ||
                    BbSettings::ResolutionNeedsRestart();
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
@@ -376,6 +377,21 @@ void Menu() {
 
     ImGui::SeparatorText(S(SectionMisc));
     Checkbox(S(ShowFpsCorner), s.show_fps);
+    const char* pipe_modes[] = {
+        S(DrawPipeModeOff),
+        S(DrawPipeModeOn),
+        S(DrawPipeModeHybrid)
+    };
+    int current_pipe = std::clamp(s.draw_pipe.load(), 0, 2);
+    if (ImGui::BeginCombo(S(DrawPipe), pipe_modes[current_pipe])) {
+        for (int i = 0; i < 3; ++i) {
+            if (ImGui::Selectable(pipe_modes[i], i == current_pipe)) {
+                Store(s.draw_pipe, i, true);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    Hint(S(HintDrawPipe));
 
     ImGui::Spacing();
     if (ImGui::Button(S(CloseButton))) {

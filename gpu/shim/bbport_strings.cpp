@@ -396,6 +396,36 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
         "Desativado: remove prédios invertidos, falhas e faixas no céu. Ativado: renderiza os reflexos planares originais.",
         "Выключено: убирает перевёрнутые здания и полосы на небе. Включено: исходные плоские отражения."
     },
+    // DrawPipe
+    {
+        "Draw Pipe (Two-Stage Pipeline)",
+        "Draw Pipe (Pipeline em 2 Estágios)",
+        "Двухстадийный конвейер (Draw Pipe)"
+    },
+    // HintDrawPipe
+    {
+        "Hybrid: keeps +20-30% FPS in gameplay, runs synchronously in cutscenes without glitches.",
+        "Híbrido: mantém +20-30% FPS no gameplay e roda de forma síncrona em cutscenes sem falhas visuais.",
+        "Гибридный: сохраняет +20-30% FPS в игре и работает синхронно в кат-сценах без визуальных сбоев."
+    },
+    // DrawPipeModeOff
+    {
+        "Off (Vanilla shadPS4)",
+        "Desligado (Modo shadPS4)",
+        "Выключен (shadPS4 vanilla)"
+    },
+    // DrawPipeModeOn
+    {
+        "On (Always 2 stages)",
+        "Ligado (Sempre 2 estágios)",
+        "Включён (всегда 2 стадии)"
+    },
+    // DrawPipeModeHybrid
+    {
+        "Hybrid (Recommended)",
+        "Híbrido (Recomendado)",
+        "Гибридный (Рекомендуется)"
+    },
     // CloseButton
     {
         "Close",
