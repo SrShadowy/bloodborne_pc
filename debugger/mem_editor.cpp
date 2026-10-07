@@ -59,6 +59,13 @@ void MemoryEditor::SetLabel(size_t index, const std::string& label) {
     }
 }
 
+void MemoryEditor::SetType(size_t index, DataType type) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (index < entries.size()) {
+        entries[index].type = type;
+    }
+}
+
 bool MemoryEditor::WriteValue(size_t index, double value) {
     std::lock_guard<std::mutex> lock(mutex);
     if (index >= entries.size()) return false;

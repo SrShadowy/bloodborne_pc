@@ -31,6 +31,7 @@ public:
     void SetFrozen(size_t index, bool frozen);
     void SetFreezeValue(size_t index, double value);
     void SetLabel(size_t index, const std::string& label);
+    void SetType(size_t index, DataType type);
 
     bool WriteValue(size_t index, double value);
 

@@ -392,10 +392,10 @@ void Menu() {
     #define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 40.0f * base_scale,
-                                   viewport->WorkPos.y + 40.0f * base_scale),
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 30.0f * base_scale,
+                                   viewport->WorkPos.y + 30.0f * base_scale),
                             ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(760.0f * base_scale, 540.0f * base_scale), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(820.0f * base_scale, 580.0f * base_scale), ImGuiCond_Appearing);
     bool keep_open = true;
     char title[128];
     std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)", S(WindowTitle));
@@ -496,11 +496,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     io.BackendPlatformName = "bbport";
 
     ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 6.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.Colors[ImGuiCol_WindowBg].w = 0.92f;
+    UI::UiManager::InitStyle();
 
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;

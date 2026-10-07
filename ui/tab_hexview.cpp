@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "tab_hexview.h"
+#include "ui_strings.h"
 #include "mem_scanner.h"
 #include "mem_editor.h"
 #include "breakpoint.h"
 #include "cutscene_detector.h"
+#include "ui_manager.h"
 
 #include <imgui.h>
 #include <SDL3/SDL.h>
@@ -30,12 +32,14 @@ static std::chrono::steady_clock::time_point status_time{};
 static void CopyToClipboard(const char* text, const char* desc) {
     ImGui::SetClipboardText(text);
     SDL_SetClipboardText(text);
-    status_msg = std::string(desc) + " copiado para a area de transferencia!";
+    status_msg = std::string(desc) + " " + L("copied to clipboard!", "copiado para a area de transferencia!", "скопировано в буфер!");
     status_time = std::chrono::steady_clock::now();
 }
 
-static void NavigateTo(uintptr_t addr) {
+void TabHexView::NavigateTo(uintptr_t addr) {
     current_addr = addr;
+    selected_addr = addr;
+    has_selection = true;
     std::snprintf(addr_input, sizeof(addr_input), "0x%llx", static_cast<unsigned long long>(current_addr));
     if (history.empty() || history[history_idx] != addr) {
         if (history_idx + 1 < history.size()) {
@@ -47,7 +51,8 @@ static void NavigateTo(uintptr_t addr) {
 }
 
 void TabHexView::Render() {
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "Visualizador e Editor Hexadecimal (Hex Inspector)");
+    ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.55f, 1.0f), "%s",
+                       L("Memory Hex Inspector", "Visualizador e Editor Hexadecimal", "Hex-инспектор памяти"));
     ImGui::Separator();
 
     // 1. Navigation Toolbar
@@ -60,6 +65,7 @@ void TabHexView::Render() {
         if (can_back) {
             history_idx--;
             current_addr = history[history_idx];
+            selected_addr = current_addr;
             std::snprintf(addr_input, sizeof(addr_input), "0x%llx", static_cast<unsigned long long>(current_addr));
         }
     }
@@ -71,37 +77,50 @@ void TabHexView::Render() {
         if (can_fwd) {
             history_idx++;
             current_addr = history[history_idx];
+            selected_addr = current_addr;
             std::snprintf(addr_input, sizeof(addr_input), "0x%llx", static_cast<unsigned long long>(current_addr));
         }
     }
     if (!can_fwd) ImGui::EndDisabled();
 
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(170.0f);
-    if (ImGui::InputText("Endereco##goto", addr_input, sizeof(addr_input), ImGuiInputTextFlags_EnterReturnsTrue)) {
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::InputText(L("Address##goto", "Endereco##goto", "Адрес##goto"), addr_input, sizeof(addr_input), ImGuiInputTextFlags_EnterReturnsTrue)) {
         NavigateTo(std::strtoull(addr_input, nullptr, 16));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Ir##btn", ImVec2(40, 0))) {
+    if (ImGui::Button(L("Go##btn", "Ir##btn", "Перейти##btn"), ImVec2(36, 0))) {
         NavigateTo(std::strtoull(addr_input, nullptr, 16));
     }
 
     // Step offsets
     ImGui::SameLine();
-    if (ImGui::Button("-4 KB") && current_addr >= 4096) {
+    if (ImGui::Button("-4K") && current_addr >= 4096) {
         NavigateTo(current_addr - 4096);
     }
     ImGui::SameLine();
-    if (ImGui::Button("-256 B") && current_addr >= 256) {
+    if (ImGui::Button("-256B") && current_addr >= 256) {
         NavigateTo(current_addr - 256);
     }
     ImGui::SameLine();
-    if (ImGui::Button("+256 B")) {
+    if (ImGui::Button("+256B")) {
         NavigateTo(current_addr + 256);
     }
     ImGui::SameLine();
-    if (ImGui::Button("+4 KB")) {
+    if (ImGui::Button("+4K")) {
         NavigateTo(current_addr + 4096);
+    }
+
+    // Presets
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("eboot")) {
+        NavigateTo(0x00400000);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Heap")) {
+        NavigateTo(0x1000000000ULL);
     }
     ImGui::EndGroup();
 
@@ -109,13 +128,14 @@ void TabHexView::Render() {
     ImGui::BeginGroup();
     struct JumpPreset { const char* label; uintptr_t address; };
     const JumpPreset presets[] = {
-        {"Base eboot.bin (ELF)", 0x00400000},
-        {"Codigo Principal", 0x02000000},
-        {"Parametros e Globais (.data)", 0x05400000},
-        {"Memoria Direta PS4 (Heap)", 0x1000000000},
+        {L("eboot.bin Base (ELF)", "Base eboot.bin (ELF)", "База eboot.bin (ELF)"), 0x00400000},
+        {L("Main Game Code", "Codigo Principal", "Основной код игры"), 0x02000000},
+        {L("Globals and Params (.data)", "Parametros e Globais (.data)", "Глобальные данные (.data)"), 0x05400000},
+        {L("PS4 Direct Memory (Heap)", "Memoria Direta PS4 (Heap)", "Прямая память PS4 (Heap)"), 0x1000000000},
     };
     ImGui::SetNextItemWidth(220.0f);
-    if (ImGui::BeginCombo("Salto Rapido", "Locais do Jogo...")) {
+    if (ImGui::BeginCombo(L("Quick Jump", "Salto Rapido", "Быстрый переход"),
+                          L("Game Locations...", "Locais do Jogo...", "Области игры..."))) {
         for (const auto& p : presets) {
             if (ImGui::Selectable(p.label)) {
                 NavigateTo(p.address);
@@ -124,7 +144,8 @@ void TabHexView::Render() {
         auto& cs = Debugger::CutsceneDetector::Get();
         if (cs.IsEnabled() && cs.GetAddress() != 0) {
             char cs_label[64];
-            std::snprintf(cs_label, sizeof(cs_label), "Flag de Cutscene (0x%llx)",
+            std::snprintf(cs_label, sizeof(cs_label), "%s (0x%llx)",
+                          L("Cutscene Flag", "Flag de Cutscene", "Флаг кат-сцены"),
                           static_cast<unsigned long long>(cs.GetAddress()));
             if (ImGui::Selectable(cs_label)) {
                 NavigateTo(cs.GetAddress());
@@ -139,11 +160,11 @@ void TabHexView::Render() {
     std::snprintf(cur_addr_hex, sizeof(cur_addr_hex), "0x%llx",
                   static_cast<unsigned long long>(has_selection ? selected_addr : current_addr));
 
-    if (ImGui::Button("Copiar Endereco")) {
-        CopyToClipboard(cur_addr_hex, "Endereco");
+    if (ImGui::Button(L("Copy Address", "Copiar Endereco", "Копировать адрес"))) {
+        CopyToClipboard(cur_addr_hex, L("Address", "Endereco", "Адрес"));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Copiar 16 Bytes")) {
+    if (ImGui::Button(L("Copy 16 Bytes", "Copiar 16 Bytes", "Копировать 16 байт"))) {
         uint8_t copy_buf[16] = {0};
         Debugger::MemoryScanner::ReadMemory(has_selection ? selected_addr : current_addr, copy_buf, 16);
         char hex_str[64];
@@ -153,17 +174,17 @@ void TabHexView::Render() {
                       copy_buf[4], copy_buf[5], copy_buf[6], copy_buf[7],
                       copy_buf[8], copy_buf[9], copy_buf[10], copy_buf[11],
                       copy_buf[12], copy_buf[13], copy_buf[14], copy_buf[15]);
-        CopyToClipboard(hex_str, "16 Bytes Hex");
+        CopyToClipboard(hex_str, L("16 Bytes Hex", "16 Bytes Hex", "16 байт Hex"));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Copiar ASCII")) {
+    if (ImGui::Button(L("Copy ASCII", "Copiar ASCII", "Копировать ASCII"))) {
         uint8_t copy_buf[16] = {0};
         Debugger::MemoryScanner::ReadMemory(has_selection ? selected_addr : current_addr, copy_buf, 16);
         char asc_str[17] = {0};
         for (int i = 0; i < 16; ++i) {
             asc_str[i] = std::isprint(copy_buf[i]) ? copy_buf[i] : '.';
         }
-        CopyToClipboard(asc_str, "Texto ASCII");
+        CopyToClipboard(asc_str, L("ASCII Text", "Texto ASCII", "Текст ASCII"));
     }
     ImGui::EndGroup();
 
@@ -186,15 +207,19 @@ void TabHexView::Render() {
     const bool readable = Debugger::MemoryScanner::ReadMemory(current_addr, buffer, VIEW_SIZE);
 
     if (!readable) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Endereco inacessivel ou memoria nao alocada.");
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s",
+                           L("Inaccessible address or unallocated memory.",
+                             "Endereco inacessivel ou memoria nao alocada.",
+                             "Недоступный адрес или невыделенная память."));
         return;
     }
 
-    if (ImGui::BeginTable("HexTable", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 270))) {
-        ImGui::TableSetupColumn("Endereco (Clique p/ Selecionar)", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    if (ImGui::BeginTable("HexTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 280))) {
+        ImGui::TableSetupColumn(L("Address (Click to Select)", "Endereco (Clique p/ Selecionar)", "Адрес (выбрать)"),
+                                ImGuiTableColumnFlags_WidthFixed, 140.0f);
         ImGui::TableSetupColumn("00 01 02 03  04 05 06 07", ImGuiTableColumnFlags_WidthFixed, 195.0f);
         ImGui::TableSetupColumn("08 09 0A 0B  0C 0D 0E 0F", ImGuiTableColumnFlags_WidthFixed, 195.0f);
-        ImGui::TableSetupColumn("ASCII", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("ASCII", ImGuiTableColumnFlags_WidthFixed, 145.0f);
         ImGui::TableHeadersRow();
 
         for (size_t row = 0; row < VIEW_SIZE; row += 16) {
@@ -221,12 +246,12 @@ void TabHexView::Render() {
                                    static_cast<unsigned long long>(row_addr));
                 ImGui::Separator();
 
-                if (ImGui::MenuItem("Copiar Endereco")) {
+                if (ImGui::MenuItem(L("Copy Address", "Copiar Endereco", "Копировать адрес"))) {
                     char hex_addr[32];
                     std::snprintf(hex_addr, sizeof(hex_addr), "0x%llx", static_cast<unsigned long long>(row_addr));
-                    CopyToClipboard(hex_addr, "Endereco");
+                    CopyToClipboard(hex_addr, L("Address", "Endereco", "Адрес"));
                 }
-                if (ImGui::MenuItem("Copiar Bytes Hex")) {
+                if (ImGui::MenuItem(L("Copy Hex Bytes", "Copiar Bytes Hex", "Копировать байты Hex"))) {
                     char hex_row[64];
                     std::snprintf(hex_row, sizeof(hex_row),
                                   "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
@@ -234,25 +259,29 @@ void TabHexView::Render() {
                                   buffer[row + 4], buffer[row + 5], buffer[row + 6], buffer[row + 7],
                                   buffer[row + 8], buffer[row + 9], buffer[row + 10], buffer[row + 11],
                                   buffer[row + 12], buffer[row + 13], buffer[row + 14], buffer[row + 15]);
-                    CopyToClipboard(hex_row, "Bytes Hex");
+                    CopyToClipboard(hex_row, L("Hex Bytes", "Bytes Hex", "Байты Hex"));
                 }
-                if (ImGui::MenuItem("Copiar ASCII")) {
+                if (ImGui::MenuItem(L("Copy ASCII", "Copiar ASCII", "Копировать ASCII"))) {
                     char asc_row[17] = {0};
                     for (int i = 0; i < 16; ++i) {
                         asc_row[i] = std::isprint(buffer[row + i]) ? buffer[row + i] : '.';
                     }
-                    CopyToClipboard(asc_row, "ASCII");
+                    CopyToClipboard(asc_row, L("ASCII", "ASCII", "ASCII"));
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Adicionar a Watchlist")) {
+                if (ImGui::MenuItem(L("Add to Watchlist", "Adicionar a Watchlist", "Добавить в таблицу"))) {
                     Debugger::MemoryEditor::Get().AddWatch("Hex Item", row_addr, Debugger::DataType::U32);
+                    UiManager::SetStatus(L("Address added to Watchlist!", "Endereco adicionado a Watchlist!", "Адрес добавлен в таблицу!"));
                 }
-                if (ImGui::MenuItem("Monitorar com Watchpoint ('Quem Escreve?')")) {
+                if (ImGui::MenuItem(L("Watch Writes ('Who Writes?')", "Monitorar com Watchpoint ('Quem Escreve?')", "Кто пишет по адресу?"))) {
                     Debugger::BreakpointManager::Get().SetWriteWatchpoint(row_addr);
+                    UiManager::RequestTab(TabId::Debugger);
+                    UiManager::SetStatus(L("Watchpoint attached! Switched to Debugger.", "Watchpoint ativado! Mudando para o Depurador.", "Точка наблюдения установлена!"));
                 }
-                if (ImGui::MenuItem("Definir como Flag de Cutscene")) {
+                if (ImGui::MenuItem(L("Set as Cutscene Flag", "Definir como Flag de Cutscene", "Назначить флагом кат-сцены"))) {
                     Debugger::CutsceneDetector::Get().SetAddress(row_addr);
                     Debugger::CutsceneDetector::Get().SetEnabled(true);
+                    UiManager::SetStatus(L("Cutscene flag assigned!", "Flag de cutscene definida!", "Флаг кат-сцены назначен!"));
                 }
                 ImGui::EndPopup();
             }
@@ -288,32 +317,64 @@ void TabHexView::Render() {
     // 4. Selection Inspector & Editor Bar
     if (has_selection) {
         ImGui::Spacing();
-        ImGui::Separator();
         uint8_t sel_bytes[8] = {0};
         Debugger::MemoryScanner::ReadMemory(selected_addr, sel_bytes, sizeof(sel_bytes));
 
-        const uint8_t v_u8 = sel_bytes[0];
+        const uint8_t  v_u8  = sel_bytes[0];
         const uint16_t v_u16 = *reinterpret_cast<const uint16_t*>(sel_bytes);
         const uint32_t v_u32 = *reinterpret_cast<const uint32_t*>(sel_bytes);
-        const float v_flt = *reinterpret_cast<const float*>(sel_bytes);
+        const int32_t  v_i32 = *reinterpret_cast<const int32_t*>(sel_bytes);
+        const float    v_flt = *reinterpret_cast<const float*>(sel_bytes);
+        const double   v_dbl = *reinterpret_cast<const double*>(sel_bytes);
 
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f),
-                           "Selecionado: 0x%llx  |  u8: %u  |  u16: %u  |  u32: %u  |  Float: %.3f",
-                           static_cast<unsigned long long>(selected_addr),
-                           v_u8, v_u16, v_u32, v_flt);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.15f, 0.20f, 0.70f));
+        if (ImGui::BeginChild("DataInspectorCard", ImVec2(0, 68), true)) {
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "%s: 0x%012llx",
+                               L("Data Inspector", "Inspetor de Dados", "Инспектор данных"),
+                               static_cast<unsigned long long>(selected_addr));
+            ImGui::SameLine();
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            ImGui::Text("u8: %u  |  u16: %u  |  u32: %u  |  i32: %d  |  Float: %.3f  |  Double: %.4f",
+                        v_u8, v_u16, v_u32, v_i32, v_flt, v_dbl);
 
-        static char write_val_buf[32] = "0";
-        ImGui::SetNextItemWidth(100.0f);
-        ImGui::InputText("Escrever u32##edit", write_val_buf, sizeof(write_val_buf));
-        ImGui::SameLine();
-        if (ImGui::Button("Gravar Valor")) {
-            const uint32_t to_write = static_cast<uint32_t>(std::strtoul(write_val_buf, nullptr, 0));
-            Debugger::MemoryScanner::WriteMemory(selected_addr, &to_write, sizeof(to_write));
+            static char write_val_buf[32] = "0";
+            static int write_type_idx = 2; // u32
+            const char* w_types[] = { "u8", "u16", "u32", "u64", "Float" };
+
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::InputText("##write_val", write_val_buf, sizeof(write_val_buf));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(65.0f);
+            ImGui::Combo("##write_type", &write_type_idx, w_types, IM_ARRAYSIZE(w_types));
+            ImGui::SameLine();
+            if (ImGui::Button(L("Write", "Gravar", "Запись"))) {
+                double num = std::strtod(write_val_buf, nullptr);
+                Debugger::DataType dt = Debugger::DataType::U32;
+                if (write_type_idx == 0) dt = Debugger::DataType::U8;
+                else if (write_type_idx == 1) dt = Debugger::DataType::U16;
+                else if (write_type_idx == 2) dt = Debugger::DataType::U32;
+                else if (write_type_idx == 3) dt = Debugger::DataType::U64;
+                else if (write_type_idx == 4) dt = Debugger::DataType::Float;
+                Debugger::MemoryScanner::WriteFormatted(selected_addr, dt, num);
+                UiManager::SetStatus(L("Value written to memory!", "Valor gravado na memoria!", "Значение записано в память!"));
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(L("+ Watchlist", "+ Watchlist", "+ Список"))) {
+                char label[32];
+                std::snprintf(label, sizeof(label), "Hex 0x%llx", static_cast<unsigned long long>(selected_addr));
+                Debugger::MemoryEditor::Get().AddWatch(label, selected_addr, Debugger::DataType::U32);
+                UiManager::SetStatus(L("Address added to Watchlist!", "Endereco adicionado a Watchlist!", "Адрес добавлен в таблицу!"));
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(L("Who Writes?", "Quem Escreve?", "Кто пишет?"))) {
+                Debugger::BreakpointManager::Get().SetWriteWatchpoint(selected_addr);
+                UiManager::RequestTab(TabId::Debugger);
+                UiManager::SetStatus(L("Watchpoint attached! Switched to Debugger.", "Watchpoint ativado! Mudando para o Depurador.", "Точка наблюдения установлена!"));
+            }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Monitorar Escrita")) {
-            Debugger::BreakpointManager::Get().SetWriteWatchpoint(selected_addr);
-        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
     }
 }
 

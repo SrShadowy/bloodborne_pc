@@ -7,6 +7,7 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <thread>
 
 namespace Debugger {
 
@@ -51,9 +52,11 @@ struct MemoryRegion {
 class MemoryScanner {
 public:
     static MemoryScanner& Get();
+    ~MemoryScanner();
 
     void StartFirstScan(DataType type, ScanComparison comp, double value, ScanScope scope);
     void NextScan(ScanComparison comp, double value);
+    void CancelScan();
     void Reset();
 
     size_t GetMatchCount() const;
@@ -61,6 +64,7 @@ public:
 
     bool IsScanning() const { return scanning.load(std::memory_order_relaxed); }
     float GetProgress() const { return progress.load(std::memory_order_relaxed); }
+    DataType GetCurrentType() const;
 
     static bool ReadMemory(uintptr_t addr, void* dest, size_t size);
     static bool WriteMemory(uintptr_t addr, const void* src, size_t size);
@@ -74,10 +78,15 @@ public:
 private:
     MemoryScanner() = default;
 
+    void DoFirstScan(DataType type, ScanComparison comp, double value, ScanScope scope);
+    void DoNextScan(ScanComparison comp, double value);
+
     std::vector<MemoryRegion> QueryRegions(ScanScope scope);
 
     mutable std::mutex mutex;
+    std::thread scan_thread;
     std::atomic<bool> scanning{false};
+    std::atomic<bool> cancel_requested{false};
     std::atomic<float> progress{0.0f};
 
     DataType current_type{DataType::U32};

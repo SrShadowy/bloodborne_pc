@@ -177,34 +177,63 @@ static bool MatchesCondition(ScanComparison comp, DataType type, double current,
     return false;
 }
 
-void MemoryScanner::StartFirstScan(DataType type, ScanComparison comp, double value, ScanScope scope) {
+MemoryScanner::~MemoryScanner() {
+    CancelScan();
+    if (scan_thread.joinable()) {
+        scan_thread.join();
+    }
+}
+
+void MemoryScanner::CancelScan() {
+    cancel_requested.store(true);
+}
+
+DataType MemoryScanner::GetCurrentType() const {
     std::lock_guard<std::mutex> lock(mutex);
-    matches.clear();
-    current_type = type;
+    return current_type;
+}
+
+void MemoryScanner::StartFirstScan(DataType type, ScanComparison comp, double value, ScanScope scope) {
+    if (scanning.load()) return;
+    if (scan_thread.joinable()) {
+        scan_thread.join();
+    }
+
+    cancel_requested.store(false);
     scanning.store(true);
     progress.store(0.0f);
 
+    scan_thread = std::thread([this, type, comp, value, scope]() {
+        DoFirstScan(type, comp, value, scope);
+    });
+}
+
+void MemoryScanner::DoFirstScan(DataType type, ScanComparison comp, double value, ScanScope scope) {
     const auto regions = QueryRegions(scope);
     const size_t type_size = GetTypeSize(type);
     constexpr size_t CHUNK_SIZE = 256 * 1024; // 256 KB chunks
     std::vector<uint8_t> chunk(CHUNK_SIZE);
 
     constexpr size_t MAX_MATCHES = 300000;
+    std::vector<ScanMatch> temp_matches;
+    temp_matches.reserve(10000);
 
     size_t total_bytes = 0;
     for (const auto& r : regions) total_bytes += (r.end - r.start);
     size_t processed_bytes = 0;
 
     for (const auto& r : regions) {
+        if (cancel_requested.load()) break;
         for (uintptr_t cur = r.start; cur < r.end; cur += CHUNK_SIZE) {
+            if (cancel_requested.load()) break;
             const size_t to_read = std::min(CHUNK_SIZE, static_cast<size_t>(r.end - cur));
             if (ReadMemory(cur, chunk.data(), to_read)) {
                 for (size_t off = 0; off + type_size <= to_read; off += type_size) {
                     const double val = DecodeValue(type, chunk.data() + off);
                     if (MatchesCondition(comp, type, val, val, value)) {
                         const uint64_t raw = EncodeRaw(type, chunk.data() + off);
-                        matches.push_back({cur + off, raw, raw});
-                        if (matches.size() >= MAX_MATCHES) {
+                        temp_matches.push_back({cur + off, raw, raw});
+                        if (temp_matches.size() >= MAX_MATCHES) {
                             goto done;
                         }
                     }
@@ -218,44 +247,81 @@ void MemoryScanner::StartFirstScan(DataType type, ScanComparison comp, double va
     }
 
 done:
+    if (!cancel_requested.load()) {
+        std::lock_guard<std::mutex> lock(mutex);
+        current_type = type;
+        matches = std::move(temp_matches);
+    }
     scanning.store(false);
     progress.store(1.0f);
 }
 
 void MemoryScanner::NextScan(ScanComparison comp, double value) {
-    std::lock_guard<std::mutex> lock(mutex);
-    if (matches.empty()) return;
+    if (scanning.load()) return;
+    if (scan_thread.joinable()) {
+        scan_thread.join();
+    }
 
+    cancel_requested.store(false);
     scanning.store(true);
     progress.store(0.0f);
 
-    const size_t type_size = GetTypeSize(current_type);
+    scan_thread = std::thread([this, comp, value]() {
+        DoNextScan(comp, value);
+    });
+}
+
+void MemoryScanner::DoNextScan(ScanComparison comp, double value) {
+    std::vector<ScanMatch> prev_list;
+    DataType type;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        prev_list = matches;
+        type = current_type;
+    }
+
+    if (prev_list.empty()) {
+        scanning.store(false);
+        progress.store(1.0f);
+        return;
+    }
+
+    const size_t type_size = GetTypeSize(type);
     std::vector<ScanMatch> next_matches;
-    next_matches.reserve(matches.size());
+    next_matches.reserve(std::min(prev_list.size(), static_cast<size_t>(50000)));
 
     uint8_t buffer[8];
-    for (size_t i = 0; i < matches.size(); ++i) {
-        auto& m = matches[i];
+    for (size_t i = 0; i < prev_list.size(); ++i) {
+        if (cancel_requested.load()) break;
+
+        auto& m = prev_list[i];
         if (ReadMemory(m.address, buffer, type_size)) {
-            const double current_val = DecodeValue(current_type, buffer);
-            const double prev_val = DecodeValue(current_type, &m.current_raw);
-            if (MatchesCondition(comp, current_type, current_val, prev_val, value)) {
+            const double current_val = DecodeValue(type, buffer);
+            const double prev_val = DecodeValue(type, &m.current_raw);
+            if (MatchesCondition(comp, type, current_val, prev_val, value)) {
                 m.prev_raw = m.current_raw;
-                m.current_raw = EncodeRaw(current_type, buffer);
+                m.current_raw = EncodeRaw(type, buffer);
                 next_matches.push_back(m);
             }
         }
-        if ((i % 10000) == 0) {
-            progress.store(static_cast<float>(i) / static_cast<float>(matches.size()));
+        if ((i % 1000) == 0) {
+            progress.store(static_cast<float>(i) / static_cast<float>(prev_list.size()));
         }
     }
 
-    matches = std::move(next_matches);
+    if (!cancel_requested.load()) {
+        std::lock_guard<std::mutex> lock(mutex);
+        matches = std::move(next_matches);
+    }
     scanning.store(false);
     progress.store(1.0f);
 }
 
 void MemoryScanner::Reset() {
+    CancelScan();
+    if (scan_thread.joinable()) {
+        scan_thread.join();
+    }
     std::lock_guard<std::mutex> lock(mutex);
     matches.clear();
     scanning.store(false);
