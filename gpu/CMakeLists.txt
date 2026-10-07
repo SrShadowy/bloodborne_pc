@@ -131,7 +131,11 @@ add_dependencies(bbgpu host_shaders)
 target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
     third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp
     third_party/imgui/backends/imgui_impl_vulkan.cpp)
-target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends)
+target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/../debugger ${CMAKE_CURRENT_SOURCE_DIR}/../ui)
+file(GLOB DEBUGGER_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../debugger/*.cpp)
+file(GLOB UI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../ui/*.cpp)
+target_sources(bbgpu PRIVATE ${DEBUGGER_SOURCES} ${UI_SOURCES})
 target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES

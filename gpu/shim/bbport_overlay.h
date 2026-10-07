@@ -38,4 +38,7 @@ bool CapturesInput();
 /// Window thread: the game's text dialog (ImeDialog) state, drawn as a box over the frame.
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text);
 
+/// Renders the graphics settings panel inside the Settings tab.
+void RenderGraphicsSettings();
+
 } // namespace BbOverlay

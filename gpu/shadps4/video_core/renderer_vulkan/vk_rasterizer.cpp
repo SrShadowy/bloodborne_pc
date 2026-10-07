@@ -8,6 +8,7 @@
 #include "bbport_sections.h"
 #include "bbport_toggles.h"
 #include "bbport_settings.h"
+#include "cutscene_detector.h"
 #include "bbport_write_log.h"
 #include "bbport_free_check.h"
 #include "bbport_guest_memory.h"
@@ -670,6 +671,10 @@ bool Rasterizer::UseDrawPipe() const {
     }
     const int mode = BbSettings::Get().draw_pipe.load();
     if (mode == BbSettings::DrawPipeOff) {
+        return false;
+    }
+    // Dynamic cutscene detection from Debugger
+    if (Debugger::CutsceneDetector::Get().IsCutsceneActive()) {
         return false;
     }
     if (mode == BbSettings::DrawPipeHybrid) {

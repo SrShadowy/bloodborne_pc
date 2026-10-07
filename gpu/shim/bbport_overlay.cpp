@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 #include "bbport_settings.h"
 #include "bbport_strings.h"
+#include "ui_manager.h"
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -146,25 +147,12 @@ void Hint(const char* text) {
     }
 }
 
-void Menu() {
+} // namespace
+
+void RenderGraphicsSettings() {
     auto& s = BbSettings::Get();
     const int lang = s.menu_language.load();
     #define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
-
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 40.0f * base_scale,
-                                   viewport->WorkPos.y + 40.0f * base_scale),
-                            ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
-    bool keep_open = true;
-    char title[128];
-    std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)", S(WindowTitle));
-    if (!ImGui::Begin(title, &keep_open, ImGuiWindowFlags_NoCollapse)) {
-        ImGui::End();
-        return;
-    }
-    ImGui::Text("%.0f FPS  (%.1f %s)", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg, S(FpsMs));
 
     ImGui::SeparatorText(S(SectionLanguage));
     int cur_lang = s.menu_language.load();
@@ -392,6 +380,33 @@ void Menu() {
         ImGui::EndCombo();
     }
     Hint(S(HintDrawPipe));
+
+    #undef S
+}
+
+namespace {
+
+void Menu() {
+    auto& s = BbSettings::Get();
+    const int lang = s.menu_language.load();
+    #define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 40.0f * base_scale,
+                                   viewport->WorkPos.y + 40.0f * base_scale),
+                            ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(700.0f * base_scale, 520.0f * base_scale), ImGuiCond_Appearing);
+    bool keep_open = true;
+    char title[128];
+    std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)", S(WindowTitle));
+    if (!ImGui::Begin(title, &keep_open, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("%.0f FPS  (%.1f %s)", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
+                frame_ms_avg, S(FpsMs));
+
+    UI::UiManager::Render();
 
     ImGui::Spacing();
     if (ImGui::Button(S(CloseButton))) {
@@ -650,6 +665,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (ms > 0.0f && ms < 1000.0f) {
         frame_ms_avg = frame_ms_avg == 0.0f ? ms : frame_ms_avg * 0.95f + ms * 0.05f;
     }
+    UI::UiManager::Tick();
     if (!Visible()) {
         return;
     }
