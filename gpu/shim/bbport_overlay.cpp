@@ -55,11 +55,22 @@ std::string prompt_title, prompt_text;
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f;
 
+float PixelDensity(SDL_WindowID id);
+
 void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
         return;
     }
-    ImGui::GetIO().MouseDrawCursor = value;
+    // The system cursor shows over the menu (window.cpp); ImGui learns where it is now, not at
+    // the next motion: mouse motion is not passed on while the menu is closed.
+    if (value) {
+        if (SDL_Window* window = SDL_GetMouseFocus()) {
+            float x = 0.0f, y = 0.0f;
+            SDL_GetMouseState(&x, &y);
+            const float density = PixelDensity(SDL_GetWindowID(window));
+            ImGui::GetIO().AddMousePosEvent(x * density, y * density);
+        }
+    }
     if (!value && dirty) {
         dirty = false;
         BbSettings::Save();
@@ -392,16 +403,34 @@ void Menu() {
     #define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 30.0f * base_scale,
-                                   viewport->WorkPos.y + 30.0f * base_scale),
-                            ImGuiCond_Appearing);
+    // Where it was moved last (bbport.ini menu_pos, a fraction of the screen), kept on screen.
+    ImVec2 pos(viewport->WorkPos.x + 30.0f * base_scale, viewport->WorkPos.y + 30.0f * base_scale);
+    if (s.menu_x >= 0.0f && s.menu_y >= 0.0f) {
+        const float margin = 80.0f * base_scale;
+        pos.x = viewport->WorkPos.x +
+                std::clamp(s.menu_x * viewport->WorkSize.x, 0.0f, std::max(viewport->WorkSize.x - margin, 0.0f));
+        pos.y = viewport->WorkPos.y +
+                std::clamp(s.menu_y * viewport->WorkSize.y, 0.0f, std::max(viewport->WorkSize.y - margin, 0.0f));
+    }
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
     ImGui::SetNextWindowSize(ImVec2(820.0f * base_scale, 580.0f * base_scale), ImGuiCond_Appearing);
     bool keep_open = true;
     char title[128];
-    std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)", S(WindowTitle));
+    std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)###bbport_settings", S(WindowTitle));
     if (!ImGui::Begin(title, &keep_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
+    }
+    // Moved: remembered (saved with the settings when the menu closes).
+    if (!ImGui::IsWindowAppearing() && viewport->WorkSize.x > 0.0f && viewport->WorkSize.y > 0.0f) {
+        const ImVec2 at = ImGui::GetWindowPos();
+        const float fx = (at.x - viewport->WorkPos.x) / viewport->WorkSize.x;
+        const float fy = (at.y - viewport->WorkPos.y) / viewport->WorkSize.y;
+        if (std::abs(at.x - pos.x) >= 1.0f || std::abs(at.y - pos.y) >= 1.0f) {
+            s.menu_x = fx;
+            s.menu_y = fy;
+            dirty = true;
+        }
     }
     ImGui::Text("%.0f FPS  (%.1f %s)", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
                 frame_ms_avg, S(FpsMs));
@@ -646,6 +675,10 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps);
+}
+
+bool MenuOpen() {
+    return menu_open;
 }
 
 bool CapturesInput() {

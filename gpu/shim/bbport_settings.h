@@ -18,25 +18,27 @@ inline bool IsFsr4(int upscaler) {
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum Language : int { LangEnglish = 0, LangPortuguese = 1, LangRussian = 2, LangCount = 3 };
+enum class MenuLanguage : int { English = LangEnglish, Portuguese = LangPortuguese, Russian = LangRussian };
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
 struct Effect {
     const char* key;
     const char* label;
+    const char* label_ru;
     bool default_on;
 };
 inline constexpr Effect Effects[] = {
-    {"effect_chromatic_aberration", "Хроматическая аберрация", true},
-    {"effect_dof", "Глубина резкости (DoF)", true},
-    {"effect_motion_blur", "Размытие в движении", false},
-    {"effect_ssao", "Затенение SSAO", true},
-    {"effect_game_aa", "Собственное сглаживание игры", true},
-    {"effect_dynamic_shadows", "Тени от динамических источников", true},
-    {"effect_ssr", "Отражения SSR (не было в игре)", false},
-    {"skip_intro", "Пропуск заставок при запуске", true},
-    {"debug_camera", "Свободная камера (Cross + L3)", false},
-    {"debug_menu", "Debug menu (нужны файлы шрифтов)", false},
+    {"effect_chromatic_aberration", "Chromatic aberration", "Хроматическая аберрация", true},
+    {"effect_dof", "Depth of field (DoF)", "Глубина резкости (DoF)", true},
+    {"effect_motion_blur", "Motion blur", "Размытие в движении", false},
+    {"effect_ssao", "Ambient occlusion (SSAO)", "Затенение SSAO", true},
+    {"effect_game_aa", "Game's own anti-aliasing", "Собственное сглаживание игры", true},
+    {"effect_dynamic_shadows", "Shadows from dynamic lights", "Тени от динамических источников", true},
+    {"effect_ssr", "Screen-space reflections (not in original game)", "Отражения SSR (не было в игре)", false},
+    {"skip_intro", "Skip startup intros", "Пропуск заставок при запуске", true},
+    {"debug_camera", "Free camera (Cross + L3)", "Свободная камера (Cross + L3)", false},
+    {"debug_menu", "Debug menu (requires font files)", "Debug menu (нужны файлы шрифтов)", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
 /// Live output resolutions: the upscaler's output and the UI host targets.
@@ -48,6 +50,7 @@ inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 enum DrawPipeMode : int { DrawPipeOff = 0, DrawPipeOn = 1, DrawPipeHybrid = 2, DrawPipeCount = 3 };
 
 struct Values {
+    std::atomic<int> menu_language{LangPortuguese};
     std::atomic<int> upscaler{UpscalerFsr3};
     std::atomic<int> preset{NativeAA};
     std::atomic<bool> sharpen{true};
@@ -60,6 +63,8 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+    /// The settings menu's position (fraction of the screen), -1 until it is moved.
+    std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
     std::atomic<bool> fsr4_auto_exposure{true};
     std::atomic<bool> fsr4_invert_jitter{false};
@@ -73,7 +78,6 @@ struct Values {
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
     std::atomic<int> live_resolution{0};
-    std::atomic<int> menu_language{LangPortuguese};
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
@@ -90,6 +94,8 @@ struct Values {
 };
 
 Values& Get();
+/// Localized overlay text; the Language selector itself stays in English.
+const char* MenuText(const char* english, const char* russian);
 
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
