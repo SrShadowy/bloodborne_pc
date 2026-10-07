@@ -395,7 +395,7 @@ void Menu() {
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + 40.0f * base_scale,
                                    viewport->WorkPos.y + 40.0f * base_scale),
                             ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(700.0f * base_scale, 520.0f * base_scale), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(760.0f * base_scale, 540.0f * base_scale), ImGuiCond_Appearing);
     bool keep_open = true;
     char title[128];
     std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)", S(WindowTitle));
