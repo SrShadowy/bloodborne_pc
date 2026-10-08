@@ -6,6 +6,7 @@
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_overlay.h"
+#include "bbport_settings.h"
 
 namespace Frontend {
 
@@ -112,6 +113,27 @@ bool WindowSDL::PollEvents() {
             continue;
         }
         switch (event.type) {
+        case SDL_EVENT_KEY_DOWN:
+            if (!text_active && !BbOverlay::CapturesInput() && event.key.key == SDLK_F10) {
+                mouse_capture_enabled = !mouse_capture_enabled;
+            }
+            break;
+        case SDL_EVENT_MOUSE_MOTION: {
+            last_mouse_motion_ms = SDL_GetTicks();
+            if (!BbOverlay::CapturesInput()) {
+                std::scoped_lock lock{mouse_mutex};
+                mouse_accum_x += event.motion.xrel;
+                mouse_accum_y += event.motion.yrel;
+            }
+            break;
+        }
+        case SDL_EVENT_MOUSE_WHEEL: {
+            if (!BbOverlay::CapturesInput()) {
+                std::scoped_lock lock{mouse_mutex};
+                mouse_accum_wheel += (event.wheel.y > 0.0f ? 1 : event.wheel.y < 0.0f ? -1 : 0);
+            }
+            break;
+        }
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_RESIZED: {
             int w = 0, h = 0;
@@ -133,15 +155,33 @@ bool WindowSDL::PollEvents() {
 }
 
 // Issue #3: the OS cursor over the game. Hidden in fullscreen, and in a window after 3 s without
-// moving the mouse; always shown while the settings menu is open.
+// moving the mouse; relative mode locks cursor during gameplay; always shown while settings menu is open.
 void WindowSDL::UpdateCursor() {
-    const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-    const bool hide = !BbOverlay::MenuOpen() &&
-                      (fullscreen || SDL_GetTicks() - last_mouse_motion_ms > 3000);
-    if (hide != cursor_hidden) {
-        cursor_hidden = hide;
-        hide ? SDL_HideCursor() : SDL_ShowCursor();
+    const bool in_menu = BbOverlay::CapturesInput() || text_active;
+    const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    const bool capture = mouse_capture_enabled && BbSettings::Get().mouse_capture.load() && !in_menu && focused;
+    if (capture != relative_mouse_active) {
+        relative_mouse_active = capture;
+        SDL_SetWindowRelativeMouseMode(window, capture);
     }
+    if (!capture) {
+        const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        const bool hide = !in_menu && (fullscreen || SDL_GetTicks() - last_mouse_motion_ms > 3000);
+        if (hide != cursor_hidden) {
+            cursor_hidden = hide;
+            hide ? SDL_HideCursor() : SDL_ShowCursor();
+        }
+    }
+}
+
+void WindowSDL::GetMouseMotion(float* dx, float* dy, int* wheel) {
+    std::scoped_lock lock{mouse_mutex};
+    if (dx) *dx = mouse_accum_x;
+    if (dy) *dy = mouse_accum_y;
+    if (wheel) *wheel = mouse_accum_wheel;
+    mouse_accum_x = 0.0f;
+    mouse_accum_y = 0.0f;
+    mouse_accum_wheel = 0;
 }
 
 } // namespace Frontend

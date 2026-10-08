@@ -94,6 +94,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                 v.output_res = r;
             }
         }
+    } else if (key == "mouse_sensitivity") {
+        v.mouse_sensitivity = Clamp(f, 0.05f, 10.0f);
+    } else if (key == "mouse_invert_y") {
+        v.mouse_invert_y = i != 0;
+    } else if (key == "mouse_invert_x") {
+        v.mouse_invert_x = i != 0;
+    } else if (key == "mouse_capture") {
+        v.mouse_capture = i != 0;
     } else {
         for (int e = 0; e < EffectCount; ++e) {
             if (key == Effects[e].key) {
@@ -262,6 +270,10 @@ void Save() {
                           std::to_string(OutputHeights[v.output_res]));
     // Read by run.sh at start.
     put("live_resolution", v.live_resolution < 0 ? "auto" : flag(v.live_resolution != 0));
+    put("mouse_sensitivity", fixed(v.mouse_sensitivity.load(), 2));
+    put("mouse_invert_y", flag(v.mouse_invert_y.load()));
+    put("mouse_invert_x", flag(v.mouse_invert_x.load()));
+    put("mouse_capture", flag(v.mouse_capture.load()));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
     }

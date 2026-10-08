@@ -5,6 +5,16 @@
 
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
+static float test_mouse_dx = 0.0f, test_mouse_dy = 0.0f;
+static int test_mouse_wheel = 0;
+void bbgpu_get_mouse_motion(float *dx, float *dy, int *wheel) {
+    if (dx) *dx = test_mouse_dx;
+    if (dy) *dy = test_mouse_dy;
+    if (wheel) *wheel = test_mouse_wheel;
+    test_mouse_dx = 0.0f;
+    test_mouse_dy = 0.0f;
+    test_mouse_wheel = 0;
+}
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;
@@ -29,7 +39,8 @@ int main(void) {
     int config_fd=mkstemp(config);
     assert(config_fd>=0);
     const char controls[]="upscaler=fsr3\npad.cross=b\npad.circle=a\npad.r2=rightshoulder\n"
-                          "pad.r1=righttrigger\nkey.cross=X, Space\npad.bogus=a\n";
+                          "pad.r1=righttrigger\nkey.cross=X, Space\nmouse.triangle=x1\n"
+                          "mouse_sensitivity=1.2\nmouse_invert_y=1\npad.bogus=a\n";
     assert(write(config_fd,controls,sizeof(controls)-1)==(ssize_t)(sizeof(controls)-1));
     close(config_fd);
     setenv("BB_CONFIG",config,1);
@@ -112,8 +123,27 @@ int main(void) {
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;
     assert(SDL_DetachVirtualJoystick(id));
+
+    /* Mouse bindings & camera look assertions */
+    assert(bindings[IN_R1].mouse_count >= 1 && bindings[IN_R1].mouse[0] == MOUSE_BTN_LEFT);
+    assert(bindings[IN_L2].mouse_count >= 1 && bindings[IN_L2].mouse[0] == MOUSE_BTN_RIGHT);
+    assert(bindings[IN_R3].mouse_count >= 1 && bindings[IN_R3].mouse[0] == MOUSE_BTN_MIDDLE);
+    assert(bindings[IN_TRIANGLE].mouse_count == 1 && bindings[IN_TRIANGLE].mouse[0] == MOUSE_BTN_X1);
+
+    test_mouse_dx = 15.0f;
+    test_mouse_dy = 10.0f;
+    assert(pad_read_state(1,&data)==0);
+    assert(data.right_x > 128); // mouse look right
+    assert(data.right_y < 128); // mouse look inverted up (dy was positive down)
+
+    /* Next frame without mouse motion should return sticks to neutral 128 */
+    test_mouse_dx = 0.0f;
+    test_mouse_dy = 0.0f;
+    assert(pad_read_state(1,&data)==0);
+    assert(data.right_x == 128 && data.right_y == 128);
+
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls");
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse look & bindings");
 }

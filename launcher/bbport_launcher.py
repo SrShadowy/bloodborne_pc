@@ -343,35 +343,55 @@ def combo_value(row):
     return row.values[row.get_selected()]
 
 
-# Controls (runtime_pad.c): input, label, default keyboard keys, default gamepad buttons (SDL names).
-# bbport.ini key.<input>= / pad.<input>= replace a default; no line keeps it.
+# Controls (runtime_pad.c): input, label, default keyboard keys, default gamepad buttons, default mouse buttons.
+# bbport.ini key.<input>= / pad.<input>= / mouse.<input>= replace a default; no line keeps it.
 CONTROLS = [
-    ("cross", "Крест", "Space", "a"),
-    ("circle", "Круг", "Left Shift", "b"),
-    ("square", "Квадрат", "E", "x"),
-    ("triangle", "Треугольник", "Q", "y"),
-    ("l1", "L1", "1", "leftshoulder"),
-    ("r1", "R1", "3", "rightshoulder"),
-    ("l2", "L2", "R", "lefttrigger"),
-    ("r2", "R2", "F", "righttrigger"),
-    ("l3", "L3", "Z", "leftstick"),
-    ("r3", "R3", "C", "rightstick"),
-    ("options", "Options", "Return", "start"),
-    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad"),
-    ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", ""),
-    ("up", "Крестовина вверх", "I", "dpup"),
-    ("down", "Крестовина вниз", "K", "dpdown"),
-    ("left", "Крестовина влево", "J", "dpleft"),
-    ("right", "Крестовина вправо", "L", "dpright"),
-    ("move_up", "Движение вперёд", "W", None),
-    ("move_down", "Движение назад", "S", None),
-    ("move_left", "Движение влево", "A", None),
-    ("move_right", "Движение вправо", "D", None),
-    ("look_up", "Камера вверх", "Up", None),
-    ("look_down", "Камера вниз", "Down", None),
-    ("look_left", "Камера влево", "Left", None),
-    ("look_right", "Камера вправо", "Right", None),
+    ("cross", "Крест", "Space", "a", None),
+    ("circle", "Круг", "Left Shift", "b", None),
+    ("square", "Квадрат", "E", "x", None),
+    ("triangle", "Треугольник", "Q", "y", None),
+    ("l1", "L1", "1", "leftshoulder", None),
+    ("r1", "R1", "3", "rightshoulder", "left"),
+    ("l2", "L2", "R", "lefttrigger", "right"),
+    ("r2", "R2", "F", "righttrigger", None),
+    ("l3", "L3", "Z", "leftstick", None),
+    ("r3", "R3", "C", "rightstick", "middle"),
+    ("options", "Options", "Return", "start", None),
+    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad", None),
+    ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", "", None),
+    ("up", "Крестовина вверх", "I", "dpup", None),
+    ("down", "Крестовина вниз", "K", "dpdown", None),
+    ("left", "Крестовина влево", "J", "dpleft", None),
+    ("right", "Крестовина вправо", "L", "dpright", None),
+    ("move_up", "Движение вперёд", "W", None, None),
+    ("move_down", "Движение назад", "S", None, None),
+    ("move_left", "Движение влево", "A", None, None),
+    ("move_right", "Движение вправо", "D", None, None),
+    ("look_up", "Камера вверх", "Up", None, "motion_up"),
+    ("look_down", "Камера вниз", "Down", None, "motion_down"),
+    ("look_left", "Камера влево", "Left", None, "motion_left"),
+    ("look_right", "Камера вправо", "Right", None, "motion_right"),
 ]
+
+
+def format_mouse_btn(val):
+    if not val:
+        return "—"
+    names = {
+        "left": tr("Левая кнопка"),
+        "right": tr("Правая кнопка"),
+        "middle": tr("Колёсико"),
+        "x1": tr("Боковая 1"),
+        "x2": tr("Боковая 2"),
+        "wheelup": tr("Колесо вверх"),
+        "wheeldown": tr("Колесо вниз"),
+        "motion_up": tr("Движение вверх (аналог)"),
+        "motion_down": tr("Движение вниз (аналог)"),
+        "motion_left": tr("Движение влево (аналог)"),
+        "motion_right": tr("Движение вправо (аналог)"),
+    }
+    parts = [p.strip() for p in str(val).split(",") if p.strip()]
+    return ", ".join(names.get(p.lower(), p) for p in parts) if parts else "—"
 
 
 def connected_gamepads():
@@ -820,35 +840,92 @@ class LauncherWindow(Adw.ApplicationWindow):
     def build_controls_page(self):
         page = Adw.PreferencesPage()
 
-        controls = Adw.PreferencesGroup(title=tr("Контроллер"))
+        # --- Keyboard & Mouse (Combined) -------------------------------------------------
+        kbm_group = Adw.PreferencesGroup(
+            title=tr("Клавиатура и мышь"),
+            description=tr("Управление камерой аналоговым движением мыши, как правым стиком. Нажмите иконку клавиатуры или мыши для назначения."))
+
+        self.mouse_sens_row = Adw.SpinRow.new_with_range(0.1, 5.0, 0.1)
+        self.mouse_sens_row.set_title(tr("Чувствительность камеры (мышь)"))
+        self.mouse_sens_row.set_subtitle(tr("Скорость поворота камеры аналоговым движением мыши"))
+        try:
+            cur_sens = float(self.ini.get("mouse_sensitivity", "1.00") or 1.0)
+        except (ValueError, TypeError):
+            cur_sens = 1.0
+        self.mouse_sens_row.set_value(cur_sens)
+        self.mouse_sens_row.connect("notify::value", lambda *_: self.on_mouse_setting_changed())
+        kbm_group.add(self.mouse_sens_row)
+
+        self.mouse_inv_y_row = Adw.SwitchRow(title=tr("Инвертировать по вертикали (Y)"),
+                                             active=self.ini.get("mouse_invert_y") == "1")
+        self.mouse_inv_y_row.connect("notify::active", lambda *_: self.on_mouse_setting_changed())
+        kbm_group.add(self.mouse_inv_y_row)
+
+        self.mouse_inv_x_row = Adw.SwitchRow(title=tr("Инвертировать по горизонтали (X)"),
+                                             active=self.ini.get("mouse_invert_x") == "1")
+        self.mouse_inv_x_row.connect("notify::active", lambda *_: self.on_mouse_setting_changed())
+        kbm_group.add(self.mouse_inv_x_row)
+
+        self.mouse_capture_row = Adw.SwitchRow(
+            title=tr("Захват курсора в игре"),
+            subtitle=tr("Блокирует курсор в окне во время игры; Insert или F10 освобождают"),
+            active=self.ini.get("mouse_capture", "1") != "0")
+        self.mouse_capture_row.connect("notify::active", lambda *_: self.on_mouse_setting_changed())
+        kbm_group.add(self.mouse_capture_row)
+
+        self.kbm_expander = Adw.ExpanderRow(
+            title=tr("Назначение клавиш и мыши"),
+            subtitle=tr("Клавиатура и мышь объединены; применяется при запуске игры"))
+        kbm_expander = self.kbm_expander
+        self.kbm_rows = {}
+        self.control_rows = {}
+        for name, label, key_default, pad_default, mouse_default in CONTROLS:
+            if key_default is None and mouse_default is None:
+                continue
+            row = Adw.ActionRow(title=tr(label))
+            row.add_suffix(flat_button("input-keyboard-symbolic", tr("Назначить клавишу"),
+                                       lambda _b, n=name: self.assign_control("key", n)))
+            if not name.startswith("move_"):
+                row.add_suffix(flat_button("input-mouse-symbolic", tr("Назначить кнопку мыши"),
+                                           lambda _b, n=name: self.assign_control("mouse", n)))
+            row.add_suffix(flat_button("edit-undo-symbolic", tr("Сбросить"),
+                                       lambda _b, n=name: self.reset_kbm_control(n)))
+            kbm_expander.add_row(row)
+            self.kbm_rows[name] = (row, key_default, mouse_default)
+            self.control_rows[("key", name)] = (row, key_default)
+            self.control_rows[("mouse", name)] = (row, mouse_default)
+            self.show_kbm_control(name)
+        kbm_group.add(kbm_expander)
+        page.add(kbm_group)
+
+        # --- Gamepad ---------------------------------------------------------------------
+        gamepad_group = Adw.PreferencesGroup(title=tr("Геймпад"))
         self.gamepad_row = Adw.ComboRow(title=tr("Контроллер"))
         self.gamepad_row.connect("notify::selected", lambda *_: self.show_gamepad())
         self.gamepad_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
                                                 lambda _button: self.fill_gamepads()))
         self.fill_gamepads()
-        controls.add(self.gamepad_row)
-        page.add(controls)
+        gamepad_group.add(self.gamepad_row)
 
-        bindings = Adw.PreferencesGroup(title=tr("Назначение клавиш"))
-        self.control_rows = {}
-        for kind, title, icon in (("key", tr("Клавиатура"), "input-keyboard-symbolic"),
-                                  ("pad", tr("Геймпад"), "input-gaming-symbolic")):
-            expander = Adw.ExpanderRow(title=title,
-                                       subtitle=tr("Назначение кнопок; применяется при запуске игры"))
-            for name, label, key_default, pad_default in CONTROLS:
-                default = key_default if kind == "key" else pad_default
-                if default is None:
-                    continue
-                row = Adw.ActionRow(title=tr(label))
-                row.add_suffix(flat_button(icon, tr("Назначить"),
-                                           lambda _b, k=kind, n=name: self.assign_control(k, n)))
-                row.add_suffix(flat_button("edit-undo-symbolic", tr("Сбросить"),
-                                           lambda _b, k=kind, n=name: self.set_control(k, n, None)))
-                expander.add_row(row)
-                self.control_rows[(kind, name)] = (row, default)
-                self.show_control(kind, name)
-            bindings.add(expander)
-        page.add(bindings)
+        self.pad_expander = Adw.ExpanderRow(
+            title=tr("Назначение кнопок геймпада"),
+            subtitle=tr("Применяется при запуске игры"))
+        pad_expander = self.pad_expander
+        self.pad_rows = {}
+        for name, label, key_default, pad_default, mouse_default in CONTROLS:
+            if pad_default is None:
+                continue
+            row = Adw.ActionRow(title=tr(label))
+            row.add_suffix(flat_button("input-gaming-symbolic", tr("Назначить кнопку"),
+                                       lambda _b, n=name: self.assign_control("pad", n)))
+            row.add_suffix(flat_button("edit-undo-symbolic", tr("Сбросить"),
+                                       lambda _b, n=name: self.set_control("pad", n, None)))
+            pad_expander.add_row(row)
+            self.pad_rows[name] = (row, pad_default)
+            self.control_rows[("pad", name)] = (row, pad_default)
+            self.show_pad_control(name)
+        gamepad_group.add(pad_expander)
+        page.add(gamepad_group)
 
         return page
 
@@ -1020,13 +1097,52 @@ class LauncherWindow(Adw.ApplicationWindow):
             self.store()
         self.choose_folder(tr("Папка игры (с eboot.bin)"), self.game_dir(), chosen)
 
-    def show_control(self, kind, name):
-        row, default = self.control_rows[(kind, name)]
-        value = self.ini.get(f"{kind}.{name}")
-        if value is None:
-            row.set_subtitle(tr("{} (по умолчанию)").format(default) if default else tr("не назначено"))
+    def show_kbm_control(self, name):
+        if not hasattr(self, "kbm_rows") or name not in self.kbm_rows:
+            return
+        row, key_default, mouse_default = self.kbm_rows[name]
+        key_val = self.ini.get(f"key.{name}")
+        mouse_val = self.ini.get(f"mouse.{name}")
+
+        key_str = key_val if key_val is not None else key_default
+        mouse_str = mouse_val if mouse_val is not None else mouse_default
+
+        key_display = key_str if key_str else tr("не назначено")
+        mouse_display = format_mouse_btn(mouse_str) if mouse_str else tr("не назначено")
+
+        if name.startswith("move_"):
+            row.set_subtitle(tr("Клавиатура: {}").format(key_display))
         else:
-            row.set_subtitle(value or tr("не назначено"))
+            row.set_subtitle(tr("Клавиатура: {} • Мышь: {}").format(key_display, mouse_display))
+
+    def show_pad_control(self, name):
+        if not hasattr(self, "pad_rows") or name not in self.pad_rows:
+            return
+        row, pad_default = self.pad_rows[name]
+        val = self.ini.get(f"pad.{name}")
+        if val is None:
+            row.set_subtitle(tr("{} (по умолчанию)").format(pad_default) if pad_default else tr("не назначено"))
+        else:
+            row.set_subtitle(val or tr("не назначено"))
+
+    def show_control(self, kind, name):
+        if kind in ("key", "mouse"):
+            self.show_kbm_control(name)
+        elif kind == "pad":
+            self.show_pad_control(name)
+        elif hasattr(self, "control_rows") and (kind, name) in self.control_rows:
+            row, default = self.control_rows[(kind, name)]
+            value = self.ini.get(f"{kind}.{name}")
+            if value is None:
+                row.set_subtitle(tr("{} (по умолчанию)").format(default) if default else tr("не назначено"))
+            else:
+                row.set_subtitle(value or tr("не назначено"))
+
+    def reset_kbm_control(self, name):
+        self.ini[f"key.{name}"] = None
+        self.ini[f"mouse.{name}"] = None
+        self.show_kbm_control(name)
+        self.store()
 
     def set_control(self, kind, name, value):
         """value: the binding, or None for the default."""
@@ -1042,8 +1158,22 @@ class LauncherWindow(Adw.ApplicationWindow):
         except GLib.Error as error:
             self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
             return
-        row, _default = self.control_rows[(kind, name)]
-        row.set_subtitle(tr("Нажмите клавишу или кнопку… (Esc — отмена)"))
+        if kind in ("key", "mouse") and hasattr(self, "kbm_rows") and name in self.kbm_rows:
+            row = self.kbm_rows[name][0]
+        elif kind == "pad" and hasattr(self, "pad_rows") and name in self.pad_rows:
+            row = self.pad_rows[name][0]
+        elif hasattr(self, "control_rows") and (kind, name) in self.control_rows:
+            row, _default = self.control_rows[(kind, name)]
+        else:
+            return
+
+        if kind == "mouse":
+            prompt = tr("Кликните кнопкой мыши… (Esc — отмена)")
+        elif kind == "key":
+            prompt = tr("Нажмите клавишу на клавиатуре… (Esc — отмена)")
+        else:
+            prompt = tr("Нажмите кнопку на геймпаде… (Esc — отмена)")
+        row.set_subtitle(prompt)
 
         def done(proc, result):
             try:
@@ -1056,6 +1186,14 @@ class LauncherWindow(Adw.ApplicationWindow):
             else:
                 self.show_control(kind, name)
         process.communicate_utf8_async(None, None, done)
+
+    def on_mouse_setting_changed(self):
+        if hasattr(self, "mouse_sens_row"):
+            self.ini["mouse_sensitivity"] = f"{self.mouse_sens_row.get_value():.2f}"
+            self.ini["mouse_invert_y"] = "1" if self.mouse_inv_y_row.get_active() else "0"
+            self.ini["mouse_invert_x"] = "1" if self.mouse_inv_x_row.get_active() else "0"
+            self.ini["mouse_capture"] = "1" if self.mouse_capture_row.get_active() else "0"
+            self.store()
 
     def fill_gamepads(self):
         """The controller choices: the first connected one, the connected ones, and the saved
@@ -1116,6 +1254,12 @@ class LauncherWindow(Adw.ApplicationWindow):
             "output_res": combo_value(self.output_row),
             "model_lod": combo_value(self.lod_row),
             "live_resolution": combo_value(self.live_row),
+            **({
+                "mouse_sensitivity": f"{self.mouse_sens_row.get_value():.2f}",
+                "mouse_invert_y": "1" if self.mouse_inv_y_row.get_active() else "0",
+                "mouse_invert_x": "1" if self.mouse_inv_x_row.get_active() else "0",
+                "mouse_capture": "1" if self.mouse_capture_row.get_active() else "0",
+            } if hasattr(self, "mouse_sens_row") else {}),
             **{key: "1" if row.get_active() else "0" for key, row in self.effect_rows.items()},
         })
         save_ini(self.ini, self.ini_lines)

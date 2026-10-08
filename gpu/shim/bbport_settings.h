@@ -83,6 +83,12 @@ struct Values {
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
     std::atomic<bool> fsr411_fp8{false}, fsr411_fp8emu{false};
 
+    /// Mouse look and button controls.
+    std::atomic<float> mouse_sensitivity{1.0f};
+    std::atomic<bool> mouse_invert_y{false};
+    std::atomic<bool> mouse_invert_x{false};
+    std::atomic<bool> mouse_capture{true};
+
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
     int startup_upscaler = UpscalerFsr3;

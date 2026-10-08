@@ -403,7 +403,15 @@ void RenderGraphicsSettings() {
         }
         ImGui::EndCombo();
     }
-    Hint(S(HintDrawPipe));
+    ImGui::Spacing();
+    ImGui::SeparatorText(UI::L("Mouse & Controls", "Mouse e Controles", "Мышь и управление"));
+    Slider(UI::L("Mouse Sensitivity", "Sensibilidade do Mouse", "Чувствительность мыши"), s.mouse_sensitivity, 0.1f, 5.0f);
+    Checkbox(UI::L("Invert Mouse Y", "Inverter Eixo Y do Mouse", "Инвертировать мышь по Y"), s.mouse_invert_y);
+    Checkbox(UI::L("Invert Mouse X", "Inverter Eixo X do Mouse", "Инвертировать мышь по X"), s.mouse_invert_x);
+    Checkbox(UI::L("Capture Mouse Cursor", "Capturar Cursor no Jogo", "Захватывать курсор в игре"), s.mouse_capture);
+    Hint(UI::L("Locks cursor inside the game window during gameplay. Press Insert or F10 to release.",
+               "Trava o cursor na janela do jogo durante a partida. Pressione Insert ou F10 para liberar.",
+               "Блокирует курсор в окне игры во время игры. Нажмите Insert или F10 для освобождения."));
 
     ImGui::Spacing();
     ImGui::SeparatorText(UI::L("Memory & Reverse Engineering", "Operações de Memória", "Операции с памятью"));

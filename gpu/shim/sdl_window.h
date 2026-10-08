@@ -34,6 +34,8 @@ public:
     void BeginTextInput(const std::string& initial, const std::string& prompt);
     /// 0 while typing, 1 confirmed (Enter), 2 cancelled (Escape); text is UTF-8.
     int PollTextInput(std::string& text);
+    /// Consumes accumulated relative mouse movement and wheel clicks since last call.
+    void GetMouseMotion(float* dx, float* dy, int* wheel);
 
 private:
     std::atomic<s32> width, height;
@@ -46,6 +48,11 @@ private:
     void UpdateCursor();
     u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
     bool cursor_hidden{};
+    std::mutex mouse_mutex;
+    float mouse_accum_x{}, mouse_accum_y{};
+    int mouse_accum_wheel{};
+    bool relative_mouse_active{};
+    bool mouse_capture_enabled{true};
     SDL_Window* window{};
     WindowSystemInfo window_info{};
 };
