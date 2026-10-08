@@ -410,9 +410,9 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     },
     // DrawPipeModeOff
     {
-        "Off (Vanilla shadPS4)",
-        "Desligado (Modo shadPS4)",
-        "Выключен (shadPS4 vanilla)"
+        "Off (Standard)",
+        "Desligado (Modo Padrão)",
+        "Выключен (Стандартный)"
     },
     // DrawPipeModeOn
     {

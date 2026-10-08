@@ -7,21 +7,25 @@ namespace UI {
 
 enum class TabId {
     None = -1,
-    Settings = 0,
-    Scanner = 1,
-    Watchlist = 2,
-    HexView = 3,
-    Debugger = 4
+    Scanner = 0,
+    Watchlist = 1,
+    HexView = 2,
+    Debugger = 3
 };
 
 class UiManager {
 public:
     static void InitStyle();
     static void Render();
+    static void RenderMemoryWindow();
     static void Tick();
 
     static void RequestTab(TabId id);
     static void SetStatus(const std::string& msg);
+
+    static bool IsMemoryWindowOpen();
+    static void SetMemoryWindowOpen(bool open);
+    static void ToggleMemoryWindow();
 };
 
 } // namespace UI

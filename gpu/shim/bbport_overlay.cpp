@@ -13,6 +13,7 @@
 #include "bbport_settings.h"
 #include "bbport_strings.h"
 #include "ui_manager.h"
+#include "ui_strings.h"
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -392,6 +393,32 @@ void RenderGraphicsSettings() {
     }
     Hint(S(HintDrawPipe));
 
+    ImGui::Spacing();
+    ImGui::SeparatorText(UI::L("Memory & Reverse Engineering", "Operações de Memória", "Операции с памятью"));
+    const bool mem_open = UI::UiManager::IsMemoryWindowOpen();
+    if (mem_open) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.45f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.55f, 0.48f, 1.0f));
+        if (ImGui::Button(UI::L("Hide Memory Tools Window###btn_memtools",
+                                "Ocultar Janela de Memória###btn_memtools",
+                                "Скрыть окно памяти###btn_memtools"), ImVec2(-1, 32.0f * base_scale))) {
+            UI::UiManager::SetMemoryWindowOpen(false);
+        }
+        ImGui::PopStyleColor(2);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.32f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.42f, 0.54f, 1.0f));
+        if (ImGui::Button(UI::L("Open Memory Tools Window (Scanner, Watchlist, Debugger)###btn_memtools",
+                                "Abrir Janela de Memória (Scanner, Watchlist, Debugger)###btn_memtools",
+                                "Открыть окно памяти (Сканер, Таблица, Отладчик)###btn_memtools"), ImVec2(-1, 32.0f * base_scale))) {
+            UI::UiManager::SetMemoryWindowOpen(true);
+        }
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::TextDisabled("%s", UI::L("Opens a separate floating window for memory scanning and live debugging",
+                                   "Abre uma janela flutuante separada para varredura e depuração de memória",
+                                   "Открывает отдельное плавающее окно для сканирования и отладки памяти"));
+
     #undef S
 }
 
@@ -413,7 +440,7 @@ void Menu() {
                 std::clamp(s.menu_y * viewport->WorkSize.y, 0.0f, std::max(viewport->WorkSize.y - margin, 0.0f));
     }
     ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(820.0f * base_scale, 580.0f * base_scale), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(560.0f * base_scale, 620.0f * base_scale), ImGuiCond_Appearing);
     bool keep_open = true;
     char title[128];
     std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)###bbport_settings", S(WindowTitle));
@@ -435,7 +462,7 @@ void Menu() {
     ImGui::Text("%.0f FPS  (%.1f %s)", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
                 frame_ms_avg, S(FpsMs));
 
-    UI::UiManager::Render();
+    RenderGraphicsSettings();
 
     ImGui::Spacing();
     if (ImGui::Button(S(CloseButton))) {
@@ -448,6 +475,9 @@ void Menu() {
     if (!keep_open) {
         SetOpen(false);
     }
+
+    // Render the separate Memory Operations & Reverse Engineering window
+    UI::UiManager::RenderMemoryWindow();
 }
 
 void FpsCounter() {
