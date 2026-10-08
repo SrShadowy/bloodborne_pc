@@ -1894,8 +1894,10 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     // Vulkan maxComputeWorkGroupCount is 65535 on standard hardware.
     // Out-of-range dispatches (e.g. 2.6 billion workgroups from uninitialized/corrupt particle emitter
     // args in cs 2da7fe60) hang the GPU command processor and cause VK_ERROR_DEVICE_LOST (RADV context lost).
+    // Uses memory->ClampRangeSize (lock-free thread-local CachedMapped) to avoid rwlock contention.
     u32 dims[3] = {0, 0, 0};
-    if (Breadcrumbs::ReadGuest(address + offset, dims, sizeof(dims)) == sizeof(dims)) {
+    if (address != 0 && memory->ClampRangeSize(address + offset, sizeof(dims)) == sizeof(dims)) {
+        std::memcpy(dims, reinterpret_cast<const void*>(address + offset), sizeof(dims));
         if (dims[0] > 65535 || dims[1] > 65535 || dims[2] > 65535) {
             const auto& cs_crumb = pipeline->GetStage(Shader::SwStage::Compute);
             LOG_WARNING(Render_Vulkan,
