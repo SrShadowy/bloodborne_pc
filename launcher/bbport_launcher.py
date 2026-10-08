@@ -965,8 +965,11 @@ class LauncherWindow(Adw.ApplicationWindow):
             directory = fsr411_dir()
             problem = fsr411_problem(directory, combo_value(self.output_row),
                                      int(combo_value(self.preset_row)))
-            hint = tr("Ассеты для выбранного режима найдены") if not problem else (
-                tr("{}. Соберите FSR 4.1.1 из своей DLL кнопкой «Выбрать DLL…» ниже").format(problem))
+            if not problem:
+                has_fp8 = (directory / "fp8").is_dir()
+                hint = tr("Ассеты найдены (FP8 / Float8 RDNA4)") if has_fp8 else tr("Ассеты для выбранного режима найдены")
+            else:
+                hint = tr("{}. Соберите FSR 4.1.1 из своей DLL кнопкой «Выбрать DLL…» ниже").format(problem)
         else:
             hint = tr("Сглаживание в разрешении вывода без модели FSR") if value == "taa" else None
         self.preset_row.set_sensitive(value not in ("taa", "off"))

@@ -1890,6 +1890,21 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     scheduler.PopPendingOperations();
     const u32 offset = 0;
 
+    // Guard: validate indirect dispatch dimensions.
+    // Vulkan maxComputeWorkGroupCount is 65535 on standard hardware.
+    // Out-of-range dispatches (e.g. 2.6 billion workgroups from uninitialized/corrupt particle emitter
+    // args in cs 2da7fe60) hang the GPU command processor and cause VK_ERROR_DEVICE_LOST (RADV context lost).
+    u32 dims[3] = {0, 0, 0};
+    if (Breadcrumbs::ReadGuest(address + offset, dims, sizeof(dims)) == sizeof(dims)) {
+        if (dims[0] > 65535 || dims[1] > 65535 || dims[2] > 65535) {
+            const auto& cs_crumb = pipeline->GetStage(Shader::SwStage::Compute);
+            LOG_WARNING(Render_Vulkan,
+                        "DispatchIndirect: skipping invalid group count {}x{}x{} for shader {:#x} at {:#x}",
+                        dims[0], dims[1], dims[2], cs_crumb.pgm_hash, address + offset);
+            return;
+        }
+    }
+
     if (!BindResources(pipeline)) {
         return;
     }

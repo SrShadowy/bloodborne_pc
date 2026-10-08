@@ -90,6 +90,12 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
         "FSR 4.1.1 em modo INT8: modelo da DLL AMD 4.1.1, reproduzido em Vulkan (resultado idêntico à DLL). Um modelo para Native..Performance e outro para Ultra Performance. Recursos: tools/fsr4cap/build_assets.sh.",
         "FSR 4.1.1 в режиме INT8: модель из DLL AMD 4.1.1, воспроизведённая в Vulkan (результат совпадает с DLL). Одна модель для Native..Performance и отдельная для Ultra Performance. Ассеты: tools/fsr4cap/build_assets.sh (нужны DLL и Proton)."
     },
+    // HintFsr411Fp8
+    {
+        "FSR 4.1.1 in FP8 mode (Float8 cooperative matrices on RDNA4): model from AMD 4.1.1 DLL, replayed in Vulkan with native float precision.",
+        "FSR 4.1.1 em modo FP8 (Float8 / matrizes cooperativas no RDNA4): modelo da DLL AMD 4.1.1, reproduzido em Vulkan com precisão float nativa.",
+        "FSR 4.1.1 в режиме FP8 (Float8 / кооперативные матрицы RDNA4): модель из DLL AMD 4.1.1, воспроизведённая в Vulkan с точностью float."
+    },
     // HintFsr4
     {
         "FSR 4 in INT8 mode (v07 model from AMD FidelityFX SDK source). Higher quality than FSR 3.1, heavier pass. Preset change rebuilds model (brief pause). Assets: tools/fetch_fsr4_assets.sh.",

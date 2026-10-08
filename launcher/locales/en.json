@@ -122,6 +122,8 @@
   "Меньше гостинга на персонажах; стоит около 10% FPS": "Less ghosting on characters; costs about 10% FPS",
   "Показывать FPS": "Show FPS",
   "Ассеты найдены": "Assets found",
+  "Ассеты найдены (FP8 / Float8 RDNA4)": "Assets found (FP8 / Float8 RDNA4)",
+  "Ассеты для выбранного режима найдены": "Assets for selected mode found",
   "Нет ассетов: tools/fetch_fsr4_assets.sh": "No assets: tools/fetch_fsr4_assets.sh",
   "Ассеты для выбранного режима найдены": "Assets for the selected mode found",
   "{}. Установите полный набор fsr4_411 в {}.": "{}. Install the full fsr4_411 set into {}.",

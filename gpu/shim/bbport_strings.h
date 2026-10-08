@@ -18,6 +18,7 @@ enum class StringId : int {
     Fsr4Unavailable,
     Fsr4ActiveModeSelected,
     HintFsr411,
+    HintFsr411Fp8,
     HintFsr4,
     Fsr4AutoExposure,
     Fsr4InvertJitter,

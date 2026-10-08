@@ -81,6 +81,7 @@ struct Values {
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
+    std::atomic<bool> fsr411_fp8{false}, fsr411_fp8emu{false};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
@@ -100,7 +101,7 @@ const char* MenuText(const char* english, const char* russian);
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
 /// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1.
-void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool fsr411_fp8 = false, bool fsr411_fp8emu = false);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
 bool FixedRenderSession();
 int RenderPreset();

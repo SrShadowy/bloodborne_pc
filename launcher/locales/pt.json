@@ -112,6 +112,8 @@
   "Векторы движения объектов": "Vetores de movimento de objetos",
   "Показывать FPS": "Mostrar FPS",
   "Ассеты найдены": "Arquivos encontrados",
+  "Ассеты найдены (FP8 / Float8 RDNA4)": "Arquivos encontrados (FP8 / Float8 nativo RDNA4)",
+  "Ассеты для выбранного режима найдены": "Arquivos para o modo selecionado encontrados",
   "Эффекты игры": "Efeitos do jogo",
   "Патчи игры, применяются при запуске": "Patches do jogo, aplicados ao iniciar",
   "Детализация моделей": "Detalhes dos modelos (LOD)",

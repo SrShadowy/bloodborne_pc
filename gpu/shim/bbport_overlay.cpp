@@ -178,11 +178,19 @@ void RenderGraphicsSettings() {
     }
 
     ImGui::SeparatorText(S(SectionUpscaler));
+    std::string fsr411_label = "FSR 4.1.1";
+    if (s.fsr411_fp8.load()) {
+        fsr411_label += " (FP8 / Float)";
+    } else if (s.fsr411_fp8emu.load()) {
+        fsr411_label += " (FP8 emulado)";
+    } else {
+        fsr411_label += " (INT8)";
+    }
     const char* upscalers[] = {
         S(UpscalerOff),
         "FSR 3.1",
         "FSR 4 (INT8)",
-        "FSR 4.1.1 (INT8)",
+        fsr411_label.c_str(),
         S(UpscalerTaa)
     };
     static const char* later[] = {"DLSS", "XeSS"};
@@ -220,7 +228,11 @@ void RenderGraphicsSettings() {
     }
     if (BbSettings::IsFsr4(s.upscaler)) {
         if (s.upscaler == BbSettings::UpscalerFsr411) {
-            Hint(S(HintFsr411));
+            if (s.fsr411_fp8.load()) {
+                Hint(S(HintFsr411Fp8));
+            } else {
+                Hint(S(HintFsr411));
+            }
         } else {
             Hint(S(HintFsr4));
         }
@@ -498,7 +510,7 @@ void FpsCounter() {
                 BbStrings::Get(BbStrings::StringId::FpsMs, lang),
                 s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
                 : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
-                : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
+                : s.upscaler == BbSettings::UpscalerFsr411 ? (s.fsr411_fp8.load() ? "FSR 4.1.1 (FP8)" : "FSR 4.1.1")
                 : s.upscaler == BbSettings::UpscalerTaa ? "TAA"
                                                          : "");
     ImGui::End();

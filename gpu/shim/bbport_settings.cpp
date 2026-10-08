@@ -188,10 +188,12 @@ void Load() {
     v.startup_draw_pipe = v.draw_pipe.load();
 }
 
-void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool fsr411_fp8, bool fsr411_fp8emu) {
     auto& v = Get();
     v.fsr4_supported = fsr4;
     v.fsr411_supported = fsr4 && fsr411;
+    v.fsr411_fp8 = fsr411_fp8;
+    v.fsr411_fp8emu = fsr411_fp8emu;
     const int requested = v.upscaler;
     if ((requested == UpscalerFsr4 && !v.fsr4_supported) ||
         (requested == UpscalerFsr411 && !v.fsr411_supported)) {
