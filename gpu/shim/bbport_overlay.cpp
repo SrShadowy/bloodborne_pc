@@ -83,7 +83,36 @@ void SetOpen(bool value) {
     }
 }
 
-ImGuiKey KeyFromSdl(SDL_Keycode key) {
+ImGuiKey KeyFromSdl(SDL_Keycode key, SDL_Scancode scancode) {
+    if (key >= SDLK_A && key <= SDLK_Z) {
+        return static_cast<ImGuiKey>(ImGuiKey_A + (key - SDLK_A));
+    }
+    if (key >= 'a' && key <= 'z') {
+        return static_cast<ImGuiKey>(ImGuiKey_A + (key - 'a'));
+    }
+    if (key >= SDLK_0 && key <= SDLK_9) {
+        return static_cast<ImGuiKey>(ImGuiKey_0 + (key - SDLK_0));
+    }
+    switch (scancode) {
+    case SDL_SCANCODE_KP_0: return ImGuiKey_Keypad0;
+    case SDL_SCANCODE_KP_1: return ImGuiKey_Keypad1;
+    case SDL_SCANCODE_KP_2: return ImGuiKey_Keypad2;
+    case SDL_SCANCODE_KP_3: return ImGuiKey_Keypad3;
+    case SDL_SCANCODE_KP_4: return ImGuiKey_Keypad4;
+    case SDL_SCANCODE_KP_5: return ImGuiKey_Keypad5;
+    case SDL_SCANCODE_KP_6: return ImGuiKey_Keypad6;
+    case SDL_SCANCODE_KP_7: return ImGuiKey_Keypad7;
+    case SDL_SCANCODE_KP_8: return ImGuiKey_Keypad8;
+    case SDL_SCANCODE_KP_9: return ImGuiKey_Keypad9;
+    case SDL_SCANCODE_KP_PERIOD: return ImGuiKey_KeypadDecimal;
+    case SDL_SCANCODE_KP_DIVIDE: return ImGuiKey_KeypadDivide;
+    case SDL_SCANCODE_KP_MULTIPLY: return ImGuiKey_KeypadMultiply;
+    case SDL_SCANCODE_KP_MINUS: return ImGuiKey_KeypadSubtract;
+    case SDL_SCANCODE_KP_PLUS: return ImGuiKey_KeypadAdd;
+    case SDL_SCANCODE_KP_ENTER: return ImGuiKey_KeypadEnter;
+    case SDL_SCANCODE_KP_EQUALS: return ImGuiKey_KeypadEqual;
+    default: break;
+    }
     switch (key) {
     case SDLK_TAB: return ImGuiKey_Tab;
     case SDLK_LEFT: return ImGuiKey_LeftArrow;
@@ -94,6 +123,7 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_PAGEDOWN: return ImGuiKey_PageDown;
     case SDLK_HOME: return ImGuiKey_Home;
     case SDLK_END: return ImGuiKey_End;
+    case SDLK_INSERT: return ImGuiKey_Insert;
     case SDLK_DELETE: return ImGuiKey_Delete;
     case SDLK_BACKSPACE: return ImGuiKey_Backspace;
     case SDLK_SPACE: return ImGuiKey_Space;
@@ -106,6 +136,14 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_RSHIFT: return ImGuiKey_RightShift;
     case SDLK_LALT: return ImGuiKey_LeftAlt;
     case SDLK_RALT: return ImGuiKey_RightAlt;
+    case SDLK_LGUI: return ImGuiKey_LeftSuper;
+    case SDLK_RGUI: return ImGuiKey_RightSuper;
+    case SDLK_COMMA: return ImGuiKey_Comma;
+    case SDLK_PERIOD: return ImGuiKey_Period;
+    case SDLK_SEMICOLON: return ImGuiKey_Semicolon;
+    case SDLK_CAPSLOCK: return ImGuiKey_CapsLock;
+    case SDLK_PRINTSCREEN: return ImGuiKey_PrintScreen;
+    case SDLK_PAUSE: return ImGuiKey_Pause;
     default: return ImGuiKey_None;
     }
 }
@@ -758,6 +796,24 @@ void SetTextPrompt(bool active, const std::string& prompt, const std::string& te
     prompt_active = active;
 }
 
+static const char* OverlayGetClipboardText(ImGuiContext*) {
+    static char* clipboard_buf = nullptr;
+    if (clipboard_buf) {
+        SDL_free(clipboard_buf);
+        clipboard_buf = nullptr;
+    }
+    if (SDL_HasClipboardText()) {
+        clipboard_buf = SDL_GetClipboardText();
+    }
+    return clipboard_buf;
+}
+
+static void OverlaySetClipboardText(ImGuiContext*, const char* text) {
+    if (text) {
+        SDL_SetClipboardText(text);
+    }
+}
+
 void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) {
     std::scoped_lock lock{imgui_mutex};
     if (initialized) {
@@ -770,6 +826,16 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     io.BackendPlatformName = "bbport";
+
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_GetClipboardTextFn = OverlayGetClipboardText;
+    platform_io.Platform_SetClipboardTextFn = OverlaySetClipboardText;
+    io.GetClipboardTextFn = [](void*) -> const char* {
+        return OverlayGetClipboardText(nullptr);
+    };
+    io.SetClipboardTextFn = [](void*, const char* text) {
+        OverlaySetClipboardText(nullptr, text);
+    };
 
     ImGui::StyleColorsDark();
     UI::UiManager::InitStyle();
@@ -853,7 +919,7 @@ bool HandleEvent(const SDL_Event& event) {
         io.AddKeyEvent(ImGuiMod_Ctrl, (event.key.mod & SDL_KMOD_CTRL) != 0);
         io.AddKeyEvent(ImGuiMod_Shift, (event.key.mod & SDL_KMOD_SHIFT) != 0);
         io.AddKeyEvent(ImGuiMod_Alt, (event.key.mod & SDL_KMOD_ALT) != 0);
-        if (const ImGuiKey key = KeyFromSdl(event.key.key); key != ImGuiKey_None) {
+        if (const ImGuiKey key = KeyFromSdl(event.key.key, event.key.scancode); key != ImGuiKey_None) {
             io.AddKeyEvent(key, down);
         }
         return true;

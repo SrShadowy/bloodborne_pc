@@ -4,12 +4,15 @@
 #include "mem_editor.h"
 #include "cutscene_detector.h"
 #include "breakpoint.h"
+#include "tab_debugger.h"
 #include "tab_hexview.h"
 #include "ui_manager.h"
 
 #include <imgui.h>
+#include <SDL3/SDL.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace UI {
 
@@ -99,6 +102,7 @@ void TabWatchlist::Render() {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.80f, 1.0f, 1.0f));
                 if (ImGui::Selectable(addr_str, false, ImGuiSelectableFlags_None)) {
                     ImGui::SetClipboardText(addr_str);
+                    SDL_SetClipboardText(addr_str);
                     char msg[64];
                     std::snprintf(msg, sizeof(msg), "%s: %s",
                                   L("Copied", "Copiado", "Скопировано"), addr_str);
@@ -154,10 +158,22 @@ void TabWatchlist::Render() {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.32f, 0.50f, 0.80f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.42f, 0.65f, 0.95f));
                 if (ImGui::SmallButton(L("Who Writes?", "Quem Escreve?", "Кто пишет?"))) {
-                    bp.SetWriteWatchpoint(e.address);
+                    const bool ok = bp.SetWriteWatchpoint(e.address);
+                    char addr_buf[32];
+                    std::snprintf(addr_buf, sizeof(addr_buf), "0x%012llx", static_cast<unsigned long long>(e.address));
+                    ImGui::SetClipboardText(addr_buf);
+                    SDL_SetClipboardText(addr_buf);
+
+                    TabDebugger::SetBreakpointAddress(e.address);
+                    TabDebugger::SetDisasmAddress(e.address);
+
                     UiManager::RequestTab(TabId::Debugger);
-                    char msg[64];
-                    std::snprintf(msg, sizeof(msg), "Watching 0x%012llx", static_cast<unsigned long long>(e.address));
+                    char msg[96];
+                    if (ok) {
+                        std::snprintf(msg, sizeof(msg), "[OK] Watching 0x%012llx", static_cast<unsigned long long>(e.address));
+                    } else {
+                        std::snprintf(msg, sizeof(msg), "[ERRO] Falha ao monitorar escrita em 0x%012llx", static_cast<unsigned long long>(e.address));
+                    }
                     UiManager::SetStatus(msg);
                 }
                 ImGui::PopStyleColor(2);
@@ -192,6 +208,13 @@ void TabWatchlist::Render() {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(125.0f);
     ImGui::InputTextWithHint("##m_addr", "0x...", manual_addr, sizeof(manual_addr));
+    ImGui::SameLine();
+    if (ImGui::Button(L("Paste##wl", "Colar##wl", "Вставить##wl"))) {
+        const char* clip = SDL_GetClipboardText();
+        if (clip && clip[0]) {
+            std::snprintf(manual_addr, sizeof(manual_addr), "%s", clip);
+        }
+    }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80.0f);
     const char* type_names_short[] = { "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "Float", "Double" };

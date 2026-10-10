@@ -240,10 +240,11 @@ void BreakpointManager::WorkerLoop() {
                 }
                 if (!any_stepping) {
                     waiting_single_step.store(false, std::memory_order_release);
-                    if (watchpoint_active.load(std::memory_order_relaxed) && watched_page_start) {
-                        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
-                                 PROT_READ | PROT_EXEC);
-                    }
+                        if (mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                                     PROT_READ) != 0) {
+                            mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                                     PROT_READ | PROT_EXEC);
+                        }
                 }
             }
         }
@@ -276,9 +277,25 @@ bool BreakpointManager::SetWriteWatchpoint(uintptr_t address) {
     }
     waiting_single_step.store(false, std::memory_order_release);
 
-    // Make page read-only (+exec) so any write faults into SegvHandler
-    if (mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
-                 PROT_READ | PROT_EXEC) != 0) {
+    // Make page read-only so any write faults into SegvHandler.
+    // Try PROT_READ first (for data/heap pages which do not permit PROT_EXEC),
+    // then PROT_READ | PROT_EXEC (for code pages).
+    int res = mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size, PROT_READ);
+    if (res != 0) {
+        res = mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size, PROT_READ | PROT_EXEC);
+    }
+    if (res != 0) {
+        // Fallback: try 16KB alignment (PS4 direct memory page size)
+        const uintptr_t page16 = address & ~static_cast<uintptr_t>(16383);
+        res = mprotect(reinterpret_cast<void*>(page16), 16384, PROT_READ);
+        if (res == 0) {
+            watched_page_start = page16;
+            watched_page_size = 16384;
+        }
+    }
+    if (res != 0) {
+        fprintf(stderr, "BreakpointManager::SetWriteWatchpoint failed for 0x%lx: %s (errno=%d)\n",
+                static_cast<unsigned long>(address), strerror(errno), errno);
         watched_address.store(0, std::memory_order_release);
         return false;
     }
@@ -290,8 +307,11 @@ bool BreakpointManager::SetWriteWatchpoint(uintptr_t address) {
 void BreakpointManager::ClearWriteWatchpoint() {
     if (!watchpoint_active.load(std::memory_order_relaxed)) return;
     if (watched_page_start) {
-        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
-                 PROT_READ | PROT_WRITE | PROT_EXEC);
+        if (mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                     PROT_READ | PROT_WRITE) != 0) {
+            mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                     PROT_READ | PROT_WRITE | PROT_EXEC);
+        }
     }
     watchpoint_active.store(false, std::memory_order_release);
     watched_address.store(0, std::memory_order_release);
@@ -349,10 +369,13 @@ void BreakpointManager::OnSignalSegv(uintptr_t fault_addr, uintptr_t rip, pid_t 
         game_paused.store(true, std::memory_order_relaxed);
     }
 
-    // Unprotect page with PROT_READ | PROT_WRITE | PROT_EXEC so the instruction can complete
+    // Unprotect page with PROT_READ | PROT_WRITE so the instruction can complete
     if (watched_page_start) {
-        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
-                 PROT_READ | PROT_WRITE | PROT_EXEC);
+        if (mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                     PROT_READ | PROT_WRITE) != 0) {
+            mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                     PROT_READ | PROT_WRITE | PROT_EXEC);
+        }
     }
 
     // Arm per-thread step slot
@@ -417,8 +440,11 @@ bool BreakpointManager::OnSignalTrap(uintptr_t rip, pid_t tid, siginfo_t* info, 
             waiting_single_step.store(false, std::memory_order_release);
             // Re-apply protection if watchpoint is still active
             if (watchpoint_active.load(std::memory_order_relaxed) && watched_page_start) {
-                mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
-                         PROT_READ | PROT_EXEC);
+                if (mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                             PROT_READ) != 0) {
+                    mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                             PROT_READ | PROT_EXEC);
+                }
             }
         }
         return true; // Consumed! Never forward single-step traps to guest hooks!

@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <cctype>
 #include <vector>
 #include <string>
@@ -100,6 +101,14 @@ void TabHexView::Render() {
     ImGui::SameLine();
     if (ImGui::Button(L("Go##btn", "Ir##btn", "Перейти##btn"), ImVec2(36, 0))) {
         NavigateTo(std::strtoull(addr_input, nullptr, 16));
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(L("Paste##hex", "Colar##hex", "Вставить##hex"))) {
+        const char* clip = SDL_GetClipboardText();
+        if (clip && clip[0]) {
+            std::snprintf(addr_input, sizeof(addr_input), "%s", clip);
+            NavigateTo(std::strtoull(addr_input, nullptr, 16));
+        }
     }
 
     // Step offsets

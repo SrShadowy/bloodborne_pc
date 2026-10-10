@@ -8,6 +8,7 @@
 #include "common/decoder.h"
 
 #include <imgui.h>
+#include <SDL3/SDL.h>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -29,6 +30,10 @@ static bool has_selected_regs = false;
 void TabDebugger::SetDisasmAddress(uintptr_t address) {
     disasm_current_addr = address;
     std::snprintf(disasm_addr_input, sizeof(disasm_addr_input), "0x%llx", static_cast<unsigned long long>(address));
+}
+
+void TabDebugger::SetBreakpointAddress(uintptr_t address) {
+    std::snprintf(bp_addr_input, sizeof(bp_addr_input), "0x%llx", static_cast<unsigned long long>(address));
 }
 
 void TabDebugger::Render() {
@@ -395,6 +400,14 @@ void TabDebugger::Render() {
         disasm_current_addr = std::strtoull(disasm_addr_input, nullptr, 16);
     }
     ImGui::SameLine();
+    if (ImGui::Button(L("Paste##disasm", "Colar##disasm", "Вставить##disasm"))) {
+        const char* clip = SDL_GetClipboardText();
+        if (clip && clip[0]) {
+            std::snprintf(disasm_addr_input, sizeof(disasm_addr_input), "%s", clip);
+            disasm_current_addr = std::strtoull(disasm_addr_input, nullptr, 16);
+        }
+    }
+    ImGui::SameLine();
     if (ImGui::Button(L("Jump to RIP", "Pular para RIP", "К RIP"))) {
         const uintptr_t rip = bp.GetLastHitRip();
         if (rip) {
@@ -503,6 +516,7 @@ void TabDebugger::Render() {
                 }
                 if (ImGui::Selectable(addr_str, false, ImGuiSelectableFlags_None)) {
                     ImGui::SetClipboardText(addr_str);
+                    SDL_SetClipboardText(addr_str);
                     UiManager::SetStatus(std::string("Copied: ") + addr_str);
                 }
                 if (is_hit_rip) {
@@ -598,12 +612,21 @@ void TabDebugger::Render() {
                          "Breakpoints de Codigo (Software Breakpoints):",
                          "Точки останова кода (Software Breakpoints):"));
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::InputText(L("Address (Hex)", "Endereco (Hex)", "Адрес (Hex)"), bp_addr_input, sizeof(bp_addr_input));
+    ImGui::InputText("##bp_addr_input", bp_addr_input, sizeof(bp_addr_input));
+    ImGui::SameLine();
+    if (ImGui::Button(L("Paste##bp", "Colar##bp", "Вставить##bp"))) {
+        const char* clip = SDL_GetClipboardText();
+        if (clip && clip[0]) {
+            std::snprintf(bp_addr_input, sizeof(bp_addr_input), "%s", clip);
+        }
+    }
     ImGui::SameLine();
     if (ImGui::Button(L("Add Breakpoint", "Adicionar Breakpoint", "Добавить"))) {
         const uintptr_t addr = std::strtoull(bp_addr_input, nullptr, 16);
         bp.AddBreakpoint(addr, "BP manual");
     }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%s)", L("Hex Address", "Endereco Hex", "Hex адрес"));
 
     const auto bps = bp.GetBreakpoints();
     for (const auto& b : bps) {

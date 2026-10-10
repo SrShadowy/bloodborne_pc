@@ -9,6 +9,7 @@ class TabDebugger {
 public:
     static void Render();
     static void SetDisasmAddress(uintptr_t address);
+    static void SetBreakpointAddress(uintptr_t address);
 };
 
 } // namespace UI
