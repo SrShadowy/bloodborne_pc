@@ -158,7 +158,7 @@ target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
 if(IS_DIRECTORY "$ENV{HOME}/.local/lib")
     target_link_options(bbgpu PRIVATE -Wl,-rpath,"$ENV{HOME}/.local/lib")
 endif()
-target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
+target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::framegeneration-presenter-policy)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
 
@@ -196,7 +196,11 @@ add_executable(camera-motion-test EXCLUDE_FROM_ALL ../tests/test_camera_motion.c
 target_include_directories(camera-motion-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
 target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
-add_dependencies(camera-motion-test host_shaders)
+add_executable(frame-generation-test EXCLUDE_FROM_ALL ../tests/test_frame_generation.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(frame-generation-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/fsr-vulkan/include)
+target_compile_options(frame-generation-test PRIVATE -UNDEBUG -fPIC)
+target_link_libraries(frame-generation-test PRIVATE bbgpu)
+add_dependencies(frame-generation-test host_shaders)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp

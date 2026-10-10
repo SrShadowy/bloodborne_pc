@@ -449,6 +449,30 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
         "Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel",
         "Teclado: digite, Backspace = apagar, Enter = OK, Esc = cancelar",
         "Клавиатура: ввод, Backspace = удалить, Enter = OK, Esc = отмена"
+    },
+    // SectionFrameGeneration
+    {
+        "Frame Generation",
+        "Geração de Quadros (Frame Generation)",
+        "Генерация кадров (Frame Generation)"
+    },
+    // FrameGenerationEnable
+    {
+        "Enable FSR 3.1 Frame Generation",
+        "Ativar FSR 3.1 Frame Generation",
+        "Включить FSR 3.1 Frame Generation"
+    },
+    // HintFrameGeneration
+    {
+        "Generates synthetic interpolated frames between real frames. Requires minImageCount + 2 swapchain support. Independent from the selected upscaler.",
+        "Gera quadros interpolados entre quadros reais. Requer suporte a minImageCount + 2 na swapchain. Opera de forma independente do upscaler selecionado.",
+        "Генерирует интерполированные кадры между реальными. Требует поддержки minImageCount + 2 в swapchain. Независимо от выбранного апскейлера."
+    },
+    // FrameGenerationNotSupported
+    {
+        "Frame Generation is not supported on this GPU or swapchain configuration.",
+        "Frame Generation não é suportado nesta GPU ou configuração de swapchain.",
+        "Генерация кадров не поддерживается этой видеокартой или конфигурацией swapchain."
     }
 };
 

@@ -82,6 +82,9 @@ struct Values {
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
     std::atomic<bool> fsr411_fp8{false}, fsr411_fp8emu{false};
+    std::atomic<bool> frame_generation{false};
+    std::atomic<bool> frame_generation_supported{false};
+    std::atomic<const char*> frame_generation_problem{nullptr};
 
     /// Mouse look and button controls.
     std::atomic<float> mouse_sensitivity{1.0f};
@@ -98,6 +101,7 @@ struct Values {
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
     int startup_draw_pipe = DrawPipeHybrid;
+    bool startup_frame_generation = false;
 };
 
 Values& Get();

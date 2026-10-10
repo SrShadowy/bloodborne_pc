@@ -52,9 +52,13 @@ std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
 
-// Present rate for the FPS counter.
-std::chrono::steady_clock::time_point last_present{};
+// Present rate for the FPS counter: original frames vs total presented frames.
+std::chrono::steady_clock::time_point last_present_total{};
+std::chrono::steady_clock::time_point last_present_orig{};
+float total_ms_avg = 0.0f;
+float orig_ms_avg = 0.0f;
 float frame_ms_avg = 0.0f;
+std::chrono::steady_clock::time_point last_generated_time{};
 
 float PixelDensity(SDL_WindowID id);
 
@@ -159,13 +163,9 @@ void Hint(const char* text) {
     }
 }
 
-} // namespace
+#define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
 
-void RenderGraphicsSettings() {
-    auto& s = BbSettings::Get();
-    const int lang = s.menu_language.load();
-    #define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
-
+void RenderLanguageSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionLanguage));
     int cur_lang = s.menu_language.load();
     if (ImGui::BeginCombo(S(LanguageInterface), BbSettings::LanguageName(cur_lang))) {
@@ -176,7 +176,9 @@ void RenderGraphicsSettings() {
         }
         ImGui::EndCombo();
     }
+}
 
+void RenderUpscalerSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionUpscaler));
     std::string fsr411_label = "FSR 4.1.1";
     if (s.fsr411_fp8.load()) {
@@ -240,6 +242,9 @@ void RenderGraphicsSettings() {
         Checkbox(S(Fsr4InvertJitter), s.fsr4_invert_jitter);
         Hint(S(HintFsr4Ghosting));
     }
+}
+
+void RenderPresetSection(BbSettings::Values& s, int lang) {
     const bool upscaler_on = s.upscaler != BbSettings::UpscalerOff;
     const bool taa = s.upscaler == BbSettings::UpscalerTaa;
     ImGui::BeginDisabled(!upscaler_on);
@@ -288,7 +293,10 @@ void RenderGraphicsSettings() {
     ImGui::EndDisabled();
     Checkbox(S(SubpixelJitter), s.jitter);
     Hint(S(HintJitter));
+}
 
+void RenderReactivitySection(BbSettings::Values& s, int lang) {
+    const bool taa = s.upscaler == BbSettings::UpscalerTaa;
     ImGui::SeparatorText(S(SectionReactivity));
     ImGui::BeginDisabled(taa);
     Checkbox(S(ReactivityEnable), s.reactive);
@@ -311,7 +319,20 @@ void RenderGraphicsSettings() {
     }
     Hint(S(HintObjectMotionColors));
     ImGui::EndDisabled(); // upscaler off
+}
 
+void RenderFrameGenSection(BbSettings::Values& s, int lang) {
+    ImGui::SeparatorText(S(SectionFrameGeneration));
+    Checkbox(S(FrameGenerationEnable), s.frame_generation);
+    Hint(S(HintFrameGeneration));
+    if (const char* fg_prob = s.frame_generation_problem.load()) {
+        ImGui::PushTextWrapPos();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%s", fg_prob);
+        ImGui::PopTextWrapPos();
+    }
+}
+
+void RenderResolutionSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionOutputResolution));
     static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
     int output = s.output_res;
@@ -343,6 +364,9 @@ void RenderGraphicsSettings() {
         ImGui::EndCombo();
     }
     Hint(S(HintLiveResolution));
+}
+
+void RenderEffectsSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionGameEffects));
     const char* lods[] = {
         S(LodMax),
@@ -386,7 +410,9 @@ void RenderGraphicsSettings() {
             runtime_restart();
         }
     }
+}
 
+void RenderPerformanceSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionMisc));
     Checkbox(S(ShowFpsCorner), s.show_fps);
     const char* pipe_modes[] = {
@@ -403,6 +429,9 @@ void RenderGraphicsSettings() {
         }
         ImGui::EndCombo();
     }
+}
+
+void RenderControlsSection(BbSettings::Values& s) {
     ImGui::Spacing();
     ImGui::SeparatorText(UI::L("Mouse & Controls", "Mouse e Controles", "Мышь и управление"));
     Slider(UI::L("Mouse Sensitivity", "Sensibilidade do Mouse", "Чувствительность мыши"), s.mouse_sensitivity, 0.1f, 5.0f);
@@ -412,7 +441,9 @@ void RenderGraphicsSettings() {
     Hint(UI::L("Locks cursor inside the game window during gameplay. Press Insert or F10 to release.",
                "Trava o cursor na janela do jogo durante a partida. Pressione Insert ou F10 para liberar.",
                "Блокирует курсор в окне игры во время игры. Нажмите Insert или F10 для освобождения."));
+}
 
+void RenderMemoryToolsSection() {
     ImGui::Spacing();
     ImGui::SeparatorText(UI::L("Memory & Reverse Engineering", "Operações de Memória", "Операции с памятью"));
     const bool mem_open = UI::UiManager::IsMemoryWindowOpen();
@@ -438,11 +469,9 @@ void RenderGraphicsSettings() {
     ImGui::TextDisabled("%s", UI::L("Opens a separate floating window for memory scanning and live debugging",
                                    "Abre uma janela flutuante separada para varredura e depuração de memória",
                                    "Открывает отдельное плавающее окно для сканирования и отладки памяти"));
-
-    #undef S
 }
 
-namespace {
+#undef S
 
 void Menu() {
     auto& s = BbSettings::Get();
@@ -479,8 +508,14 @@ void Menu() {
             dirty = true;
         }
     }
-    ImGui::Text("%.0f FPS  (%.1f %s)", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg, S(FpsMs));
+    const float orig_fps = orig_ms_avg > 0.0f ? 1000.0f / orig_ms_avg : 0.0f;
+    const float total_fps = total_ms_avg > 0.0f ? 1000.0f / total_ms_avg : orig_fps;
+    const float display_ms = total_ms_avg > 0.0f ? total_ms_avg : orig_ms_avg;
+    if (s.frame_generation.load()) {
+        ImGui::Text("%.0f \\ %.0f FPS  (%.1f %s)", orig_fps, total_fps, display_ms, S(FpsMs));
+    } else {
+        ImGui::Text("%.0f FPS  (%.1f %s)", total_fps > 0.0f ? total_fps : orig_fps, display_ms, S(FpsMs));
+    }
 
     RenderGraphicsSettings();
 
@@ -501,26 +536,93 @@ void Menu() {
 }
 
 void FpsCounter() {
+    const auto& s = BbSettings::Get();
+    const int lang = s.menu_language.load();
+
+    const float orig_fps = orig_ms_avg > 0.0f ? 1000.0f / orig_ms_avg : 0.0f;
+    const float total_fps = total_ms_avg > 0.0f ? 1000.0f / total_ms_avg : orig_fps;
+    const float display_ms = total_ms_avg > 0.0f ? total_ms_avg : orig_ms_avg;
+
+    std::string upscaler_label;
+    if (s.upscaler == BbSettings::UpscalerFsr3) {
+        upscaler_label = "FSR 3.1";
+    } else if (s.upscaler == BbSettings::UpscalerFsr4) {
+        upscaler_label = "FSR 4";
+    } else if (s.upscaler == BbSettings::UpscalerFsr411) {
+        upscaler_label = s.fsr411_fp8.load() ? "FSR 4.1.1 (FP8)" : "FSR 4.1.1";
+    } else if (s.upscaler == BbSettings::UpscalerTaa) {
+        upscaler_label = "TAA";
+    }
+
+    const bool fg_setting_on = s.frame_generation.load();
+    const auto now = std::chrono::steady_clock::now();
+    const bool fg_active = fg_setting_on ||
+        (last_generated_time.time_since_epoch().count() != 0 &&
+         (now - last_generated_time) < std::chrono::milliseconds(1500));
+
+    char text_buf[256];
+    if (fg_active) {
+        if (!upscaler_label.empty()) {
+            upscaler_label += " + FG";
+        } else {
+            upscaler_label = "FG";
+        }
+        std::snprintf(text_buf, sizeof(text_buf), "%.0f \\ %.0f FPS  %.1f %s  %s",
+                      orig_fps, total_fps,
+                      display_ms,
+                      BbStrings::Get(BbStrings::StringId::FpsMs, lang),
+                      upscaler_label.c_str());
+    } else {
+        std::snprintf(text_buf, sizeof(text_buf), "%.0f FPS  %.1f %s  %s",
+                      total_fps > 0.0f ? total_fps : orig_fps,
+                      display_ms,
+                      BbStrings::Get(BbStrings::StringId::FpsMs, lang),
+                      upscaler_label.c_str());
+    }
+
+    const ImVec2 text_size = ImGui::CalcTextSize(text_buf);
+    const float h_padding = ImGui::GetStyle().WindowPadding.x * 2.0f + 20.0f * base_scale;
+    const float needed_w = text_size.x + h_padding;
+
+    static float max_counter_width = 0.0f;
+    static int last_mode_key = -1;
+    const int current_mode_key = (s.upscaler.load() & 0xFF) |
+                                 (fg_active ? 0x100 : 0) |
+                                 (lang << 16) |
+                                 (int(base_scale * 100.0f) << 24);
+    if (current_mode_key != last_mode_key) {
+        last_mode_key = current_mode_key;
+        max_counter_width = 0.0f;
+    }
+    if (needed_w > max_counter_width) {
+        max_counter_width = needed_w;
+    }
+
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - pad,
                                    viewport->WorkPos.y + pad),
                             ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(max_counter_width, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.5f);
     ImGui::Begin("##fps", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoDecoration |
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                      ImGuiWindowFlags_NoFocusOnAppearing);
-    const auto& s = BbSettings::Get();
-    const int lang = s.menu_language.load();
-    ImGui::Text("%.0f FPS  %.1f %s  %s", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg,
-                BbStrings::Get(BbStrings::StringId::FpsMs, lang),
-                s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
-                : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
-                : s.upscaler == BbSettings::UpscalerFsr411 ? (s.fsr411_fp8.load() ? "FSR 4.1.1 (FP8)" : "FSR 4.1.1")
-                : s.upscaler == BbSettings::UpscalerTaa ? "TAA"
-                                                         : "");
+
+    const float avail_w = ImGui::GetContentRegionAvail().x;
+    if (avail_w > text_size.x) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail_w - text_size.x) * 0.5f);
+    }
+    ImGui::TextUnformatted(text_buf);
+
+    if (fg_active && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s: %.0f FPS | %s: %.0f FPS",
+                          UI::L("Original Frames", "Quadros Originais", "Исходные кадры"),
+                          orig_fps,
+                          UI::L("Total Frames", "Quadros Totais", "Всего кадров"),
+                          total_fps);
+    }
     ImGui::End();
 }
 
@@ -551,6 +653,22 @@ void TextPrompt() {
 }
 
 } // namespace
+
+void RenderGraphicsSettings() {
+    auto& s = BbSettings::Get();
+    const int lang = s.menu_language.load();
+
+    RenderLanguageSection(s, lang);
+    RenderUpscalerSection(s, lang);
+    RenderPresetSection(s, lang);
+    RenderReactivitySection(s, lang);
+    RenderFrameGenSection(s, lang);
+    RenderResolutionSection(s, lang);
+    RenderEffectsSection(s, lang);
+    RenderPerformanceSection(s, lang);
+    RenderControlsSection(s);
+    RenderMemoryToolsSection();
+}
 
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
     {
@@ -736,14 +854,40 @@ bool CapturesInput() {
     return menu_open || prompt_active;
 }
 
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
+void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool is_generated) {
     // Present interval for the FPS readout (measured also while nothing is drawn).
     const auto now = std::chrono::steady_clock::now();
-    const float ms = std::chrono::duration<float, std::milli>(now - last_present).count();
-    last_present = now;
-    if (ms > 0.0f && ms < 1000.0f) {
-        frame_ms_avg = frame_ms_avg == 0.0f ? ms : frame_ms_avg * 0.95f + ms * 0.05f;
+
+    // Pacing of all presented frames (real + generated)
+    if (last_present_total.time_since_epoch().count() != 0) {
+        const float ms = std::chrono::duration<float, std::milli>(now - last_present_total).count();
+        if (ms > 0.0f && ms < 1000.0f) {
+            total_ms_avg = total_ms_avg == 0.0f ? ms : total_ms_avg * 0.95f + ms * 0.05f;
+            frame_ms_avg = total_ms_avg;
+        }
     }
+    last_present_total = now;
+
+    // Pacing of original game frames (real frames only)
+    if (is_generated) {
+        last_generated_time = now;
+    } else {
+        if (last_present_orig.time_since_epoch().count() != 0) {
+            const float orig_ms = std::chrono::duration<float, std::milli>(now - last_present_orig).count();
+            if (orig_ms > 0.0f && orig_ms < 1000.0f) {
+                orig_ms_avg = orig_ms_avg == 0.0f ? orig_ms : orig_ms_avg * 0.95f + orig_ms * 0.05f;
+            }
+        }
+        last_present_orig = now;
+    }
+
+    if (orig_ms_avg == 0.0f) {
+        orig_ms_avg = total_ms_avg;
+    }
+    if (total_ms_avg == 0.0f) {
+        total_ms_avg = orig_ms_avg;
+    }
+
     UI::UiManager::Tick();
     if (!Visible()) {
         return;
@@ -751,7 +895,8 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     std::scoped_lock lock{imgui_mutex};
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
-    io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
+    const float dt_ms = total_ms_avg > 0.0f ? total_ms_avg : 16.666f;
+    io.DeltaTime = dt_ms > 0.0f && dt_ms < 1000.0f ? dt_ms / 1000.0f : 1.0f / 60.0f;
     // UI scale follows the display height (1080p = 1).
     const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
     if (std::abs(scale - base_scale) > 0.01f) {

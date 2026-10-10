@@ -32,393 +32,24 @@ from mods import discover as discover_mods  # noqa: E402
 import game_check  # noqa: E402
 from patches import external_patches  # noqa: E402
 import fsr4_wizard  # noqa: E402
-# Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
-PACKAGED = bool(os.environ.get("BB_PREBUILT"))
-DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
-CONFIG_FILE = CONFIG_DIR / "settings.json"
-MAX_LOG_LINES = 5000
-# The new memory and translation model runs on AMD GPUs only for now (None: unknown).
-AMD_GPU = amd_gpu()
-PC_MODEL_SUBTITLE = ("Эксперимент, только видеокарты AMD. Видеокарта работает с памятью игры "
-                     "напрямую, как в игре для ПК, а команды графики переводятся, а не "
-                     "эмулируются; возможны ошибки. Выключено — старая модель памяти, как в 0.3, "
-                     "со всеми исправлениями")
-PC_MODEL_NO_AMD = ("Только для видеокарт AMD, а на этом компьютере её нет. Используется старая "
-                   "модель памяти, как в 0.3, со всеми исправлениями")
-# FSR 4.1.1 assets built from the user's AMD DLL (tools/fsr4cap, also in the package).
-FSR4CAP_DIR = PORT_DIR / "tools" / "fsr4cap"
-sys.path.insert(0, str(FSR4CAP_DIR))
-# The package's own environment (its Mesa, libraries, GTK modules) must not reach Proton's
-# container: Proton runs the DLL on the system's drivers.
-PACKAGE_ONLY_ENV = (
-    "LD_LIBRARY_PATH", "VK_DRIVER_FILES", "VK_ICD_FILENAMES", "VK_ADD_DRIVER_FILES",
-    "VK_LAYER_PATH", "VK_ADD_LAYER_PATH", "__EGL_VENDOR_LIBRARY_DIRS", "GDK_PIXBUF_MODULE_FILE",
-    "GIO_EXTRA_MODULES", "GI_TYPELIB_PATH", "FONTCONFIG_FILE", "GSETTINGS_SCHEMA_DIR", "PYTHONPATH",
-    "PYTHONHOME",
+from bbport_config import (
+    PORT_DIR, PACKAGED, DATA_DIR, CONFIG_DIR, CONFIG_FILE, MAX_LOG_LINES,
+    AMD_GPU, PC_MODEL_SUBTITLE, PC_MODEL_NO_AMD, PACKAGE_ONLY_ENV,
+    UI_LANGUAGES, UPSCALERS, PRESETS, OUTPUT_RES, EFFECTS, MODEL_LOD,
+    FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
+    READBACKS, PREUPLOAD, VK_RECORD_THREADS, DEFAULTS, INI_DEFAULTS, CONTROLS,
+    load_settings, save_settings, ini_path, load_ini, save_ini, patches_dir,
+    game_environment,
 )
-# build_assets.sh exit statuses (see there).
-FSR411_BUILD_ERRORS = {
-    2: "DLL не подходит: подробности в журнале",
-    3: ("Не найден подходящий Proton: установите GE-Proton 10 или новее (ProtonUp-Qt) или Proton "
-        "Experimental / Proton-CachyOS в Steam. Если они есть — запустите в Steam любую игру с "
-        "этим Proton, чтобы Steam поставил его рантайм"),
-    4: "Не хватает программ для сборки: список в журнале",
-    5: ("Ни один Proton не запустил FSR 4.1 из этой DLL. Либо они слишком старые (подходят "
-        "GE-Proton 10+, Proton Experimental, Proton-CachyOS 11), либо DLL не включает FSR 4.1 на "
-        "этой видеокарте (Steam Deck?): тогда соберите на ПК с Radeon RX 7000/9000 и скопируйте "
-        "папку fsr4_411. Подробности в журнале"),
-    6: ("Записанные проходы не совпали с тем, что повторяет bbport (другая версия DLL или "
-        "новая видеокарта?): подробности в журнале"),
-    7: "Не найден загрузчик FidelityFX 2.x",
-    8: ("На NixOS запись идёт на самой системе (systemd --user) через umu-launcher из nix-shell, "
-        "а здесь их не нашлось: установите umu-launcher или Nix. Подробности в журнале"),
-}
-
-# Choices: (label, value). The first entry is the default. Labels are translated when shown.
-UI_LANGUAGES = [("Как в системе", ""), ("Português (Brasil)", "pt_BR"), ("English", "en"), ("Русский", "ru")]
-UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
-             ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
-PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
-           ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
-OUTPUT_RES = [("1280×720 (Steam Deck)", "1280x720"), ("1920×1080", "1920x1080"), ("2560×1440", "2560x1440"), ("3840×2160", "3840x2160")]
-# Game effects (patches applied at start): bbport.ini key, title, default.
-EFFECTS = [
-    ("effect_chromatic_aberration", "Хроматическая аберрация", True),
-    ("effect_dof", "Глубина резкости (DoF)", True),
-    ("effect_motion_blur", "Размытие в движении", True),
-    ("effect_ssao", "Затенение SSAO", True),
-    ("effect_game_aa", "Собственное сглаживание игры", True),
-    ("effect_dynamic_shadows", "Тени от динамических источников", True),
-    ("effect_ssr", "Отражения SSR (не было в игре)", False),
-    ("puddle_reflections", "Отражения в лужах", False),
-    ("skip_intro", "Пропуск заставок при запуске", True),
-    ("debug_camera", "Свободная камера (Cross + L3 / Space + Z)", False),
-    ("debug_menu", "Debug menu (левый touchpad / Tab; нужны шрифты)", False),
-]
-MODEL_LOD = [("Как в игре", "0"), ("Максимальная (-2)", "-2"), ("Ниже (1)", "1"),
-             ("Минимальная (2)", "2")]
-FPS_MODES = [("Без ограничения (патч)", "uncap"), ("60", "60"), ("90", "90"),
-             ("30 (как на PS4)", "30")]
-PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
-                 ("FIFO Relaxed", "FifoRelaxed"), ("Immediate", "Immediate")]
-# A third element is a note shown under the row's title while that choice is selected: the
-# choice labels stay short, so the selected one is shown in full.
-DRAW_PIPE = [("Гибридный (Рекомендуется)", "2", "Ускорение в игре, стабильность в кат-сценах"),
-             ("Включён", "1"),
-             ("Выключен", "0", "Стабильнее, стандартный режим")]
-LANGUAGES = [("Английский", "1"), ("Русский", "8"), ("Японский", "0"), ("Французский", "2"),
-             ("Испанский", "3"), ("Немецкий", "4"), ("Итальянский", "5")]
-LIVE_RESOLUTION = [("Авто (по видеокарте)", "auto"), ("Выключена (быстрее)", "0"), ("Включена", "1")]
-READBACKS = [("Relaxed", "", "По умолчанию"), ("Выключены", "0", "Быстрее, но лица могут искажаться"),
-             ("Precise", "2", "Экспериментально; может зависать при запуске")]
-# Background pre-upload of the game's GPU memory into VRAM (BB_PREUPLOAD): auto = on with a discrete GPU.
-PREUPLOAD = [("Обычная", "", "Без лишней видеопамяти"), ("Полная", "2", "Около 3 ГБ видеопамяти сверху"),
-             ("Выключена", "0")]
-
-VK_RECORD_THREADS = [("Авто", "auto"), ("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5")]
-
-DEFAULTS = {
-    "ui_language": "",
-    "game_dir": "" if PACKAGED else str(PORT_DIR.parent / "CUSA03173"),
-    "user_dir": "",
-    "mods_dir": "",
-    "mods_enabled": True,
-    "patches_dir": "",
-    "language": "1",
-    "fullscreen": False,
-    "hdr": False,
-    "present_mode": "Mailbox",
-    "gamepad": "",
-    "gamepad_name": "",
-    "fps_mode": "uncap",
-    "fps_limit": 0,
-    "draw_pipe": "2",
-    "vk_record_threads": "auto",
-    "readbacks": "",
-    "preupload": "",
-    "mangohud": False,
-    "frame_stats": False,
-    "save_log": False,
-    "crash_diag": False,
-    "pc_model": False,
-    "as_0_3": False,
-    "gpu_profile": False,
-    "vk_validation": False,
-    "extra_env": "",
-}
-
-# bbport.ini keys the launcher edits; the rest of the file is kept.
-INI_DEFAULTS = {
-    "upscaler": "fsr4",
-    "preset": "4",
-    "sharpen": "1",
-    "sharpness": "0.50",
-    "object_motion": "1",
-    "show_fps": "1",
-    "output_res": "1920x1080",
-    "model_lod": "0",
-    "live_resolution": "0",
-    "draw_pipe": "2",
-    **{key: "1" if default else "0" for key, _, default in EFFECTS},
-}
-
-
-def load_settings():
-    settings = dict(DEFAULTS)
-    try:
-        settings.update(json.loads(CONFIG_FILE.read_text()))
-    except (OSError, ValueError):
-        pass
-    return settings
-
-
-def save_settings(settings):
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(settings, indent=2, ensure_ascii=False))
-
-
-def ini_path():
-    return Path(os.environ.get("BB_CONFIG", DATA_DIR / "bbport.ini"))
-
-
-def load_ini():
-    values = dict(INI_DEFAULTS)
-    lines = []
-    try:
-        lines = ini_path().read_text().splitlines()
-    except OSError:
-        pass
-    for line in lines:
-        if "=" in line and not line.lstrip().startswith("#"):
-            key, value = line.split("=", 1)
-            values[key.strip()] = value.strip()
-    return values, lines
-
-
-def save_ini(values, lines):
-    """Rewrites the edited keys in place, appends missing ones, keeps comments and others; a key
-    whose value is None is removed (a control binding back to its default)."""
-    written = set()
-    out = []
-    for line in lines:
-        if "=" in line and not line.lstrip().startswith("#"):
-            key = line.split("=", 1)[0].strip()
-            if key in values:
-                if values[key] is not None:
-                    out.append(f"{key}={values[key]}")
-                written.add(key)
-                continue
-        out.append(line)
-    if not lines:
-        out.append("# bbport settings (in-game menu: Insert / L3+R3)")
-    for key, value in values.items():
-        if key not in written and value is not None:
-            out.append(f"{key}={value}")
-    ini_path().write_text("\n".join(out) + "\n")
-
-
-def patches_dir(settings):
-    return Path(settings.get("patches_dir") or DATA_DIR / "patches").expanduser()
-
-
-def fsr411_dir():
-    """Where the FSR 4.1.1 assets are looked up, as run.sh does."""
-    if os.environ.get("BB_FSR411_DIR"):
-        return Path(os.environ["BB_FSR411_DIR"])
-    return PORT_DIR / "fsr4_411" if (PORT_DIR / "fsr4_411").is_dir() else DATA_DIR / "fsr4_411"
-
-
-def fsr411_build_command(upscaler, loader=None):
-    """tools/fsr4cap/build_assets.sh for the user's DLL: command and environment. The package
-    writes into the data directory (it is read-only itself) and removes the work folder after."""
-    env = dict(os.environ)
-    if PACKAGED:
-        for key in PACKAGE_ONLY_ENV:
-            env.pop(key, None)
-        env["BB_FSR4CAP_WORK"] = str(DATA_DIR / "fsr4cap")
-        env["BB_FSR4CAP_CLEAN"] = "1"
-    tools = FSR4CAP_DIR / "bin"
-    if (tools / "dxil-spirv").is_file() and (tools / "fsr4cap.exe").is_file():
-        env["BB_FSR4CAP_TOOLS"] = str(tools)
-    env["BB_FSR411_OUT"] = os.environ.get("BB_FSR411_DIR") or str(
-        (DATA_DIR if PACKAGED else PORT_DIR) / "fsr4_411")
-    command = ["bash", str(FSR4CAP_DIR / "build_assets.sh"), str(upscaler)]
-    return command + ([str(loader)] if loader else []), env
-
-
-def game_environment(s):
-    """Environment for run.sh from the launcher settings."""
-    env = dict(os.environ)
-    env["BB_GAME_DIR"] = str(Path(s["game_dir"]).expanduser())
-    if s["user_dir"]:
-        env["BB_USER_DIR"] = s["user_dir"]
-    env["BB_MODS_DIR"] = str(Path(s.get("mods_dir") or DATA_DIR / "mods").expanduser())
-    env["BB_MODS_CONFIG"] = str(DATA_DIR / "mods.json")
-    env["BB_MODS_ENABLED"] = "1" if s.get("mods_enabled", True) else "0"
-    env["BB_PATCHES_DIR"] = str(patches_dir(s))
-    env["BB_PATCHES_CONFIG"] = str(DATA_DIR / "patches.json")
-    env["BB_LANGUAGE"] = s["language"]
-    # The in-game menu speaks the launcher's language until one is chosen in it (menu_language).
-    env["BB_MENU_LANGUAGE"] = language()
-    env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"
-    env["BB_PRESENT_MODE"] = s["present_mode"]
-    if s.get("gamepad"):
-        env["BB_GAMEPAD"] = s["gamepad"]
-    if s["hdr"]:
-        env["BB_HDR"] = "1"
-    env["BB_FPS"] = s["fps_mode"]
-    if s["fps_limit"] > 0:
-        env["BB_FPS_LIMIT"] = str(s["fps_limit"])
-    if s["draw_pipe"]:
-        env["BB_DRAW_PIPE"] = s["draw_pipe"]
-    if s.get("vk_record_threads") and s["vk_record_threads"] != "auto":
-        env["BB_VK_RECORD_THREADS"] = s["vk_record_threads"]
-    if s["readbacks"]:
-        env["BB_READBACKS"] = s["readbacks"]
-    if s.get("preupload"):
-        env["BB_PREUPLOAD"] = s["preupload"]
-    if s["mangohud"]:
-        env["MANGOHUD"] = "1"
-    if s["frame_stats"]:
-        env["BB_FRAME_STATS"] = "1"
-    if s.get("save_log"):
-        env["BB_SAVE_LOG"] = "1"
-    # The new memory and translation model (experimental, AMD GPUs only, off by default); the
-    # model of 0.3 with the fixes made since otherwise. "pc_memory", "old_memory_model",
-    # "new_memory_model" and "legacy_memory_model" of older settings are ignored.
-    env["BB_PC_MODEL"] = "1" if s.get("pc_model") and AMD_GPU is not False else "0"
-    # Synchronisation and memory as released in 0.3 (run.sh: BB_AS_0_3), for comparisons.
-    if s.get("as_0_3"):
-        env["BB_AS_0_3"] = "1"
-    if s.get("crash_diag"):
-        env["BB_FREE_CHECK"] = "1"
-        env["BB_WRITE_LOG"] = "1"
-        env["BB_PRODUCER_CHECK"] = "1"
-    if s["gpu_profile"]:
-        env["BB_GPU_PROFILE"] = "1"
-    if s["vk_validation"]:
-        env["BB_VK_VALIDATION"] = "1"
-    for item in s["extra_env"].split():
-        if "=" in item:
-            key, value = item.split("=", 1)
-            env[key] = value
-    return env
-
-
-def flat_button(icon, tooltip, handler):
-    button = Gtk.Button(icon_name=icon, valign=Gtk.Align.CENTER, tooltip_text=tooltip)
-    button.add_css_class("flat")
-    button.connect("clicked", handler)
-    return button
-
-
-def open_folder(window, path):
-    """Opens `path` in the file manager (created first, so that a new saves folder opens)."""
-    try:
-        Path(path).mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return
-    Gtk.FileLauncher.new(Gio.File.new_for_path(str(path))).launch(window, None, None)
-
-
-def combo_row(title, subtitle, choices, current):
-    model = Gtk.StringList.new([tr(choice[0]) for choice in choices])
-    row = Adw.ComboRow(title=title, model=model)
-    values = [choice[1] for choice in choices]
-    notes = [tr(choice[2]) if len(choice) > 2 else None for choice in choices]
-
-    def show_note(*_):
-        lines = [line for line in (subtitle, notes[row.get_selected()]) if line]
-        row.set_subtitle("\n".join(lines))
-
-    row.set_selected(values.index(current) if current in values else 0)
-    show_note()
-    row.connect("notify::selected", show_note)
-    row.values = values
-    return row
-
-
-def combo_value(row):
-    return row.values[row.get_selected()]
-
-
-# Controls (runtime_pad.c): input, label, default keyboard keys, default gamepad buttons, default mouse buttons.
-# bbport.ini key.<input>= / pad.<input>= / mouse.<input>= replace a default; no line keeps it.
-CONTROLS = [
-    ("cross", "Крест", "Space", "a", None),
-    ("circle", "Круг", "Left Shift", "b", None),
-    ("square", "Квадрат", "E", "x", None),
-    ("triangle", "Треугольник", "Q", "y", None),
-    ("l1", "L1", "1", "leftshoulder", None),
-    ("r1", "R1", "3", "rightshoulder", "left"),
-    ("l2", "L2", "R", "lefttrigger", "right"),
-    ("r2", "R2", "F", "righttrigger", None),
-    ("l3", "L3", "Z", "leftstick", None),
-    ("r3", "R3", "C", "rightstick", "middle"),
-    ("options", "Options", "Return", "start", None),
-    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad", None),
-    ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", "", None),
-    ("up", "Крестовина вверх", "I", "dpup", None),
-    ("down", "Крестовина вниз", "K", "dpdown", None),
-    ("left", "Крестовина влево", "J", "dpleft", None),
-    ("right", "Крестовина вправо", "L", "dpright", None),
-    ("move_up", "Движение вперёд", "W", None, None),
-    ("move_down", "Движение назад", "S", None, None),
-    ("move_left", "Движение влево", "A", None, None),
-    ("move_right", "Движение вправо", "D", None, None),
-    ("look_up", "Камера вверх", "Up", None, "motion_up"),
-    ("look_down", "Камера вниз", "Down", None, "motion_down"),
-    ("look_left", "Камера влево", "Left", None, "motion_left"),
-    ("look_right", "Камера вправо", "Right", None, "motion_right"),
-]
-
-
-def format_mouse_btn(val):
-    if not val:
-        return "—"
-    names = {
-        "left": tr("Левая кнопка"),
-        "right": tr("Правая кнопка"),
-        "middle": tr("Колёсико"),
-        "x1": tr("Боковая 1"),
-        "x2": tr("Боковая 2"),
-        "wheelup": tr("Колесо вверх"),
-        "wheeldown": tr("Колесо вниз"),
-        "motion_up": tr("Движение вверх (аналог)"),
-        "motion_down": tr("Движение вниз (аналог)"),
-        "motion_left": tr("Движение влево (аналог)"),
-        "motion_right": tr("Движение вправо (аналог)"),
-    }
-    parts = [p.strip() for p in str(val).split(",") if p.strip()]
-    return ", ".join(names.get(p.lower(), p) for p in parts) if parts else "—"
-
-
-def connected_gamepads():
-    """(GUID, name) of the connected gamepads (bb-gpu-capabilities --gamepads), [] if unknown."""
-    tool = PORT_DIR / ("bin" if PACKAGED else "out") / "bb-gpu-capabilities"
-    try:
-        run = subprocess.run([str(tool), "--gamepads"], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [tuple(line.split("\t", 1)) for line in run.stdout.splitlines() if "\t" in line]
-
-
-class FolderList:
-    """A preferences group with a folder row and one switch row per item below it."""
-
-    def __init__(self, group):
-        self.group = group
-        self.rows = []
-
-    def clear(self):
-        for _, row in self.rows:
-            self.group.remove(row)
-        self.rows = []
-
-    def add(self, key, row):
-        self.group.add(row)
-        self.rows.append((key, row))
+from bbport_fsr_builder import (
+    FSR4CAP_DIR, FSR411_BUILD_ERRORS, Fsr411Manager, fsr411_dir, fsr411_build_command,
+)
+from bbport_devices import (
+    connected_gamepads, format_mouse_btn,
+)
+from bbport_ui_helpers import (
+    flat_button, open_folder, combo_row, combo_value, FolderList,
+)
 
 
 class LauncherWindow(Adw.ApplicationWindow):
@@ -431,11 +62,19 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.ini, self.ini_lines = load_ini()
         self.process = None
         self.stream = None
-        self.fsr411_build = None  # tools/fsr4cap/build_assets.sh while it runs
+        self.fsr411_mgr = Fsr411Manager(self)
         self.best_detected_dll = None
         self.best_detected_loader = None
         self.build()
         self.connect("close-request", self.on_close)
+
+    @property
+    def fsr411_build(self):
+        return self.fsr411_mgr.build_proc
+
+    @fsr411_build.setter
+    def fsr411_build(self, val):
+        self.fsr411_mgr.build_proc = val
 
     def setup_css(self):
         css = """
@@ -713,6 +352,11 @@ class LauncherWindow(Adw.ApplicationWindow):
             subtitle=tr("Меньше гостинга на персонажах; стоит около 10% FPS"),
             active=self.ini.get("object_motion") == "1")
         upscaler.add(self.motion_row)
+        self.frame_gen_row = Adw.SwitchRow(
+            title=tr("Генерация кадров (FSR 3.1)"),
+            subtitle=tr("Удваивает частоту кадров с помощью интерполяции"),
+            active=self.ini.get("frame_generation") == "1")
+        upscaler.add(self.frame_gen_row)
         self.show_fps_row = Adw.SwitchRow(title=tr("Показывать FPS"),
                                           active=self.ini.get("show_fps") == "1")
         upscaler.add(self.show_fps_row)
@@ -1250,6 +894,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             "sharpen": "1" if self.sharpen_row.get_active() else "0",
             "sharpness": f"{self.sharpness_row.get_value():.2f}",
             "object_motion": "1" if self.motion_row.get_active() else "0",
+            "frame_generation": "1" if self.frame_gen_row.get_active() else "0",
             "show_fps": "1" if self.show_fps_row.get_active() else "0",
             "output_res": combo_value(self.output_row),
             "model_lod": combo_value(self.lod_row),
@@ -1534,20 +1179,7 @@ class LauncherWindow(Adw.ApplicationWindow):
     # --- FSR 4.1.1 from the user's DLL -----------------------------------------------------
 
     def update_fsr411_row(self, progress=None):
-        building = self.fsr411_build is not None
-        self.fsr411_button.set_label(tr("Отменить") if building else tr("Выбрать DLL…"))
-        if hasattr(self, "fsr411_auto_button"):
-            self.fsr411_auto_button.set_sensitive(not building and getattr(self, "best_detected_dll", None) is not None)
-        if progress:
-            self.fsr411_row.set_subtitle(progress)
-            if hasattr(self, "fsr411_auto_row"):
-                self.fsr411_auto_row.set_subtitle(progress)
-        elif not building:
-            self.fsr411_row.set_subtitle(tr(
-                "Собрать FSR 4.1.1 из amd_fidelityfx_upscaler_dx12.dll 4.1.x (OptiScaler: папка "
-                "FSR4_LATEST, или из игры с FSR 4.1). Нужен GE-Proton 10+, Proton Experimental или "
-                "Proton-CachyOS; 2–5 минут (RDNA4: вдвое дольше, ещё и вариант FP8)"))
-            self.update_fsr411_auto_row()
+        self.fsr411_mgr.update_row(progress)
 
     def alert(self, heading, body):
         if hasattr(Adw, "AlertDialog"):
@@ -1558,152 +1190,19 @@ class LauncherWindow(Adw.ApplicationWindow):
             self.toasts.add_toast(Adw.Toast(title=f"{heading}: {body}", timeout=10))
 
     def choose_dll(self, title, done):
-        dialog = Gtk.FileDialog(title=title)
-        dll = Gtk.FileFilter()
-        dll.set_name("DLL")
-        dll.add_pattern("*.dll")
-        dll.add_pattern("*.DLL")
-        filters = Gio.ListStore.new(Gtk.FileFilter)
-        filters.append(dll)
-        dialog.set_filters(filters)
-        dialog.set_default_filter(dll)
-        folder = self.settings.get("fsr411_dll_dir", "")
-        if folder and Path(folder).is_dir():
-            dialog.set_initial_folder(Gio.File.new_for_path(folder))
-
-        def finish(dialog, result):
-            try:
-                chosen = dialog.open_finish(result)
-            except GLib.Error:
-                return
-            if chosen and chosen.get_path():
-                done(chosen.get_path())
-        dialog.open(self, None, finish)
+        self.fsr411_mgr.choose_dll(title, done)
 
     def on_fsr411_button(self, _button):
-        if self.fsr411_build:
-            self.stop_fsr411_build()
-            return
-        self.choose_dll(tr("DLL апскейлера AMD (amd_fidelityfx_upscaler_dx12.dll)"),
-                        self.on_fsr411_dll)
+        self.fsr411_mgr.on_button_clicked()
 
     def on_fsr411_dll(self, upscaler, loader=None):
-        import dll_info
-        self.settings["fsr411_dll_dir"] = str(Path(upscaler).parent)
-        status, problem, details = dll_info.inspect(upscaler, loader)
-        kind = details.get("kind")
-        version = details.get("version", "?")
-        if status == dll_info.UNSUPPORTED:
-            if kind == "fsr4_0":
-                body = tr(
-                    "{}: FSR {}. Это официальная FSR 4.0.x от AMD: она включается только на "
-                    "видеокартах RDNA4 (RX 9000), а под Proton на других видеокартах не "
-                    "запускается, поэтому записать её нельзя.\n\nНужна FSR 4.1.x: например, "
-                    "FSR4_LATEST из OptiScaler или DLL из игры с FSR 4.1.").format(
-                        Path(upscaler).name, version)
-            elif kind == "not_fsr4":
-                body = tr("{}: в этой DLL нет FSR 4. Нужна amd_fidelityfx_upscaler_dx12.dll "
-                          "версии 4.1.x.").format(Path(upscaler).name)
-            else:
-                models = ", ".join(details.get("models", [])) or tr("нет")
-                body = tr(
-                    "{}: версия {}, модели FSR 4: {}.\n\nbbport повторяет только официальную FSR 4.1.x "
-                    "от AMD (модель v07_fp8_no_scale): например, FSR4_LATEST из OptiScaler или "
-                    "amd_fidelityfx_upscaler_dx12.dll из игры с FSR 4.1. Сборки сообщества (4.0.2b и "
-                    "подобные) устроены иначе и пока не поддерживаются.").format(
-                        Path(upscaler).name, version, models)
-            self.alert(tr("Эта DLL не подходит"), body)
-            return
-        if status == dll_info.NO_LOADER:
-            if kind == "loader_is_upscaler":
-                self.alert(tr("Это не загрузчик"), tr(
-                    "{} — это DLL апскейлера. Загрузчик называется amd_fidelityfx_loader_dx12.dll "
-                    "(у OptiScaler — amd_fidelityfx_dx12.dll) и лежит в той же папке игры, что и "
-                    "DLL апскейлера.").format(Path(loader).name))
-                return
-            if loader:
-                self.alert(tr("Загрузчик не подходит"), tr(
-                    "{}: версия {}. Нужен загрузчик FidelityFX 2.x — из той же игры, что и DLL "
-                    "апскейлера.").format(Path(loader).name, details.get("loader_version", "?")))
-                return
-            # A DLL without the FidelityFX API exports (AMD's own export it: no loader needed), and no
-            # loader next to it or one folder up: ask for it.
-            self.toasts.add_toast(Adw.Toast(title=tr(
-                "Рядом с DLL нет загрузчика: выберите amd_fidelityfx_loader_dx12.dll из папки игры"),
-                timeout=8))
-            self.choose_dll(tr("Загрузчик FidelityFX (amd_fidelityfx_loader_dx12.dll или "
-                               "amd_fidelityfx_dx12.dll)"),
-                            lambda path: self.on_fsr411_dll(upscaler, path))
-            return
-        self.start_fsr411_build(upscaler, details.get("loader"))
+        self.fsr411_mgr.on_dll_selected(upscaler, loader)
 
     def start_fsr411_build(self, upscaler, loader):
-        command, env = fsr411_build_command(upscaler, loader)
-        launcher = Gio.SubprocessLauncher.new(
-            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
-        launcher.set_environ([f"{k}={v}" for k, v in env.items()])
-        launcher.set_cwd(str(PORT_DIR))
-        try:
-            # setsid: Proton and its helpers form one process group, cancelled together.
-            self.fsr411_build = launcher.spawnv(["setsid", *command])
-        except GLib.Error as error:
-            self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
-            return
-        self.append_log(tr("\n— сборка FSR 4.1.1 из {} —\n").format(upscaler))
-        stream = Gio.DataInputStream.new(self.fsr411_build.get_stdout_pipe())
-        stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_fsr411_line)
-        self.fsr411_build.wait_async(None, self.on_fsr411_built)
-        self.update_fsr411_row(tr("Подготовка…"))
-        self.update_launch_button()
-
-    def on_fsr411_line(self, stream, result):
-        try:
-            line, _length = stream.read_line_finish_utf8(result)
-        except GLib.Error:
-            return
-        if line is None:
-            return
-        self.append_log(line + "\n")
-        if self.fsr411_build:
-            step = re.match(r"\[\s*(\d+)/(\d+)\]", line)
-            if step:
-                self.update_fsr411_row(tr("Запись проходов DLL под Proton: {} из {}").format(*step.groups()))
-            elif line.startswith("Translating"):
-                self.update_fsr411_row(tr("Перевод проходов в SPIR-V…"))
-        stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_fsr411_line)
+        self.fsr411_mgr.start_build(upscaler, loader)
 
     def stop_fsr411_build(self):
-        pid = int(self.fsr411_build.get_identifier())
-        self.fsr411_cancelled = True
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except OSError:
-            self.fsr411_build.force_exit()
-
-    def on_fsr411_built(self, process, result):
-        try:
-            process.wait_finish(result)
-        except GLib.Error:
-            pass
-        status = process.get_exit_status() if process.get_if_exited() else -1
-        cancelled = getattr(self, "fsr411_cancelled", False)
-        self.fsr411_cancelled = False
-        self.fsr411_build = None
-        self.update_fsr411_row()
-        self.update_launch_button()
-        self.append_log(tr("— сборка FSR 4.1.1 завершилась (код {}) —\n").format(status))
-        if status == 0:
-            for index, (_label, value) in enumerate(UPSCALERS):
-                if value == "fsr411":
-                    self.upscaler_row.set_selected(index)
-            self.update_upscaler_status()
-            self.store()
-            self.toasts.add_toast(Adw.Toast(title=tr("FSR 4.1.1 собран и выбран")))
-        elif cancelled:
-            self.toasts.add_toast(Adw.Toast(title=tr("Сборка FSR 4.1.1 отменена")))
-        else:
-            message = FSR411_BUILD_ERRORS.get(status, "Сборка не удалась (код {}): подробности в журнале")
-            self.alert(tr("FSR 4.1.1 не собран"), tr(message).format(status))
+        self.fsr411_mgr.stop()
 
 
 class LauncherApp(Adw.Application):

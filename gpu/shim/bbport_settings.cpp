@@ -68,6 +68,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_invert_jitter = i != 0;
     } else if (key == "puddle_reflections") {
         v.puddle_reflections = i != 0;
+    } else if (key == "frame_generation") {
+        v.frame_generation = i != 0;
     } else if (key == "draw_pipe") {
         if (value == "off" || value == "0" || value == "false") {
             v.draw_pipe = DrawPipeOff;
@@ -177,7 +179,7 @@ void Load() {
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
-        {"BB_DRAW_PIPE", "draw_pipe"},
+        {"BB_DRAW_PIPE", "draw_pipe"},              {"BB_FRAME_GEN", "frame_generation"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -194,6 +196,7 @@ void Load() {
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
     v.startup_draw_pipe = v.draw_pipe.load();
+    v.startup_frame_generation = v.frame_generation.load();
 }
 
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool fsr411_fp8, bool fsr411_fp8emu) {
@@ -260,6 +263,7 @@ void Save() {
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     put("puddle_reflections", flag(v.puddle_reflections.load()));
+    put("frame_generation", flag(v.frame_generation.load()));
     put("draw_pipe", std::to_string(int(v.draw_pipe.load())));
     // Read by patches.py at start.
     for (int e = 0; e < EffectCount; ++e) {

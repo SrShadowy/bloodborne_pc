@@ -30,7 +30,7 @@ void UpdateTextInput(SDL_Window* window);
 bool Visible();
 
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
+void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool is_generated = false);
 
 /// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();

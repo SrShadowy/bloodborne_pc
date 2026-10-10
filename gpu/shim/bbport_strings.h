@@ -78,6 +78,10 @@ enum class StringId : int {
     CloseButton,
     SavedToIni,
     PromptKeyboardHelp,
+    SectionFrameGeneration,
+    FrameGenerationEnable,
+    HintFrameGeneration,
+    FrameGenerationNotSupported,
     Count
 };
 

@@ -572,7 +572,8 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     }
     // bbport: scene color: a full-size RGBA16F target drawn with the scene depth.
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
-        cb_descs[0].first && std::popcount(key.mrt_mask) <= 2) {
+        cb_descs[0].first && std::popcount(key.mrt_mask) <= 2 &&
+        texture_cache.HasImage(cb_descs[0].first) && texture_cache.HasImage(db_desc.first)) {
         const auto& color = texture_cache.GetImage(cb_descs[0].first);
         const auto& depth = texture_cache.GetImage(db_desc.first);
         if (color.info.pixel_format == vk::Format::eR16G16B16A16Sfloat &&
