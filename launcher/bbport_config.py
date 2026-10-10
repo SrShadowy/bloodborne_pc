@@ -15,6 +15,7 @@ from bbport_i18n import language
 PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / "scripts"))
 sys.path.insert(0, str(PORT_DIR / "tools"))
+import online
 
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
@@ -114,6 +115,14 @@ DEFAULTS = {
     "gpu_profile": False,
     "vk_validation": False,
     "extra_env": "",
+    # Online play (Online page, the online module gpu/bbnet): off by default; shadNet server and The Hunter's Dream.
+    "online": False,
+    "online_community": online.COMMUNITY_SERVER,
+    "online_server": online.SHADNET_SERVER,
+    "online_webapi": "",
+    "online_npid": "",
+    "online_password": "",
+    "online_upnp": True,
 }
 
 # bbport.ini keys the launcher edits; the rest of the file is kept.
@@ -128,6 +137,11 @@ INI_DEFAULTS = {
     "output_res": "1920x1080",
     "model_lod": "0",
     "live_resolution": "0",
+    "mouse_look": "1",
+    "mouse_sensitivity": "1.00",
+    "mouse_invert_y": "0",
+    "mouse_invert_x": "0",
+    "mouse_capture": "1",
     "draw_pipe": "2",
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
@@ -173,7 +187,36 @@ def load_settings():
 
 def save_settings(settings):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(settings, indent=2, ensure_ascii=False))
+    CONFIG_FILE.touch(mode=0o600)
+    CONFIG_FILE.chmod(0o600)  # it holds the shadNet password
+    CONFIG_FILE.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+# DLSS (vk_dlss.cpp): the bridge (libbbport_dlss.so) and NVIDIA's runtime library
+# libnvidia-ngx-dlss.so.<version>, beside bb-probe (the package, a build with DLSS_SDK_ROOT) or the
+# player's own in <user>/dlss, which the game prefers. Linux needs the .so from NVIDIA's DLSS SDK
+# (github.com/NVIDIA/DLSS, lib/Linux_x86_64/rel); a game's nvngx_dlss.dll is Windows-only.
+NGX_PREFIX = "libnvidia-ngx-dlss.so."
+DLSS_SDK_URL = "https://github.com/NVIDIA/DLSS/tree/main/lib/Linux_x86_64/rel"
+
+
+def binaries_dir():
+    return PORT_DIR / ("bin" if PACKAGED else "out")
+
+
+def ngx_libraries(directory):
+    """NVIDIA's DLSS runtime libraries in directory, newest version last."""
+    def version(path):
+        return tuple(int(p) if p.isdigit() else 0 for p in path.name[len(NGX_PREFIX):].split("."))
+    try:
+        return sorted((p for p in Path(directory).iterdir() if p.name.startswith(NGX_PREFIX)), key=version)
+    except OSError:
+        return []
+
+
+def online_module():
+    """The online module beside the GPU library (gpu/bbnet; a build without its libraries has none)."""
+    return (PORT_DIR / ("bin" if PACKAGED else "out") / "gpu" / "libbbnet.so").is_file()
 
 
 def ini_path():
@@ -271,6 +314,16 @@ def game_environment(s):
         env["BB_GPU_PROFILE"] = "1"
     if s["vk_validation"]:
         env["BB_VK_VALIDATION"] = "1"
+    if s.get("online") and online_module():
+        server = s["online_server"].strip() or online.SHADNET_SERVER
+        community = online.community_address(s["online_community"])
+        env["BB_ONLINE"] = "1"
+        env["BB_SHADNET_SERVER"] = server
+        env["BB_SHADNET_WEBAPI"] = online.webapi_setting(s["online_webapi"], server, community)
+        env["BB_SHADNET_NPID"] = s["online_npid"].strip()
+        env["BB_SHADNET_PASSWORD"] = s["online_password"]
+        env["BB_UPNP"] = "1" if s["online_upnp"] else "0"
+        env["BB_COMMUNITY_SERVER"] = community
     for item in s["extra_env"].split():
         if "=" in item:
             key, value = item.split("=", 1)

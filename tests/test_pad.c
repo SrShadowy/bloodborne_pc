@@ -5,16 +5,9 @@
 
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
-static float test_mouse_dx = 0.0f, test_mouse_dy = 0.0f;
-static int test_mouse_wheel = 0;
-void bbgpu_get_mouse_motion(float *dx, float *dy, int *wheel) {
-    if (dx) *dx = test_mouse_dx;
-    if (dy) *dy = test_mouse_dy;
-    if (wheel) *wheel = test_mouse_wheel;
-    test_mouse_dx = 0.0f;
-    test_mouse_dy = 0.0f;
-    test_mouse_wheel = 0;
-}
+void bbgpu_mouse_take(double *dx, double *dy, int *up, int *down) { *dx=*dy=0; *up=*down=0; }
+int bbgpu_mouse_captured(void) { return 0; }
+void bbgpu_mouse_look_enable(int enabled) { (void)enabled; }
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;
@@ -124,26 +117,30 @@ int main(void) {
     gamepad=NULL;
     assert(SDL_DetachVirtualJoystick(id));
 
-    /* Mouse bindings & camera look assertions */
-    assert(bindings[IN_R1].mouse_count >= 1 && bindings[IN_R1].mouse[0] == MOUSE_BTN_LEFT);
-    assert(bindings[IN_L2].mouse_count >= 1 && bindings[IN_L2].mouse[0] == MOUSE_BTN_RIGHT);
-    assert(bindings[IN_R3].mouse_count >= 1 && bindings[IN_R3].mouse[0] == MOUSE_BTN_MIDDLE);
-    assert(bindings[IN_TRIANGLE].mouse_count == 1 && bindings[IN_TRIANGLE].mouse[0] == MOUSE_BTN_X1);
-
-    test_mouse_dx = 15.0f;
-    test_mouse_dy = 10.0f;
-    assert(pad_read_state(1,&data)==0);
-    assert(data.right_x > 128); // mouse look right
-    assert(data.right_y < 128); // mouse look inverted up (dy was positive down)
-
-    /* Next frame without mouse motion should return sticks to neutral 128 */
-    test_mouse_dx = 0.0f;
-    test_mouse_dy = 0.0f;
-    assert(pad_read_state(1,&data)==0);
-    assert(data.right_x == 128 && data.right_y == 128);
-
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse look & bindings");
+    /* Mouse: names, the look stick's speed-to-deflection at two frame rates, the wheel's presses. */
+    assert(key_from_name("Mouse Left")==MOUSE_KEY+SDL_BUTTON_LEFT && key_from_name("wheel down")==MOUSE_WHEEL_DOWN);
+    for (int rate=60;rate<=240;rate*=4) {
+        PadData m; memset(&m,0,sizeof m);
+        look_x=look_y=0; look_last_us=1;
+        const uint64_t step=1000000/rate;
+        for (int i=1;i<=rate;++i) { /* 500 pixels/s to the right for a second */
+            m.right_x=m.right_y=128;
+            apply_mouse_look(&m,500.0/rate,0,1+i*step,1);
+        }
+        assert(m.right_x>=128+16+50 && m.right_x<=128+16+62 && m.right_y==128);
+        m.right_x=128;
+        apply_mouse_look(&m,0,0,1+(rate+60)*step,1); /* still: back to the pad's stick */
+        for (int i=0;i<20;++i) apply_mouse_look(&m,0,0,1+(rate+61+i)*step,1);
+        assert(m.right_x==128);
+    }
+    mouse_wheel_step(1000000,0,2);
+    assert(wheel_phase[1]==1 && mouse_key_down(MOUSE_WHEEL_DOWN));
+    mouse_wheel_step(1070000,0,0);
+    assert(!mouse_key_down(MOUSE_WHEEL_DOWN));
+    mouse_wheel_step(1140000,0,0);
+    assert(mouse_key_down(MOUSE_WHEEL_DOWN) && wheel_pending[1]==0);
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse");
 }

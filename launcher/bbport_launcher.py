@@ -10,10 +10,12 @@ text is the key).
 """
 
 import json
+import shutil
 import os
 import re
 import signal
 import subprocess
+import threading
 import sys
 import time
 from pathlib import Path
@@ -31,6 +33,7 @@ sys.path.insert(0, str(PORT_DIR / 'scripts'))
 sys.path.insert(0, str(PORT_DIR / 'tools'))
 from mods import discover as discover_mods  # noqa: E402
 import game_check  # noqa: E402
+import online  # noqa: E402  (the online module: addresses and the connection test)
 from patches import external_patches  # noqa: E402
 import fsr4_wizard  # noqa: E402
 from bbport_config import (
@@ -40,6 +43,7 @@ from bbport_config import (
     FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
     READBACKS, PREUPLOAD, VK_RECORD_THREADS, DEFAULTS, INI_DEFAULTS, CONTROLS,
     MEMORY_MODELS,
+    NGX_PREFIX, DLSS_SDK_URL, binaries_dir, ngx_libraries, online_module,
     load_settings, save_settings, ini_path, load_ini, save_ini, patches_dir,
     game_environment,
 )
@@ -147,6 +151,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             ("graphics", tr("Графика"), "video-display-symbolic", self.build_graphics_page),
             ("performance", tr("Производительность"), "speedometer-symbolic", self.build_performance_page),
             ("controls", tr("Управление"), "input-gaming-symbolic", self.build_controls_page),
+            ("online", tr("Онлайн"), "network-workgroup-symbolic", self.build_online_page),
             ("mods", tr("Моды и патчи"), "application-x-addon-symbolic", self.build_mods_page),
             ("log", tr("Журнал"), "utilities-terminal-symbolic", self.build_log_page),
         ]
@@ -336,7 +341,15 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.upscaler_row = combo_row(tr("Апскейлер"), None, UPSCALERS, self.ini["upscaler"])
         self.upscaler_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.upscaler_row)
-
+        # DLSS: NVIDIA's library, chosen like the FSR 4.1.1 DLL (the package may bring one).
+        self.dlss_row = Adw.ActionRow(title=tr("DLSS: библиотека NVIDIA"))
+        self.dlss_row.add_suffix(flat_button("document-open-symbolic", tr("Выбрать файл…"),
+                                             lambda _b: self.choose_ngx()))
+        self.dlss_reset_button = flat_button("edit-undo-symbolic", tr("Убрать выбранную"),
+                                             lambda _b: self.reset_ngx())
+        self.dlss_row.add_suffix(self.dlss_reset_button)
+        upscaler.add(self.dlss_row)
+        self.update_dlss_row()
         self.preset_row = combo_row(tr("Пресет"), None, PRESETS, int(self.ini.get("preset", "4")))
         self.preset_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         self.output_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
@@ -700,6 +713,14 @@ class LauncherWindow(Adw.ApplicationWindow):
                 hint = tr("Ассеты найдены (FP8 / Float8 RDNA4)") if has_fp8 else tr("Ассеты для выбранного режима найдены")
             else:
                 hint = tr("{}. Соберите FSR 4.1.1 из своей DLL кнопкой «Выбрать DLL…» ниже").format(problem)
+        elif value == "dlss":
+            # The game looks for the bridge and NVIDIA's library next to bb-probe (vk_dlss.cpp); the
+            # AppImage has neither (NVIDIA's DLSS SDK is not bundled): DLSS then falls back to FSR 3.1.
+            binaries = PORT_DIR / ("bin" if PACKAGED else "out")
+            found = (binaries / "libbbport_dlss.so").is_file() and bool(
+                ngx_libraries(self.user_dir() / "dlss") or ngx_libraries(binaries))
+            hint = tr("DLSS найден (нужна видеокарта NVIDIA RTX)") if found else tr(
+                "DLSS не найден: выберите библиотеку NVIDIA ниже (и нужна сборка с мостом DLSS). Игра включит FSR 3.1")
         else:
             hint = tr("Сглаживание в разрешении вывода без модели FSR") if value == "taa" else None
         self.preset_row.set_sensitive(value not in ("taa", "off"))
@@ -733,7 +754,8 @@ class LauncherWindow(Adw.ApplicationWindow):
             tooltip = {
                 "missing_update": tr("Нужно обновление 1.09: скопируйте файлы дампа обновления 1.09 в папку игры с заменой (найдена версия {})").format(version),
                 "wrong_eboot": tr("eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой"),
-                "other_title": tr("Поддерживается только CUSA03173 с обновлением 1.09 (найдено {})").format(title),
+                "patched_eboot": tr("eboot.bin с вшитым патчем 60 FPS от Lance McDonald: из-за него игра падает в меню жестов. Скопируйте чистый eboot.bin из дампа обновления 1.09 в папку игры с заменой"),
+                "other_title": tr("Это не магазинное издание Bloodborne (найдено {}): нужен Bloodborne любого региона с обновлением 1.09").format(title),
                 "unreadable": tr("eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново"),
                 "damaged_files": tr("Файлы игры повреждены при распаковке: шейдеры не распаковываются, игра зависнет на загрузке. Распакуйте игру и обновление 1.09 заново исправленным инструментом (issue #81)"),
             }[kind]
@@ -907,6 +929,13 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.extra_row.get_text().strip()
         s["mods_enabled"] = self.mods_enabled_row.get_active()
+        s["online"] = self.online_row.get_active()
+        s["online_community"] = self.community_row.get_text().strip()
+        s["online_server"] = self.server_row.get_text().strip()
+        s["online_webapi"] = self.webapi_row.get_text().strip()
+        s["online_npid"] = self.npid_row.get_text().strip()
+        s["online_password"] = self.password_row.get_text()
+        s["online_upnp"] = self.upnp_row.get_active()
         self.save_mod_profile()
         self.save_patch_profile()
         save_settings(s)
@@ -921,6 +950,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             "output_res": combo_value(self.output_row),
             "model_lod": combo_value(self.lod_row),
             "live_resolution": combo_value(self.live_row),
+            "mouse_look": "1" if (hasattr(self, "mouse_look_row") and self.mouse_look_row.get_active()) else self.ini.get("mouse_look", "1"),
             **({
                 "mouse_sensitivity": f"{self.mouse_sens_row.get_value():.2f}",
                 "mouse_invert_y": "1" if self.mouse_inv_y_row.get_active() else "0",
@@ -1051,6 +1081,102 @@ class LauncherWindow(Adw.ApplicationWindow):
 
     # --- log page ------------------------------------------------------------------------
 
+    # --- online page ---------------------------------------------------------------------
+
+    def build_online_page(self):
+        s = self.settings
+        page = Adw.PreferencesPage()
+        play = Adw.PreferencesGroup(description=tr(
+            "Сообщения, пятна крови и призраки приходят с The Hunter's Dream; колокола и призывы "
+            "идут через сервер shadNet. Игра по сети совместима с версией для Windows: нужны версия "
+            "игры 1.09 и тот же сервер"))
+        self.online_row = Adw.SwitchRow(title=tr("Играть онлайн"),
+                                        subtitle=tr("Выключено: игра остаётся офлайн, как раньше"),
+                                        active=s["online"])
+        play.add(self.online_row)
+        if not online_module():
+            self.online_row.set_sensitive(False)
+            self.online_row.set_subtitle(tr("Эта сборка без модуля онлайна (libbbnet.so): игра только офлайн"))
+        page.add(play)
+
+        game = Adw.PreferencesGroup(title=tr("Игровой сервер (сообщения, пятна крови, призраки)"))
+        self.community_row = Adw.EntryRow(title=tr("Игровой сервер"), text=s["online_community"])
+        game.add(self.community_row)
+        page.add(game)
+
+        coop = Adw.PreferencesGroup(
+            title=tr("Сервер кооператива (колокола и призывы)"),
+            description=tr("srv.shadps4.net:31313 — публичный сервер shadPS4. Для частного сервера "
+                           "укажите host:port от его владельца. WebAPI: оставьте пустым, тогда "
+                           "берётся адрес сервера с портом 31315"))
+        self.server_row = Adw.EntryRow(title=tr("Адрес сервера"), text=s["online_server"])
+        self.webapi_row = Adw.EntryRow(title=tr("Адрес WebAPI"), text=s["online_webapi"])
+        coop.add(self.server_row)
+        coop.add(self.webapi_row)
+        page.add(coop)
+
+        account = Adw.PreferencesGroup(
+            title=tr("Учётная запись"),
+            description=tr("Имя учётной записи shadNet, не email. Зарегистрируйтесь на "
+                           "shadnet.shadps4.net или спросите владельца частного сервера. Пароль "
+                           "хранится на этом компьютере вместе с настройками лаунчера"))
+        self.npid_row = Adw.EntryRow(title=tr("Online ID (NPID)"), text=s["online_npid"])
+        self.password_row = Adw.PasswordEntryRow(title=tr("Пароль"), text=s["online_password"])
+        account.add(self.npid_row)
+        account.add(self.password_row)
+        page.add(account)
+
+        connection = Adw.PreferencesGroup(
+            title=tr("Соединение"),
+            description=tr("У всех в сессии должны быть одна версия игры (1.09) и один сервер. "
+                           "Читы меняют игру и для других игроков: выключайте их при совместной игре"))
+        self.upnp_row = Adw.SwitchRow(title=tr("UPnP (открыть порт на роутере автоматически)"),
+                                      subtitle=tr("Выключите при Tailscale или другом VPN"),
+                                      active=s["online_upnp"])
+        connection.add(self.upnp_row)
+        test = Adw.ActionRow(title=tr("Проверить соединение"))
+        self.test_button = Gtk.Button(label=tr("Проверить"), valign=Gtk.Align.CENTER)
+        self.test_button.connect("clicked", self.on_test_connection)
+        test.add_suffix(self.test_button)
+        connection.add(test)
+        self.test_rows = []
+        self.connection_group = connection
+        page.add(connection)
+        return page
+
+    def online_addresses(self):
+        server = self.server_row.get_text().strip() or online.SHADNET_SERVER
+        community = online.community_address(self.community_row.get_text())
+        webapi = online.webapi_setting(self.webapi_row.get_text(), server, community)
+        return server, webapi, community
+
+    def on_test_connection(self, _button):
+        server, webapi, community = self.online_addresses()
+        names = {"game": tr("Игровой сервер"), "shadnet": tr("Сервер shadNet"), "webapi": "WebAPI"}
+        for row in self.test_rows:
+            self.connection_group.remove(row)
+        self.test_rows = []
+        self.test_button.set_sensitive(False)
+        self.test_button.set_label(tr("Проверка…"))
+
+        def show(results):
+            for name, address, ok, detail in results:
+                # Plain text: an error such as "<urlopen error ...>" is not Pango markup.
+                row = Adw.ActionRow(title=GLib.markup_escape_text(f"{names[name]}: {address}"),
+                                    subtitle=GLib.markup_escape_text(
+                                        tr("доступен") if ok else f'{tr("недоступен")} ({detail})'))
+                row.add_prefix(Gtk.Image(icon_name="object-select-symbolic" if ok else "dialog-warning-symbolic"))
+                self.connection_group.add(row)
+                self.test_rows.append(row)
+            self.test_button.set_sensitive(True)
+            self.test_button.set_label(tr("Проверить"))
+            return False
+
+        def work():
+            results = online.check(server, webapi, community)
+            GLib.idle_add(show, results)
+        threading.Thread(target=work, daemon=True).start()
+
     def build_log_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
@@ -1164,6 +1290,30 @@ class LauncherWindow(Adw.ApplicationWindow):
         if self.process:
             self.stop_game()
             return
+        npid = self.npid_row.get_text().strip()
+        if online_module() and not self.online_row.get_active() and npid and hasattr(Adw, "AlertDialog"):
+            dialog = Adw.AlertDialog(heading="Bloodborne", body=tr(
+                "Учётная запись для игры онлайн указана, но «Играть онлайн» выключено"))
+            dialog.add_response("cancel", tr("Отмена"))
+            dialog.add_response("offline", tr("Играть офлайн"))
+            dialog.add_response("online", tr("Играть онлайн"))
+            dialog.set_response_appearance("online", Adw.ResponseAppearance.SUGGESTED)
+
+            def on_response(_dialog, response):
+                if response != "cancel":
+                    self.online_row.set_active(response == "online")
+                    self.start_game()
+            dialog.connect("response", on_response)
+            dialog.present(self)
+            return
+        self.start_game()
+
+    def start_game(self):
+        if self.online_row.get_active() and "@" in self.npid_row.get_text():
+            self.alert("Bloodborne", tr("Online ID — это имя учётной записи (NPID), "
+                                        "зарегистрированное на сервере, а не адрес email"))
+            self.stack.set_visible_child_name("online")
+            return
         self.store()
         self.log_view.get_buffer().set_text("")
         launcher = Gio.SubprocessLauncher.new(
@@ -1253,6 +1403,79 @@ class LauncherWindow(Adw.ApplicationWindow):
             dialog.present(self)
         else:
             self.toasts.add_toast(Adw.Toast(title=f"{heading}: {body}", timeout=10))
+
+    def update_dlss_row(self):
+        own = ngx_libraries(self.user_dir() / "dlss")
+        bundled = ngx_libraries(binaries_dir())
+        bridge = (binaries_dir() / "libbbport_dlss.so").is_file()
+        if own:
+            text = tr("Своя: {}").format(own[-1].name[len(NGX_PREFIX):])
+        elif bundled:
+            text = tr("Из сборки: {}").format(bundled[-1].name[len(NGX_PREFIX):])
+        else:
+            text = tr("Нет: выберите libnvidia-ngx-dlss.so.* из DLSS SDK NVIDIA ({})").format(DLSS_SDK_URL)
+        if not bridge:
+            text += "\n" + tr("Эта сборка без моста DLSS (libbbport_dlss.so): DLSS работать не будет")
+        self.dlss_row.set_subtitle(text)
+        self.dlss_reset_button.set_sensitive(bool(own))
+        if hasattr(self, "sharpness_row"):  # built after this row
+            self.update_upscaler_status()
+
+    def choose_ngx(self):
+        dialog = Gtk.FileDialog(title=tr("Библиотека DLSS NVIDIA (libnvidia-ngx-dlss.so.*)"))
+        files = Gtk.FileFilter()
+        files.set_name("libnvidia-ngx-dlss.so.*, nvngx_dlss.dll")
+        for pattern in ("libnvidia-ngx-dlss.so*", "*.dll", "*.DLL"):
+            files.add_pattern(pattern)
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(files)
+        dialog.set_filters(filters)
+        dialog.set_default_filter(files)
+
+        def finish(dialog, result):
+            try:
+                chosen = dialog.open_finish(result)
+            except GLib.Error:
+                return
+            if chosen and chosen.get_path():
+                self.install_ngx(Path(chosen.get_path()))
+        dialog.open(self, None, finish)
+
+    def install_ngx(self, path):
+        if path.suffix.lower() == ".dll":
+            self.alert(tr("Нужна библиотека для Linux"), tr(
+                "{} — библиотека DLSS для Windows; на Linux NVIDIA её не загружает. Нужна "
+                "libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}").format(path.name, DLSS_SDK_URL))
+            return
+        try:
+            with open(path, "rb") as f:
+                elf = f.read(4) == b"\x7fELF"
+        except OSError as error:
+            self.alert(tr("Не удалось прочитать файл"), str(error))
+            return
+        if not path.name.startswith(NGX_PREFIX) or not elf:
+            self.alert(tr("Это не библиотека DLSS"), tr(
+                "Нужен файл libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}").format(DLSS_SDK_URL))
+            return
+        target = self.user_dir() / "dlss"
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            for old in ngx_libraries(target):
+                old.unlink()
+            shutil.copy2(path, target / path.name)
+        except OSError as error:
+            self.alert(tr("Не удалось скопировать библиотеку"), str(error))
+            return
+        self.toasts.add_toast(Adw.Toast(title=tr("DLSS {}: готово").format(path.name[len(NGX_PREFIX):])))
+        self.update_dlss_row()
+
+    def reset_ngx(self):
+        for old in ngx_libraries(self.user_dir() / "dlss"):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        self.update_dlss_row()
 
     def choose_dll(self, title, done):
         self.fsr411_mgr.choose_dll(title, done)

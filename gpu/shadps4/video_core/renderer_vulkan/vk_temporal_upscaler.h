@@ -169,6 +169,8 @@ private:
     bool context_hdr = true;
     u32 target_width = 1920, target_height = 1080;
     u64 ui_trigger_vs = 0x34e8a281;
+    const bool ui_trace_on = std::getenv("BB_UI_TRACE") != nullptr; ///< diagnostics
+    std::string ui_trace;
     bool scaled_session = false;
     u32 render_width = 0, render_height = 0;
 

@@ -166,6 +166,48 @@ void WindowSDL::CancelTextInput() {
     }
 }
 
+void WindowSDL::TakeMouse(double& dx, double& dy, int& up, int& down) {
+    std::scoped_lock lock{mouse_mutex};
+    dx = mouse_dx;
+    dy = mouse_dy;
+    up = wheel_up;
+    down = wheel_down;
+    mouse_dx = mouse_dy = 0;
+    wheel_up = wheel_down = 0;
+}
+
+void WindowSDL::GetMouseMotion(float* dx, float* dy, int* wheel) {
+    std::scoped_lock lock{mouse_mutex};
+    if (dx) *dx = static_cast<float>(mouse_dx);
+    if (dy) *dy = static_cast<float>(mouse_dy);
+    if (wheel) *wheel = wheel_up ? 1 : wheel_down ? -1 : 0;
+    mouse_dx = mouse_dy = 0;
+    wheel_up = wheel_down = 0;
+}
+
+// Mouse look: relative mode while the window holds the mouse (runtime_pad.c turns its motion into
+// the right stick). Motion from before is dropped, so taking the mouse does not turn the camera.
+void WindowSDL::CaptureMouse(bool capture) {
+    if (capture == mouse_captured.load(std::memory_order_relaxed)) {
+        return;
+    }
+    if (!SDL_SetWindowRelativeMouseMode(window, capture) && capture) {
+        std::printf("Mouse look: relative mouse mode failed: %s\n", SDL_GetError());
+        return;
+    }
+    {
+        std::scoped_lock lock{mouse_mutex};
+        mouse_dx = mouse_dy = 0;
+        wheel_up = wheel_down = 0;
+    }
+    mouse_captured.store(capture, std::memory_order_relaxed);
+    static bool told;
+    if (capture && !told) {
+        told = true;
+        std::printf("Mouse look: on (F1 releases the mouse, a click takes it again)\n");
+    }
+}
+
 void WindowSDL::UpdateTextTitle() {
     const std::string title = text_active ? base_title + " \u2014 " + text_prompt + ": " + text + "_  (Enter = OK, Esc = cancel)"
                                           : base_title;
@@ -207,6 +249,11 @@ bool WindowSDL::PollEvents() {
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_MOUSE_MOTION) {
             last_mouse_motion_ms = SDL_GetTicks();
+            if (mouse_captured.load(std::memory_order_relaxed)) {
+                std::scoped_lock lock{mouse_mutex};
+                mouse_dx += event.motion.xrel;
+                mouse_dy += event.motion.yrel;
+            }
         }
         if (text_active && (event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_KEY_DOWN)) {
             std::scoped_lock lock{text_mutex};
@@ -227,28 +274,28 @@ bool WindowSDL::PollEvents() {
         if (BbOverlay::HandleEvent(event)) {
             continue;
         }
+        // Mouse look: a click in the game takes the mouse (that click is not passed on as a
+        // button: runtime_pad.c reads the buttons only while it is held); F1 and leaving the
+        // window let it go.
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !mouse_captured.load(std::memory_order_relaxed) &&
+            mouse_look.load(std::memory_order_relaxed) && !BbOverlay::MenuOpen()) {
+            CaptureMouse(true);
+            continue;
+        }
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F1 &&
+            mouse_captured.load(std::memory_order_relaxed)) {
+            CaptureMouse(false);
+            continue;
+        }
+        if (event.type == SDL_EVENT_MOUSE_WHEEL && mouse_captured.load(std::memory_order_relaxed)) {
+            const float notches = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+            std::scoped_lock lock{mouse_mutex};
+            (notches > 0 ? wheel_up : wheel_down) += notches != 0 ? 1 : 0;
+        }
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            CaptureMouse(false);
+        }
         switch (event.type) {
-        case SDL_EVENT_KEY_DOWN:
-            if (!text_active && !BbOverlay::CapturesInput() && event.key.key == SDLK_F10) {
-                mouse_capture_enabled = !mouse_capture_enabled;
-            }
-            break;
-        case SDL_EVENT_MOUSE_MOTION: {
-            last_mouse_motion_ms = SDL_GetTicks();
-            if (!BbOverlay::CapturesInput()) {
-                std::scoped_lock lock{mouse_mutex};
-                mouse_accum_x += event.motion.xrel;
-                mouse_accum_y += event.motion.yrel;
-            }
-            break;
-        }
-        case SDL_EVENT_MOUSE_WHEEL: {
-            if (!BbOverlay::CapturesInput()) {
-                std::scoped_lock lock{mouse_mutex};
-                mouse_accum_wheel += (event.wheel.y > 0.0f ? 1 : event.wheel.y < 0.0f ? -1 : 0);
-            }
-            break;
-        }
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_RESIZED: {
             int w = 0, h = 0;
@@ -264,6 +311,11 @@ bool WindowSDL::PollEvents() {
         default:
             break;
         }
+    }
+    // The menu, the name dialog and mouse_look=0 want the cursor.
+    if (mouse_captured.load(std::memory_order_relaxed) &&
+        (BbOverlay::MenuOpen() || text_active || !mouse_look.load(std::memory_order_relaxed))) {
+        CaptureMouse(false);
     }
     UpdateCursor();
     return is_open;

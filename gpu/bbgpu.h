@@ -30,7 +30,14 @@ int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
 int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
-/* Mouse motion and wheel accumulated since last call. */
+/* Mouse look (runtime_pad.c): the window takes the mouse when it is clicked (relative mode) and
+ * lets it go on F1, losing focus or the menu opening. take: motion (pixels) and wheel notches
+ * since the last call, reset; captured: 1 while the window holds it; enable: mouse_look=0 in
+ * bbport.ini keeps the window from taking it. */
+void bbgpu_mouse_take(double *dx, double *dy, int *wheel_up, int *wheel_down);
+int bbgpu_mouse_captured(void);
+void bbgpu_mouse_look_enable(int enabled);
+/* Additional overlay controls for mouse settings */
 void bbgpu_get_mouse_motion(float *dx, float *dy, int *wheel);
 float bbgpu_get_mouse_sensitivity(void);
 int bbgpu_get_mouse_invert_y(void);

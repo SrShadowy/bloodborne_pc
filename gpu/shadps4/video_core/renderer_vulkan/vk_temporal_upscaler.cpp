@@ -203,6 +203,18 @@ bool TemporalUpscaler::OnFrameStart() {
     last_jitter = jitter_on;
     dispatched_last_frame = false;
 
+    // Diagnostics BB_UI_TRACE=1: the draws of frames that ended without the output-size UI
+    // (their display buffer is shown as the game drew it, at its own size), and of one that had it.
+    if (ui_trace_on) {
+        static int bad = 0, good = 0;
+        if ((!ui_phase && Scaled() && good > 0 && bad < 12) || (ui_phase && good < 1)) {
+            ++(ui_phase ? good : bad);
+            std::printf("UI trace: frame %llu %s:%s\n",
+                        (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
+                        ui_phase ? "with the output-size UI" : "WITHOUT it", ui_trace.c_str());
+        }
+        ui_trace.clear();
+    }
     // The display pass of an upscaled frame reads the upscaled UI image.
     ui_pass.SetDisplayRedirect(ui_pass.IsUiPhase());
     ui_pass.SetUiPhase(false);
