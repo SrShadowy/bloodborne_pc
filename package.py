@@ -89,7 +89,10 @@ def should_bundle_library(name, path_str):
         return True
 
     # Bundle specific modern libraries that older distributions often lack
-    target_keywords = ("sdl3", "miniz", "zydis", "zycore", "fmt", "xxhash")
+    target_keywords = (
+        "sdl3", "miniz", "zydis", "zycore", "fmt", "xxhash",
+        "avcodec", "avformat", "avutil", "swscale", "swresample",
+    )
     name_lower = name.lower()
     for kw in target_keywords:
         if kw in name_lower:
@@ -277,8 +280,23 @@ def build_and_package(args):
         pkg_lib.mkdir(parents=True, exist_ok=True)
 
         found_deps = {}
-        for target in [bin_probe, bin_caps, lib_gpu]:
-            found_deps.update(get_ldd_dependencies(target))
+        queue = [bin_probe, bin_caps, lib_gpu]
+        processed = set()
+        while queue:
+            target = queue.pop(0)
+            try:
+                target_real = target.resolve()
+            except Exception:
+                target_real = target
+            if target_real in processed:
+                continue
+            processed.add(target_real)
+            deps = get_ldd_dependencies(target)
+            for name, path in deps.items():
+                if name not in found_deps:
+                    found_deps[name] = path
+                    if should_bundle_library(name, str(path)) and path.exists():
+                        queue.append(path)
 
         bundled_count = 0
         for name, path in sorted(found_deps.items()):
