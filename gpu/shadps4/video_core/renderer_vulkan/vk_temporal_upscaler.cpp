@@ -125,46 +125,95 @@ void TemporalUpscaler::OnSceneComposite() {
     if (w != width || h != height || !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) return;
     scheduler.EndRendering();
     if (reduced) {
-        reactive_mask_pass.GenerateMaskFromReduced(scene_targets, scene_color, color, w, h);
-    } else {
-        reactive_mask_pass.GenerateMask(runtime, color, w, h);
+        VideoCore::ImageViewInfo ci;
+        ci.format = color.info.pixel_format;
+        const auto proxy = scene_targets.Read(scene_color, ci);
+        reactive_mask_pass.Record(proxy.view, w, h);
+        return;
     }
+    const auto device = instance.GetDevice();
+    const auto color_view = Check(device.createImageView({
+        .image = vk::Image(color.backing->image), .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR16G16B16A16Sfloat, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    }));
+    runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                    vk::AccessFlagBits2::eShaderRead);
+    runtime.FlushBarriers();
+    reactive_mask_pass.Record(color_view, w, h);
+    scheduler.DeferOperation([device, color_view] { device.destroyImageView(color_view); });
 }
 
 void TemporalUpscaler::OnDispatch(u64 cs_hash) {
-    if (cs_hash != trigger_hash || done_this_frame || failed || Scaled()) return;
+    if (cs_hash != trigger_hash || done_this_frame || failed || Scaled() || !Active()) return;
     done_this_frame = true;
-    if (!scene_color || !camera_motion.Ready() || !Active()) {
+    if (!scene_color || !camera_motion.Ready() || !camera_motion.Depth()) {
         reset = true;
         return;
     }
+    if (!texture_cache.HasImage(scene_color) || !texture_cache.HasImage(camera_motion.Depth())) {
+        reset = true;
+        return;
+    }
+    if (dispatch_failed.exchange(false, std::memory_order_relaxed)) failed = true;
+    if (failed) return;
     Run();
 }
 
 bool TemporalUpscaler::OnFrameStart() {
-    done_this_frame = false;
-    ui_pass.ResetFrame();
-    view_cache.Clear();
-    if (!Active()) {
-        reset = true;
-        last_active = false;
-        return false;
+    const auto& settings = BbSettings::Get();
+    const int preset = BbSettings::RenderPreset();
+    if (applied_preset != preset || settings.upscaler == BbSettings::UpscalerOff) failed = false;
+    if (dispatch_failed.exchange(false, std::memory_order_relaxed)) {
+        failed = true;
     }
-    bool changed = false;
-    const int upscaler = BbSettings::Get().upscaler;
-    const int preset = BbSettings::Get().preset;
-    if (upscaler != applied_upscaler || preset != applied_preset) {
-        changed = true;
+    const bool active = Active();
+    const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
+    const int upscaler = settings.upscaler.load();
+    const int output = settings.output_res.load();
+    const bool output_changed = !scaled_session && applied_output != output;
+    if (output_changed) {
+        target_width = BbSettings::OutputWidths[output];
+        target_height = BbSettings::OutputHeights[output];
+        std::printf("Output resolution: %ux%u (live)\n", target_width, target_height);
+        failed = false;
+        fsr4_bridge.ResetFailure();
+    }
+    const bool changed = output_changed || applied_preset != preset || active != last_active ||
+                         jitter_on != last_jitter || applied_upscaler != upscaler;
+    if (applied_upscaler != upscaler) {
         applied_upscaler = upscaler;
-        applied_preset = preset;
+        reset = true;
+        resources_ready = false;
+        fsr4_bridge.ResetFailure();
     }
-    const bool jitter_on = !BbToggle::Disabled(1u << 25) && BbSettings::Get().jitter;
-    if (jitter_on != last_jitter) {
-        last_jitter = jitter_on;
-        changed = true;
+    if (!scaled_session) {
+        scene_targets.SetSize(SceneResolution::ForPreset(active ? preset : 0,
+                                                        {target_width, target_height}));
+        render_width = scene_targets.Size().width;
+        render_height = scene_targets.Size().height;
     }
+    BbSettings::Get().active_render_width = Scaled() ? render_width : scene_targets.Size().width;
+    BbSettings::Get().active_render_height = Scaled() ? render_height : scene_targets.Size().height;
+    if (changed || !dispatched_last_frame) reset = true;
+    if (changed) jitter_index = 0;
+    applied_preset = preset;
+    applied_output = output;
+    applied_upscaler = upscaler;
+    last_active = active;
+    last_jitter = jitter_on;
+    dispatched_last_frame = false;
+
+    // The display pass of an upscaled frame reads the upscaled UI image.
+    ui_pass.SetDisplayRedirect(ui_pass.IsUiPhase());
+    ui_pass.SetUiPhase(false);
+    ui_pass.SetLdrTarget({});
+    ui_pass.ResetFrame();
+    reactive_mask_pass.ResetFrame();
+    done_this_frame = false;
+    scene_color = {};
+
     if (!jitter_on) {
-        jitter = {0.0f, 0.0f};
+        jitter = {};
         camera_motion.SetJitter(jitter);
         return changed;
     }
@@ -179,7 +228,11 @@ bool TemporalUpscaler::OnFrameStart() {
     const u32 phases = Scaled() ? Motion::JitterPhases(render_width, target_width)
                                 : Motion::JitterPhases(scene_targets.Size().width, 1920);
     jitter_index = jitter_index % phases + 1;
-    jitter = {Halton(jitter_index, 2) - 0.5f, Halton(jitter_index, 3) - 0.5f};
+    const float sign = BbToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
+    jitter = {
+        sign * (Halton(jitter_index, 2) - 0.5f),
+        sign * (Halton(jitter_index, 3) - 0.5f)
+    };
     camera_motion.SetJitter(jitter);
     return changed;
 }
@@ -219,8 +272,9 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color, VideoCore::
         const auto& ui_target = texture_cache.GetImage(ui_pass.GetUiColor());
         if (depth_image.info.size.width == ui_target.info.size.width &&
             depth_image.info.size.height == ui_target.info.size.height) {
-            ui_pass.EnsureDepthResources(depth_image.info.pixel_format);
-            ui_pass.PrepareDepth(depth);
+            ui_pass.EnsureResources(target_width, target_height, ui_target.info.pixel_format,
+                                    depth_image.info.pixel_format, render_width, render_height);
+            ui_pass.PrepareDepth(depth, texture_cache, runtime);
         }
         return;
     }
