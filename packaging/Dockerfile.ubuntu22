@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Dockerfile for building portable BBPort releases on Ubuntu 22.04 (glibc 2.35)
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 1. Repositories and base build toolchain
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common ca-certificates curl wget gnupg git pkg-config \
+    python3 python3-pip ninja-build && \
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    gcc-13 g++-13 \
+    libboost-all-dev libxxhash-dev \
+    libavcodec-dev libavformat-dev libswscale-dev libswresample-dev libavutil-dev \
+    libx11-dev libxcb1-dev libwayland-dev libxext-dev \
+    libzstd-dev libgl1-mesa-dev libvulkan-dev glslang-tools && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set GCC 13 as default
+ENV CC=gcc-13
+ENV CXX=g++-13
+
+# Modern CMake via pip
+RUN pip3 install --no-cache-dir cmake
+
+# 2. Build and install SDL3 from official source
+RUN git clone --depth 1 https://github.com/libsdl-org/SDL.git -b main /tmp/sdl3 && \
+    cmake -S /tmp/sdl3 -B /tmp/sdl3/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build /tmp/sdl3/build -j$(nproc) --target install && \
+    rm -rf /tmp/sdl3
+
+# 3. Modern fmt (10.x)
+RUN git clone --depth 1 --branch 10.2.1 https://github.com/fmtlib/fmt.git /tmp/fmt && \
+    cmake -S /tmp/fmt -B /tmp/fmt/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DFMT_TEST=OFF && \
+    cmake --build /tmp/fmt/build -j$(nproc) --target install && \
+    rm -rf /tmp/fmt
+
+# 4. Zydis + Zycore (disassembler)
+RUN git clone --depth 1 --recursive https://github.com/zyantific/zydis.git /tmp/zydis && \
+    cmake -S /tmp/zydis -B /tmp/zydis/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DZYDIS_BUILD_SHARED_LIB=ON && \
+    cmake --build /tmp/zydis/build -j$(nproc) --target install && \
+    rm -rf /tmp/zydis
+
+# 5. miniz (compression)
+RUN git clone --depth 1 --branch 3.0.2 https://github.com/richgel999/miniz.git /tmp/miniz && \
+    cmake -S /tmp/miniz -B /tmp/miniz/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_SHARED_LIBS=ON && \
+    cmake --build /tmp/miniz/build -j$(nproc) --target install && \
+    rm -rf /tmp/miniz
+
+# 6. Header-only libraries: magic_enum, tsl-robin-map, VulkanMemoryAllocator
+RUN git clone --depth 1 --branch v0.9.5 https://github.com/Neargye/magic_enum.git /tmp/magic_enum && \
+    cmake -S /tmp/magic_enum -B /tmp/magic_enum/build -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build /tmp/magic_enum/build --target install && \
+    rm -rf /tmp/magic_enum
+
+RUN git clone --depth 1 --branch v1.3.0 https://github.com/Tessil/robin-map.git /tmp/robin_map && \
+    cmake -S /tmp/robin_map -B /tmp/robin_map/build -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build /tmp/robin_map/build --target install && \
+    rm -rf /tmp/robin_map
+
+RUN git clone --depth 1 --branch v3.1.0 https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git /tmp/vma && \
+    cmake -S /tmp/vma -B /tmp/vma/build -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build /tmp/vma/build --target install && \
+    rm -rf /tmp/vma
+
+RUN ldconfig
+
+WORKDIR /bbport
+CMD ["bash", "-c", "bash build.sh && python3 package.py --no-build"]
