@@ -862,3 +862,35 @@ On startup and during gameplay, users observed shader loading anomalies:
 - Zero errors on startup (`driver_pipelines.vkcache` created and loaded properly).
 - Zero stale pipeline warnings (`Preloaded 185 pipelines`, 32 stale entries automatically pruned).
 - Vulkan driver cache actively reused, eliminating shader compilation stutter during runtime exploration.
+
+---
+
+## 32. Upstream 0.51 Release Merge & shadNet Online Subsystem
+
+### Overview
+Successfully merged upstream release `0.51` (commit `3c57da4` by `deadinside28`) into `master`, combining all official enhancements with our fork's custom features (FSR 4.1.1 FP8 / RDNA4 auto-setup, FSR 3.1 Frame Gen, virtual keyboard, interactive memory scanner / debugger, trilingual i18n, and release packaging).
+
+### Key Features Integrated from Upstream 0.51
+1. **Online Play via shadNet (`gpu/bbnet/libbbnet.so` & `src/runtime_net.c`)**:
+   - Integrated full PS4 network & NP syscall emulation layer (`libbbnet.so`).
+   - Supports public shadNet multiplayer (`srv.shadps4.net:31313`) and community servers ("The Hunter's Dream" for spectres, bloodstains, notes).
+   - Added automatic UPnP port forwarding via `miniupnpc`.
+   - Handled offline fallback seamlessly when the server is unreachable.
+2. **Unified Mouse Look Controls (`src/runtime_pad.c`, `gpu/shim/window.cpp`)**:
+   - Upstream unified mouse buttons and wheel into SDL scancodes (`MOUSE_KEY+SDL_BUTTON_*`), matching gamepad and keyboard mapping.
+   - Decay physics on mouse look (`LOOK_TAU_US`) for smooth camera motion.
+   - F1 release key and click-to-capture gameplay mode.
+3. **NVIDIA DLSS Runtime Support (`gpu/dlss_bridge/`, `launcher/bbport_launcher.py`)**:
+   - In-launcher DLSS library selector supporting `libnvidia-ngx-dlss.so.*` directly from NVIDIA's Linux SDK.
+4. **Dedicated Online Tab in Launcher**:
+   - Modernized UI includes an "Online" tab with real-time server ping, WebAPI health check, NPID configuration, and UPnP toggle.
+   - Clean integration into our custom GTK4 / Libadwaita tab bar.
+
+### Validation & Verification
+- Unit test suite passed 100%:
+  - `out/pad-test`: PASS (Pad ABI, debug chord, mouse look, clicks, touch).
+  - `out/runtime-test`: PASS (Memory traps, mprotect, callbacks, shared memory).
+  - `out/file-mods-test`: PASS (Guest mod files, merged listing).
+  - `out/sema-test`: PASS (Semaphore contracts).
+  - `out/online-test`: PASS (Online imports to `libbbnet.so`, local trophy storage).
+  - `out/content-test`: PASS (AppContent lifecycle, add-ons).
