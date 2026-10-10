@@ -17,6 +17,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/version.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
@@ -163,7 +164,11 @@ AvPlayerStreamInfo AvPlayerSource::CreateStreamInfo(u32 stream_index) {
     }
     case AvPlayerStreamType::Audio: {
         LOG_INFO(Lib_AvPlayer, "Stream {} is an audio stream.", stream_index);
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
         info.details.audio.channel_count = p_stream->codecpar->ch_layout.nb_channels;
+#else
+        info.details.audio.channel_count = p_stream->codecpar->channels;
+#endif
         info.details.audio.sample_rate = p_stream->codecpar->sample_rate;
         info.details.audio.size = 0; // sceAvPlayerGetStreamInfo() is expected to set this to 0
         if (p_lang_node != nullptr) {
@@ -772,16 +777,28 @@ AvPlayerSource::AVFramePtr AvPlayerSource::ConvertAudioFrame(const AVFrame& fram
     pcm16_frame->pts = frame.pts;
     pcm16_frame->pkt_dts = frame.pkt_dts < 0 ? 0 : frame.pkt_dts;
     pcm16_frame->format = AV_SAMPLE_FMT_S16;
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
     pcm16_frame->ch_layout = frame.ch_layout;
+#else
+    pcm16_frame->channel_layout = frame.channel_layout ? frame.channel_layout : av_get_default_channel_layout(frame.channels);
+    pcm16_frame->channels = frame.channels;
+#endif
     pcm16_frame->sample_rate = frame.sample_rate;
 
     if (m_swr_context == nullptr) {
         SwrContext* swr_context = nullptr;
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
         AVChannelLayout in_ch_layout = frame.ch_layout;
         AVChannelLayout out_ch_layout = frame.ch_layout;
         swr_alloc_set_opts2(&swr_context, &out_ch_layout, AV_SAMPLE_FMT_S16, frame.sample_rate,
                             &in_ch_layout, AVSampleFormat(frame.format), frame.sample_rate, 0,
                             nullptr);
+#else
+        int64_t ch_layout = frame.channel_layout ? frame.channel_layout : av_get_default_channel_layout(frame.channels);
+        swr_context = swr_alloc_set_opts(nullptr, ch_layout, AV_SAMPLE_FMT_S16, frame.sample_rate,
+                                         ch_layout, AVSampleFormat(frame.format), frame.sample_rate, 0,
+                                         nullptr);
+#endif
         m_swr_context = SWRContextPtr(swr_context, &ReleaseSWRContext);
         swr_init(m_swr_context.get());
     }
@@ -798,7 +815,12 @@ Frame AvPlayerSource::PrepareAudioFrame(GuestBuffer buffer, const AVFrame& frame
     ASSERT(frame.nb_samples <= 1024);
 
     auto p_buffer = buffer.GetBuffer();
-    const auto size = frame.ch_layout.nb_channels * frame.nb_samples * sizeof(u16);
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+    const auto channels = frame.ch_layout.nb_channels;
+#else
+    const auto channels = frame.channels;
+#endif
+    const auto size = channels * frame.nb_samples * sizeof(u16);
     std::memcpy(p_buffer, frame.data[0], size);
 
     const auto stream_index = m_audio_stream_index.value();
@@ -815,7 +837,7 @@ Frame AvPlayerSource::PrepareAudioFrame(GuestBuffer buffer, const AVFrame& frame
                     {
                         .audio =
                             {
-                                .channel_count = u16(frame.ch_layout.nb_channels),
+                                .channel_count = u16(channels),
                                 .sample_rate = u32(frame.sample_rate),
                                 .size = u32(size),
                             },

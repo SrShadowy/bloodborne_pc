@@ -1,0 +1,10 @@
+out/
+dist/
+pgo/
+.git/
+user/
+mods/
+*.mp4
+fsr4_shaders/
+fsr4_411/
+logs/

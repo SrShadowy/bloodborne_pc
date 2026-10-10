@@ -49,6 +49,9 @@ march_opt=()
 if [[ -n ${BB_MARCH:-} && ${BB_MARCH} != "off" ]]; then
     march_opt+=("-march=$BB_MARCH")
 fi
+if [[ -f out/gpu/CMakeCache.txt ]] && ! grep -q "$PWD/gpu" out/gpu/CMakeCache.txt 2>/dev/null; then
+    rm -rf out/gpu/CMakeCache.txt out/gpu/CMakeFiles
+fi
 cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_PREFIX_PATH="$HOME/.local" -DBB_PGO="$pgo" \
     -DBB_LTO="${BB_LTO:-ON}" -DBB_MARCH="${BB_MARCH:-off}" -DBB_PGO_DIR="$PWD/pgo" >/dev/null
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}, MARCH ${BB_MARCH:-off}"
