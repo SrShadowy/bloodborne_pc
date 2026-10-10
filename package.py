@@ -334,13 +334,9 @@ def build_and_package(args):
         copy_tree_filtered(ROOT_DIR / "fsr4_shaders", staging_dir / "fsr4_shaders")
 
     print("[*] Copying tools...")
-    tools_dest = staging_dir / "tools"
-    tools_dest.mkdir(parents=True, exist_ok=True)
-    if (ROOT_DIR / "tools" / "fetch_fsr4_assets.sh").exists():
-        shutil.copy2(ROOT_DIR / "tools" / "fetch_fsr4_assets.sh", tools_dest / "fetch_fsr4_assets.sh")
-        (tools_dest / "fetch_fsr4_assets.sh").chmod(0o755)
-    if (ROOT_DIR / "tools" / "fsr4cap").exists():
-        copy_tree_filtered(ROOT_DIR / "tools" / "fsr4cap", tools_dest / "fsr4cap")
+    copy_tree_filtered(ROOT_DIR / "tools", staging_dir / "tools")
+    if (staging_dir / "tools" / "fetch_fsr4_assets.sh").exists():
+        (staging_dir / "tools" / "fetch_fsr4_assets.sh").chmod(0o755)
 
     # Empty user and mods directory placeholders
     (staging_dir / "mods").mkdir(exist_ok=True)
