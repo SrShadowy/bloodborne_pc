@@ -404,6 +404,7 @@ static void load_bindings(void) {
     if (!f) return;
     char line[512];
     while (fgets(line,sizeof line,f)) {
+        const int keyboard=!strncmp(line,"key.",4), pad=!strncmp(line,"pad.",4);
         char *eq=strchr(line,'=');
         if (eq && !keyboard && !pad) {
             const char *value=eq+1;

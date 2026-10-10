@@ -175,6 +175,16 @@ static int read_input(const char *kind) {
                                                         "Mouse X1", "Mouse X2"};
                     printf("key %s\n", names[e.button.button]);
                     done = 1;
+                } else if (want_mouse) {
+                    const char *btn = e.button.button == SDL_BUTTON_LEFT   ? "left" :
+                                      e.button.button == SDL_BUTTON_RIGHT  ? "right" :
+                                      e.button.button == SDL_BUTTON_MIDDLE ? "middle" :
+                                      e.button.button == SDL_BUTTON_X1     ? "x1" :
+                                      e.button.button == SDL_BUTTON_X2     ? "x2" : NULL;
+                    if (btn) {
+                        printf("mouse %s\n", btn);
+                        done = 1;
+                    }
                 }
                 break;
             case SDL_EVENT_MOUSE_WHEEL:
@@ -182,6 +192,14 @@ static int read_input(const char *kind) {
                     const float y = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
                     printf("key %s\n", y > 0 ? "Wheel Up" : "Wheel Down");
                     done = 1;
+                } else if (want_mouse) {
+                    if (e.wheel.y > 0.0f) {
+                        printf("mouse wheelup\n");
+                        done = 1;
+                    } else if (e.wheel.y < 0.0f) {
+                        printf("mouse wheeldown\n");
+                        done = 1;
+                    }
                 }
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
@@ -206,30 +224,6 @@ static int read_input(const char *kind) {
                         done = 1;
                     } else if (fabsf(motion_acc_x) > 35.0f && fabsf(motion_acc_x) > fabsf(motion_acc_y) * 1.2f) {
                         printf("mouse %s\n", motion_acc_x < 0.0f ? "motion_left" : "motion_right");
-                        done = 1;
-                    }
-                }
-                break;
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                if (want_mouse) {
-                    const char *btn = e.button.button == SDL_BUTTON_LEFT   ? "left" :
-                                      e.button.button == SDL_BUTTON_RIGHT  ? "right" :
-                                      e.button.button == SDL_BUTTON_MIDDLE ? "middle" :
-                                      e.button.button == SDL_BUTTON_X1     ? "x1" :
-                                      e.button.button == SDL_BUTTON_X2     ? "x2" : NULL;
-                    if (btn) {
-                        printf("mouse %s\n", btn);
-                        done = 1;
-                    }
-                }
-                break;
-            case SDL_EVENT_MOUSE_WHEEL:
-                if (want_mouse) {
-                    if (e.wheel.y > 0.0f) {
-                        printf("mouse wheelup\n");
-                        done = 1;
-                    } else if (e.wheel.y < 0.0f) {
-                        printf("mouse wheeldown\n");
                         done = 1;
                     }
                 }

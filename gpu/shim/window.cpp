@@ -321,34 +321,14 @@ bool WindowSDL::PollEvents() {
     return is_open;
 }
 
-// Issue #3: the OS cursor over the game. Hidden in fullscreen, and in a window after 3 s without
-// moving the mouse; relative mode locks cursor during gameplay; always shown while settings menu is open.
 void WindowSDL::UpdateCursor() {
     const bool in_menu = BbOverlay::CapturesInput() || text_active;
-    const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
-    const bool capture = mouse_capture_enabled && BbSettings::Get().mouse_capture.load() && !in_menu && focused;
-    if (capture != relative_mouse_active) {
-        relative_mouse_active = capture;
-        SDL_SetWindowRelativeMouseMode(window, capture);
+    const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+    const bool hide = !in_menu && (fullscreen || SDL_GetTicks() - last_mouse_motion_ms > 3000);
+    if (hide != cursor_hidden) {
+        cursor_hidden = hide;
+        hide ? SDL_HideCursor() : SDL_ShowCursor();
     }
-    if (!capture) {
-        const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-        const bool hide = !in_menu && (fullscreen || SDL_GetTicks() - last_mouse_motion_ms > 3000);
-        if (hide != cursor_hidden) {
-            cursor_hidden = hide;
-            hide ? SDL_HideCursor() : SDL_ShowCursor();
-        }
-    }
-}
-
-void WindowSDL::GetMouseMotion(float* dx, float* dy, int* wheel) {
-    std::scoped_lock lock{mouse_mutex};
-    if (dx) *dx = mouse_accum_x;
-    if (dy) *dy = mouse_accum_y;
-    if (wheel) *wheel = mouse_accum_wheel;
-    mouse_accum_x = 0.0f;
-    mouse_accum_y = 0.0f;
-    mouse_accum_wheel = 0;
 }
 
 } // namespace Frontend

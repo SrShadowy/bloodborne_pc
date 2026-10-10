@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fmt/format.h>
 
+#include "video_core/renderer_vulkan/ui_composition.h"
 #include "video_core/renderer_vulkan/upscaler/native_upscale_pass.h"
 #include "video_core/renderer_vulkan/upscaler/scaled_upscale_pass.h"
 #include "video_core/renderer_vulkan/motion_history.h"
@@ -207,11 +209,12 @@ bool TemporalUpscaler::OnFrameStart() {
     // (their display buffer is shown as the game drew it, at its own size), and of one that had it.
     if (ui_trace_on) {
         static int bad = 0, good = 0;
-        if ((!ui_phase && Scaled() && good > 0 && bad < 12) || (ui_phase && good < 1)) {
-            ++(ui_phase ? good : bad);
+        const bool has_ui = ui_pass.IsUiPhase();
+        if ((!has_ui && Scaled() && good > 0 && bad < 12) || (has_ui && good < 1)) {
+            ++(has_ui ? good : bad);
             std::printf("UI trace: frame %llu %s:%s\n",
                         (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
-                        ui_phase ? "with the output-size UI" : "WITHOUT it", ui_trace.c_str());
+                        has_ui ? "with the output-size UI" : "WITHOUT it", ui_trace.c_str());
         }
         ui_trace.clear();
     }
@@ -291,6 +294,15 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color, VideoCore::
         return;
     }
     if (!Active() || !Scaled() || !color) return;
+    if (ui_trace_on && ui_trace.size() < 1500) {
+        const auto& image = texture_cache.GetImage(color);
+        const bool movie = vs_hash == ui_trigger_vs || UiComposition::MovieShader(vs_hash) ||
+                           (scaled_session && native_viewport);
+        ui_trace += fmt::format(" [vs {:x} {}x{} fmt {} movie {} display {}]", vs_hash,
+                                image.info.size.width, image.info.size.height,
+                                u32(image.info.pixel_format), movie ? 1 : 0,
+                                FrameCapture::IsDisplayBuffer(image.info.guest_address) ? 1 : 0);
+    }
     if (ui_pass.IsUiPhase()) {
         ui_pass.SetDisplayRedirect(true);
         return;
