@@ -647,3 +647,102 @@ Now:
 - When `TemporalUpscaler::Run()` finishes, it marks `done_this_frame = true`.
 - `RasterScaling()` immediately transitions to `false`, guaranteeing all subsequent post-processing passes and swapchain presentation sample and present the full-resolution upscaled 1080p buffer.
 
+---
+
+## 27. GPU-Timeline Indirect Dispatch Sanitizer (`sanitize_indirect.comp`)
+
+### Problem Statement
+In-game crash resulting in hard GPU hang / RADV context loss (Error 23):
+```
+radv/amdgpu: The CS has been cancelled because the context is lost. This context is innocent.
+GPU breadcrumbs at device lost (submit): what each command stream finished
+  stream 0 (draws: game and presenter): 26252056 commands noted, the GPU started #26250607 and did not finish it (1449 noted after it)
+    #26250606 finished: dispatch cs 00000000a509af23, 1x1x1 groups, code 0x10d5272d00
+    #26250607 STUCK: indirect dispatch cs 0000000042f2a521, arguments at 0x10d425d3f0 (the GPU read 2152430977x1x1 groups), in place (guest memory now 2152430977x1x1), code 0x10d526ca00
+```
+
+### Root Cause Analysis
+1. In Vulkan, `vkCmdDispatchIndirect` reads `VkDispatchIndirectCommand { x, y, z }` directly from a GPU buffer at device offset. Hardware `maxComputeWorkGroupCount` per axis is `65535`.
+2. In particle simulations, emitter setup shaders (such as `#26250606`: `cs a509af23`, 1x1x1 groups) compute particle counts dynamically and write the indirect dispatch arguments directly into GPU memory.
+3. If signed integer underflow occurs (e.g. subtracting from a zero counter), the result wraps into a negative signed 32-bit integer (`0x804B7181` = `2,152,430,977` unsigned; earlier seen as `0x9BA94754` = `2,611,562,324` in `cs 2da7fe60`).
+4. Because the write happens **on the GPU timeline** after the CPU recording thread has already recorded the command buffer, CPU-side memory inspection in `DispatchIndirectRecord` cannot observe the GPU-written underflow.
+5. When the GPU command processor reads `2.15 billion` workgroups, it attempts to schedule them into the hardware queue, stalling the command processor and causing a 10-second driver timeout (`VK_ERROR_DEVICE_LOST`).
+
+### Implementation & Hardware-Level Defense
+1. **GPU Compute Sanitizer Shader (`gpu/shadps4/video_core/host_shaders/sanitize_indirect.comp`)**:
+   - Executes a single thread (`local_size_x = 1`) on the indirect dispatch buffer immediately before the indirect dispatch.
+   - Inspects `x, y, z` dimensions:
+     - If bit 31 is set (`val & 0x80000000u != 0`, negative underflow), clamps to `0` (clean no-op dispatch).
+     - If `val > 65535u`, clamps to `65535u` (hardware limit).
+2. **GPU Execution Barrier & Breadcrumb Coordination (`gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp`)**:
+   - `Rasterizer::SanitizeIndirectArguments(vk::Buffer args, u64 args_offset)` dispatches the sanitizer shader in stream order.
+   - Issues a `vk::MemoryBarrier2` transitioning `eComputeShader / eShaderStorageWrite` to `eDrawIndirect / eIndirectCommandRead` and `eTransfer / eTransferRead`.
+   - `Breadcrumbs::CopyArgs` and `cmdbuf.dispatchIndirect` subsequently read the sanitized arguments.
+3. **Build Target (`gpu/CMakeLists.txt`)**:
+   - Added `add_host_shader(sanitize_indirect.comp sanitize_indirect_comp)` to generate `sanitize_indirect_comp.h` automatically during build.
+
+---
+
+## 28. Player Death Screen / Scene Transition Flip Synchronization & Assertion Fix
+
+### Problem Statement
+When the player dies ("YOU DIED" sequence / death reload), the game abruptly terminated with code 23:
+```
+Runtime: save data 'SPRJ0005' mounted at /savedata0 (existing)
+GPU [Debug] <Critical> video_out.cpp:354 operator(): Assertion Failed!
+Out of order flip IRQ
+STOP: GPU library assertion failed (see GPU log above)
+
+— o jogo foi encerrado (código 23) —
+```
+
+### Root Cause Analysis
+1. **Fatal Emulation-Level Assertion**:
+   - In `gpu/shadps4/core/libraries/videoout/video_out.cpp`:
+     ```cpp
+     Platform::IrqC::Instance()->RegisterOnce(
+         Platform::InterruptId::GfxFlip, [=](Platform::InterruptId irq) {
+             ASSERT_MSG(irq == Platform::InterruptId::GfxFlip, "An unexpected IRQ occured");
+             ASSERT_MSG(port->buffer_labels[buf_id] == 1, "Out of order flip IRQ");
+             const auto result = driver->SubmitFlip(port, buf_id, flip_arg, true);
+             ASSERT_MSG(result, "EOP flip submission failed");
+         });
+     ```
+   - On physical PS4 hardware, display controller flips are processed regardless of label timing; `buffer_labels` is merely guest-host synchronization memory. The assertion `ASSERT_MSG` was a shadPS4 internal debug check that assumed strictly sequential 1-to-1 flip-to-label ordering.
+2. **Unsynchronized Presenter Reset Data Race**:
+   - In `VideoOutDriver::Flip()` (`gpu/shadps4/core/libraries/videoout/driver.cpp`), the presenter thread executes:
+     ```cpp
+     if (port->prev_index != -1) {
+         port->buffer_labels[port->prev_index] = 0;
+         port->SignalVoLabel();
+     }
+     ```
+   - The reset `port->buffer_labels[port->prev_index] = 0;` occurred outside `vo_mutex`. During scene transitions (death reload, autosave mount, fast screen fades), buffers are recycled rapidly. If the presenter thread resets `prev_index = 0` at the same time a new flip cycle uses buffer 0, or if multiple flip IRQs are enqueued, the check reads 0, tripping the fatal assert.
+
+### Technical Implementation
+1. **Thread-Safe Label Reset (`gpu/shadps4/core/libraries/videoout/driver.cpp`)**:
+   - Wrapped the previous label reset and notification under `port->vo_mutex`:
+     ```cpp
+     if (port->prev_index != -1) {
+         std::scoped_lock lock{port->vo_mutex};
+         port->buffer_labels[port->prev_index] = 0;
+         port->vo_cv.notify_one();
+     }
+     ```
+   - Prevents torn reads and guarantees atomic state transitions between the presenter thread and the graphics/IRQ threads.
+2. **Non-Fatal Warning & Unbroken Flip Submission (`gpu/shadps4/core/libraries/videoout/video_out.cpp`)**:
+   - Replaced the fatal assertion with a synchronized non-fatal warning:
+     ```cpp
+     {
+         std::scoped_lock lock{port->vo_mutex};
+         if (port->buffer_labels[buf_id] != 1) {
+             LOG_WARNING(Lib_VideoOut, "Out of order flip IRQ: buffer {} label is {}",
+                         buf_id, port->buffer_labels[buf_id]);
+         }
+     }
+     ```
+   - The flip is immediately handed over to `driver->SubmitFlip(port, buf_id, flip_arg, true)`.
+   - The death screen, scene transitions, and respawns now render and present smoothly without crashing.
+
+
+

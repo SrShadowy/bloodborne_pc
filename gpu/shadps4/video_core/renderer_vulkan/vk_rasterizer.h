@@ -323,6 +323,15 @@ private:
                             const IndirectDraw& indirect);
     /// Everything of an indirect dispatch after the pipeline selection.
     void DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr args, u32 size);
+    /// bbport: clamps indirect compute dispatch group counts on GPU before dispatching
+    void SanitizeIndirectArguments(vk::Buffer args, u64 args_offset);
+    struct SanitizePipeline {
+        vk::UniqueDescriptorSetLayout set_layout;
+        vk::UniquePipelineLayout layout;
+        vk::UniquePipeline pipeline;
+    };
+    SanitizePipeline sanitize_pipe{};
+    void EnsureSanitizerPipeline();
     /// Hands a draw (or, with `cs`, a dispatch) to the recording thread.
     void PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared, bool is_indexed,
                   u32 index_offset, const AmdGpu::ComputeProgram* cs = nullptr,

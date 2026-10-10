@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#version 450
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint offset_dwords;
+};
+
+layout(std430, binding = 0) buffer ArgsBuffer {
+    uint data[];
+};
+
+void main() {
+    uint idx = offset_dwords;
+    uint x = data[idx + 0];
+    uint y = data[idx + 1];
+    uint z = data[idx + 2];
+
+    // Vulkan hardware limit for compute workgroups per axis is 65535.
+    // If signed underflow (bit 31 set) occurs from particle counters, clamp to 0.
+    // If out-of-bounds (> 65535), clamp to 65535.
+    if ((x & 0x80000000u) != 0u) {
+        data[idx + 0] = 0u;
+    } else if (x > 65535u) {
+        data[idx + 0] = 65535u;
+    }
+
+    if ((y & 0x80000000u) != 0u) {
+        data[idx + 1] = 0u;
+    } else if (y > 65535u) {
+        data[idx + 1] = 65535u;
+    }
+
+    if ((z & 0x80000000u) != 0u) {
+        data[idx + 2] = 0u;
+    } else if (z > 65535u) {
+        data[idx + 2] = 65535u;
+    }
+}
