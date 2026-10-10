@@ -111,6 +111,8 @@ void UiManager::InitStyle() {
     colors[ImGuiCol_TableRowBgAlt]         = ImVec4(0.14f, 0.16f, 0.21f, 0.55f);
     colors[ImGuiCol_TextSelectedBg]        = ImVec4(0.24f, 0.55f, 0.85f, 0.35f);
     colors[ImGuiCol_NavHighlight]          = ImVec4(0.24f, 0.82f, 0.72f, 1.00f);
+    colors[ImGuiCol_PlotHistogram]         = ImVec4(0.20f, 0.55f, 0.82f, 1.00f);
+    colors[ImGuiCol_PlotHistogramHovered]  = ImVec4(0.28f, 0.65f, 0.95f, 1.00f);
 }
 
 void UiManager::Tick() {

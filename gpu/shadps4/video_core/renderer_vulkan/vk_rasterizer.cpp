@@ -35,7 +35,6 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
-#include "video_core/host_shaders/sanitize_indirect_comp.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "common/alignment.h"
 #include "video_core/texture_cache/image_view.h"
@@ -1888,77 +1887,6 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
     DispatchIndirectRecord(pipeline, address + offset, size);
 }
 
-void Rasterizer::EnsureSanitizerPipeline() {
-    if (sanitize_pipe.pipeline) {
-        return;
-    }
-    const auto device = instance.GetDevice();
-    std::array<vk::DescriptorSetLayoutBinding, 1> bindings{};
-    bindings[0] = {.binding = 0,
-                   .descriptorType = vk::DescriptorType::eStorageBuffer,
-                   .descriptorCount = 1,
-                   .stageFlags = vk::ShaderStageFlagBits::eCompute};
-    sanitize_pipe.set_layout = Check(device.createDescriptorSetLayoutUnique({
-        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-        .bindingCount = static_cast<u32>(bindings.size()),
-        .pBindings = bindings.data(),
-    }));
-    const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
-                                      .offset = 0,
-                                      .size = sizeof(u32)};
-    sanitize_pipe.layout = Check(device.createPipelineLayoutUnique({
-        .setLayoutCount = 1,
-        .pSetLayouts = &*sanitize_pipe.set_layout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &range,
-    }));
-    const auto module = CompileSPV(SANITIZE_INDIRECT_COMP, device);
-    sanitize_pipe.pipeline = Check(device.createComputePipelineUnique(
-        {}, vk::ComputePipelineCreateInfo{
-                .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                          .module = module,
-                          .pName = "main"},
-                .layout = *sanitize_pipe.layout,
-            }));
-    device.destroyShaderModule(module);
-}
-
-void Rasterizer::SanitizeIndirectArguments(vk::Buffer args, u64 args_offset) {
-    EnsureSanitizerPipeline();
-    const u64 align = instance.StorageMinAlignment();
-    const u64 aligned_offset = Common::AlignDown(args_offset, align ? align : 4);
-    const u32 dword_offset = static_cast<u32>((args_offset - aligned_offset) / 4);
-
-    scheduler.Record([this, args, aligned_offset, dword_offset](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *sanitize_pipe.pipeline);
-        const vk::DescriptorBufferInfo buf_info{
-            .buffer = args,
-            .offset = aligned_offset,
-            .range = VK_WHOLE_SIZE,
-        };
-        const vk::WriteDescriptorSet write{
-            .dstSet = VK_NULL_HANDLE,
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk::DescriptorType::eStorageBuffer,
-            .pBufferInfo = &buf_info,
-        };
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *sanitize_pipe.layout, 0, 1, &write);
-        cmdbuf.pushConstants(*sanitize_pipe.layout, vk::ShaderStageFlagBits::eCompute, 0,
-                             sizeof(dword_offset), &dword_offset);
-        cmdbuf.dispatch(1, 1, 1);
-
-        const vk::MemoryBarrier2 b{
-            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eDrawIndirect | vk::PipelineStageFlagBits2::eTransfer,
-            .dstAccessMask = vk::AccessFlagBits2::eIndirectCommandRead | vk::AccessFlagBits2::eTransferRead,
-        };
-        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &b});
-    });
-}
-
 void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr address,
                                         u32 size) {
     buffer_cache.NewPacket();
@@ -1993,9 +1921,6 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     }
 
     scheduler.EndRendering();
-
-    // Sanitize indirect dispatch arguments on GPU timeline to guarantee protection against GPU-written args
-    SanitizeIndirectArguments(buffer->Handle(), base);
 
     pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
                             {buffer_infos.data(), buffer_infos.size()});

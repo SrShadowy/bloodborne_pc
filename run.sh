@@ -170,6 +170,9 @@ export BB_COPY_GPU_BUFFERS=${BB_COPY_GPU_BUFFERS:-1}
 # A guest write next to small GPU outputs the GPU is still writing (counters, compute results,
 # up to BB_GPU_WRITE_TWINS_MAX bytes per page) does not wait for the GPU (BufferCache twins).
 export BB_GPU_WRITE_TWINS=${BB_GPU_WRITE_TWINS:-1} BB_GPU_WRITE_TWINS_MAX=${BB_GPU_WRITE_TWINS_MAX:-65536}
+export BB_READBACK_LINEAR=${BB_READBACK_LINEAR:-0}
+# Persistent shader cache sizing
+export MESA_SHADER_CACHE_MAX_SIZE=${MESA_SHADER_CACHE_MAX_SIZE:-4G}
 if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=480 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi

@@ -10,6 +10,7 @@
 #include <imgui.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace UI {
@@ -135,12 +136,43 @@ void TabScanner::Render() {
     }
 
     if (scanner.IsScanning()) {
+        ImGui::Spacing();
         const float p = scanner.GetProgress();
         char overlay[64];
         std::snprintf(overlay, sizeof(overlay), "%s (%.0f%%)",
                       L("Scanning...", "Escaneando...", "Сканирование..."),
                       p * 100.0f);
-        ImGui::ProgressBar(p, ImVec2(-1, 14), overlay);
+
+        // Progress bar with generous height (26px) and high-contrast color scheme
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.20f, 0.55f, 0.82f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.10f, 0.14f, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.42f, 0.58f, 0.70f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+
+        ImGui::ProgressBar(p, ImVec2(-1.0f, 26.0f), "");
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(3);
+
+        const ImVec2 rect_min = ImGui::GetItemRectMin();
+        const ImVec2 rect_max = ImGui::GetItemRectMax();
+        const ImVec2 text_size = ImGui::CalcTextSize(overlay);
+        const ImVec2 text_pos(
+            rect_min.x + (rect_max.x - rect_min.x - text_size.x) * 0.5f,
+            rect_min.y + (rect_max.y - rect_min.y - text_size.y) * 0.5f
+        );
+
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        // 4-point halo + shadow for crisp legibility over any background/fill
+        const ImU32 shadow_col = IM_COL32(0, 0, 0, 240);
+        draw_list->AddText(ImVec2(text_pos.x - 1, text_pos.y), shadow_col, overlay);
+        draw_list->AddText(ImVec2(text_pos.x + 1, text_pos.y), shadow_col, overlay);
+        draw_list->AddText(ImVec2(text_pos.x, text_pos.y - 1), shadow_col, overlay);
+        draw_list->AddText(ImVec2(text_pos.x, text_pos.y + 1), shadow_col, overlay);
+        draw_list->AddText(ImVec2(text_pos.x + 1, text_pos.y + 1), shadow_col, overlay);
+        draw_list->AddText(text_pos, IM_COL32(245, 248, 252, 255), overlay);
+        ImGui::Spacing();
     }
 
     ImGui::Spacing();
@@ -188,11 +220,31 @@ void TabScanner::Render() {
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%s", cur_str.c_str());
 
-                double prev_num = 0;
-                std::string prev_str;
-                Debugger::MemoryScanner::ReadFormatted(m.address, scan_type, prev_num, prev_str);
+                char prev_str[64];
+                switch (scan_type) {
+                case Debugger::DataType::U8: std::snprintf(prev_str, sizeof(prev_str), "%u", static_cast<uint8_t>(m.prev_raw)); break;
+                case Debugger::DataType::I8: std::snprintf(prev_str, sizeof(prev_str), "%d", static_cast<int8_t>(m.prev_raw)); break;
+                case Debugger::DataType::U16: std::snprintf(prev_str, sizeof(prev_str), "%u", static_cast<uint16_t>(m.prev_raw)); break;
+                case Debugger::DataType::I16: std::snprintf(prev_str, sizeof(prev_str), "%d", static_cast<int16_t>(m.prev_raw)); break;
+                case Debugger::DataType::U32: std::snprintf(prev_str, sizeof(prev_str), "%u", static_cast<uint32_t>(m.prev_raw)); break;
+                case Debugger::DataType::I32: std::snprintf(prev_str, sizeof(prev_str), "%d", static_cast<int32_t>(m.prev_raw)); break;
+                case Debugger::DataType::U64: std::snprintf(prev_str, sizeof(prev_str), "%llu", static_cast<unsigned long long>(m.prev_raw)); break;
+                case Debugger::DataType::I64: std::snprintf(prev_str, sizeof(prev_str), "%lld", static_cast<long long>(m.prev_raw)); break;
+                case Debugger::DataType::Float: {
+                    float fval = 0.0f;
+                    std::memcpy(&fval, &m.prev_raw, sizeof(fval));
+                    std::snprintf(prev_str, sizeof(prev_str), "%.3f", fval);
+                    break;
+                }
+                case Debugger::DataType::Double: {
+                    double dval = 0.0;
+                    std::memcpy(&dval, &m.prev_raw, sizeof(dval));
+                    std::snprintf(prev_str, sizeof(prev_str), "%.4f", dval);
+                    break;
+                }
+                }
                 ImGui::TableSetColumnIndex(2);
-                ImGui::Text("%s", prev_str.c_str());
+                ImGui::Text("%s", prev_str);
 
                 ImGui::TableSetColumnIndex(3);
                 ImGui::PushID(static_cast<int>(i));

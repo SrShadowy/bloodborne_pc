@@ -906,6 +906,11 @@ class LauncherWindow(Adw.ApplicationWindow):
                 "mouse_capture": "1" if self.mouse_capture_row.get_active() else "0",
             } if hasattr(self, "mouse_sens_row") else {}),
             **{key: "1" if row.get_active() else "0" for key, row in self.effect_rows.items()},
+            "menu_language": "pt" if self.settings.get("ui_language") == "pt_BR" else (
+                "ru" if self.settings.get("ui_language") == "ru" else (
+                    "en" if self.settings.get("ui_language") == "en" else self.ini.get("menu_language", "pt")
+                )
+            ),
         })
         save_ini(self.ini, self.ini_lines)
         self.ini, self.ini_lines = load_ini()

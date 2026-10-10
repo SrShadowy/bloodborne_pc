@@ -744,5 +744,121 @@ STOP: GPU library assertion failed (see GPU log above)
    - The flip is immediately handed over to `driver->SubmitFlip(port, buf_id, flip_arg, true)`.
    - The death screen, scene transitions, and respawns now render and present smoothly without crashing.
 
+---
 
+## 29. Interactive Virtual Keyboard with Full Gamepad & Mouse Support for IME Dialog
 
+### Problem Statement
+During character creation ("Insira o nome" / name entry dialog) or text entry prompts, the game displayed a static notification box accepting only physical keyboard inputs:
+`Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel`
+Players using gamepads/controllers had no way to enter characters, navigate letters, or confirm the name without reaching for a physical keyboard.
+
+### Technical Implementation
+1. **Interactive Virtual Keyboard Module (`gpu/shim/bbport_keyboard.h`, `gpu/shim/bbport_keyboard.cpp`)**:
+   - Comprehensive QWERTY grid layout featuring:
+     - Row 0: Numbers & symbols (`1 2 3 4 5 6 7 8 9 0 - _`)
+     - Rows 1-3: Alphabetic keys with dynamic uppercase/lowercase state
+     - Row 4: Action keys (`[ CAPS ]`, `[ ESPAÇO ]`, `[ APAGAR ]`, `[ LIMPAR ]`, `[ CONFIRMAR (OK) ]`, `[ CANCELAR ]`)
+   - 2D cursor navigation (`selected_row`, `selected_col`) with automatic column clamping.
+   - High-contrast visual focus styling with glowing border and primary accent color on the active key.
+   - Full mouse support: clicking any virtual button types/triggers the corresponding action.
+2. **Gamepad Navigation & Hardware Shortcuts**:
+   - **D-Pad & Left Stick**: Smooth grid navigation with deadzone (18000) and stick cooldown (180ms).
+   - **Cross / A (`SDL_GAMEPAD_BUTTON_SOUTH`)**: Types the selected key or activates the selected action.
+   - **Square / X (`SDL_GAMEPAD_BUTTON_WEST`)**: Fast shortcut for **Backspace (Apagar)**.
+   - **Triangle / Y (`SDL_GAMEPAD_BUTTON_NORTH`)**: Fast shortcut for **Space (Espaço)**.
+   - **L1 / R1 (`SDL_GAMEPAD_BUTTON_LEFT_SHOULDER / RIGHT_SHOULDER`)**: Toggles **Caps Lock**.
+   - **Start / Options (`SDL_GAMEPAD_BUTTON_START`)**: Fast shortcut to **Confirm / OK**.
+   - **Circle / B (`SDL_GAMEPAD_BUTTON_EAST`)**: Cancels and closes the dialog.
+3. **Window Thread Synchronization (`gpu/shim/window.cpp`, `gpu/shim/sdl_window.h`)**:
+   - Thread-safe text manipulation methods (`AppendText`, `BackspaceText`, `ClearText`, `ConfirmTextInput`, `CancelTextInput`).
+   - Callbacks registered to `BbVirtualKeyboard::SetCallbacks` from `UpdateTextTitle()`.
+   - Polling updates title bar and triggers `ime_status()` completion in `src/runtime_services.c`.
+4. **Localization (`gpu/shim/bbport_strings.h`, `gpu/shim/bbport_strings.cpp`)**:
+   - Localized button labels (`KbSpace`, `KbBackspace`, `KbClear`, `KbConfirm`, `KbCancel`, `KbCaps`) and gamepad controller guide footer in Portuguese (PT-BR), English (EN), and Russian (RU).
+
+---
+
+## 30. Watchpoint / Single-Step Debugger Crash Fix (SIGTRAP Exit 133 Resolution)
+
+### Problem Statement
+When clicking "Quem Escreve?" (*Who Writes?*) on a watched variable in the in-game Memory Scanner / Watchlist, the game immediately aborted with:
+```
+Trace/breakpoint trap (imagem do núcleo gravada) "$probe" "${probe_args[@]}"
+— o jogo foi encerrado (código 133) —
+```
+
+### Root Cause Analysis
+1. **Multi-Thread Trap Flag Collision**:
+   - When a watched page was protected (`mprotect(..., PROT_READ)`), any write triggered `SIGSEGV` -> `OnSignalSegv`, which temporarily unprotected the page and enabled the CPU Trap Flag (`RFLAGS.TF |= 0x100`) to single-step past the write.
+   - A single global `std::atomic<bool> waiting_single_step` was used. When multiple game threads wrote concurrently to the same 4KB page or multiple steps fired in succession, the second thread found `waiting_single_step` already false.
+   - Consequently, `OnSignalTrap` returned `false`, and `TrapHandler` forwarded the unhandled single-step `SIGTRAP` to `old_trap_action` (`BbGuestHooks::OnTrap` in `gpu/shim/bbport_guest_hooks.cpp`).
+   - `BbGuestHooks::OnTrap` only handled its own INT3 hook sites (`MemcpySites`, `AllocReturn`). Upon receiving any unrecognized `SIGTRAP`, it executed:
+     ```cpp
+     signal(SIGTRAP, SIG_DFL);
+     raise(SIGTRAP);
+     ```
+     immediately terminating the process with a core dump and exit code 133.
+2. **Aggressive 10ms Watchdog**:
+   - `WorkerLoop` in `debugger/breakpoint.cpp` was repeatedly calling `mprotect(..., PROT_READ)` every 10ms, creating `mmap_lock` contention and interrupting active writes on other threads.
+3. **Missing `PROT_EXEC` Protection**:
+   - `mprotect` calls were stripping execution privileges on the page, creating risks of execution faults if code or jump tables shared the page.
+
+### Technical Implementation
+1. **Thread-Safe Step Slot Table (`debugger/breakpoint.h`, `debugger/breakpoint.cpp`)**:
+   - Added `StepSlot` array (`std::array<StepSlot, 64> step_slots`) tracking `tid`, `page`, and `arm_time_ms`.
+   - In `OnSignalSegv`, records the faulting thread's `tid` into an atomic slot and sets `PROT_READ | PROT_WRITE | PROT_EXEC`.
+2. **Signal Inspection & Trap Flag Consumption (`debugger/breakpoint.cpp`)**:
+   - `OnSignalTrap` inspects `info->si_code` (`TRAP_TRACE`, `SI_KERNEL`, `TRAP_HWBKPT`), CPU `REG_EFL & 0x100`, and `step_slots`.
+   - If a single-step trap occurs, `REG_EFL &= ~0x100` is cleared in user context unconditionally.
+   - Releases the thread's step slot and only re-applies `PROT_READ | PROT_EXEC` when no other threads are actively stepping.
+   - Returns `true` to consume the trap, guaranteeing it never falls through to fatal system handlers.
+   - Handles software breakpoints (`INT3` / `HasBreakpoint(rip - 1)`) gracefully.
+3. **Timeout Watchdog (> 250ms)**:
+   - Replaced unconditional 10ms `mprotect` polling with a timeout watchdog that only cleans up slots if a thread failed to step within 250ms.
+4. **Defensive Hook Fallback (`gpu/shim/bbport_guest_hooks.cpp`, `gpu/shim/bbport_free_check.cpp`)**:
+   - In `OnTrap` and `OnStepTrap`, added a defensive check before `raise(SIGTRAP)`: if `info->si_code == TRAP_TRACE` or `(REG_EFL & 0x100)` is set, clears `TF` and returns safely instead of aborting the game.
+
+---
+
+## 31. Shader Cache Loading & Driver Pipeline Cache Fixes
+
+### Problem Statement
+On startup and during gameplay, users observed shader loading anomalies:
+1. `GPU [Common.Filesystem] <Error> io_file.cpp:201 Open: Failed to open the file at path=.../driver_pipelines.vkcache, error_message=No such file or directory`
+2. `GPU [Render] <Warning> vk_pipeline_serialization.cpp:444 WarmUp: 32 stale pipelines were found. Consider re-generating the cache`
+3. Frametime drops when entering new areas due to shaders compiling on-the-fly and lack of binary driver cache reuse.
+
+### Root Cause Analysis
+1. **Unchecked File Loading (`cache_storage.cpp:LoadVector`)**:
+   - `LoadVector` attempted to instantiate `IOFile{path, FileAccessMode::Read}` directly without verifying `std::filesystem::exists(path)`. When `driver_pipelines.vkcache` was not yet created, it emitted a critical red error.
+2. **Missing Driver Cache Persistence (`vk_pipeline_cache.cpp`)**:
+   - `SaveDriverCache()` was only called in `~PipelineCache()` and `Sync()`. Because `bb-probe` terminates via `std::_Exit(0)` or `_exit()` without executing static C++ object destructors, `driver_pipelines.vkcache` was NEVER written to disk!
+   - Additionally, `WarmUp()` populated Vulkan's driver pipeline cache with 185 pipelines, but never persisted them.
+3. **Session-Local Motion Vector Serialization (`vk_pipeline_serialization.cpp`)**:
+   - Vertex shaders with motion vectors enabled (`spec.runtime_info.hw.vs.motion_vectors`) embed session-local device addresses and cannot be restored across processes.
+   - However, `RegisterPipelineData` and `RegisterShaderMeta` persisted these pipelines to disk anyway.
+   - On the subsequent boot, `LoadShaderMeta` intentionally rejected them (`return false`). Because they failed to load, `WarmUp` flagged them as "stale pipelines" (32 stale entries) and suggested manual cache deletion, even though deleting the cache would simply recreate the same problem on the next run.
+4. **Dangling Pipeline Selection State**:
+   - When a stage or key failed deserialization, `sel.infos`, `sel.modules`, and `sel.fetch_shader` retained pointers into temporary structures across loop iterations.
+
+### Technical Implementation
+1. **Filesystem Existence Guard (`cache_storage.cpp`)**:
+   - In `LoadVector`, added `std::error_code ec; if (!std::filesystem::exists(path, ec) || ec) return;` before calling `IOFile`, cleanly returning an empty vector when the driver cache is not yet generated.
+2. **Immediate & Periodic Driver Cache Serialization (`vk_pipeline_cache.cpp`)**:
+   - Called `SaveDriverCache()` immediately following `WarmUp()`, guaranteeing `driver_pipelines.vkcache` is serialized to disk on first boot (~507 KB of native GPU machine code).
+   - In `GetGraphicsPipeline` and `GetComputePipeline`, added an automatic dirty check: saves the driver cache asynchronously every 32 runtime pipeline compiles.
+3. **Graceful Cache Sync on Exit (`gpu/shim/bbgpu.cpp`)**:
+   - Before `std::_Exit(0)` on window close and via `std::atexit`, calls `Core::Memory::Instance()->GetRasterizer()->GetPipelineCache().Sync();` to ensure all pending shader binaries and driver cache data are flushed and written to disk.
+4. **Motion Vector Persistence Filtering (`vk_pipeline_serialization.cpp`)**:
+   - In `RegisterPipelineData`, added `if (key.motion_vectors) return;` to prevent polluting disk cache with session-local pointers.
+   - In `RegisterShaderMeta`, added `if (info.hw_stage == Shader::HwStage::Vertex && spec.runtime_info.hw.vs.motion_vectors) return;`.
+5. **Path-Aware ForEachBlob & Stale Entry Pruning (`cache_storage.h`, `cache_storage.cpp`, `vk_pipeline_serialization.cpp`)**:
+   - Updated `Storage::DataBase::ForEachBlob` to provide entry filepaths.
+   - In `WarmUp()`, any stale or unrestorable `.key` files (such as obsolete permutations or legacy motion vectors) that fail preload are automatically pruned from disk with `std::filesystem::remove`.
+   - Cleans up `sel.infos`, `sel.modules`, and `sel.fetch_shader` defensively on any stage failure.
+
+### Results
+- Zero errors on startup (`driver_pipelines.vkcache` created and loaded properly).
+- Zero stale pipeline warnings (`Preloaded 185 pipelines`, 32 stale entries automatically pruned).
+- Vulkan driver cache actively reused, eliminating shader compilation stutter during runtime exploration.

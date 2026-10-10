@@ -12,6 +12,19 @@
 #include <unistd.h>
 #include <ucontext.h>
 
+#ifndef TRAP_BRKPT
+#define TRAP_BRKPT 1
+#endif
+#ifndef TRAP_TRACE
+#define TRAP_TRACE 2
+#endif
+#ifndef TRAP_BRANCH
+#define TRAP_BRANCH 3
+#endif
+#ifndef TRAP_HWBKPT
+#define TRAP_HWBKPT 4
+#endif
+
 namespace Debugger {
 
 static struct sigaction old_segv_action;
@@ -56,14 +69,14 @@ static void TrapHandler(int sig, siginfo_t* info, void* uctx) {
     auto& mgr = BreakpointManager::Get();
     auto* ctx = static_cast<ucontext_t*>(uctx);
 #if defined(__x86_64__)
-    const uintptr_t rip = ctx->uc_mcontext.gregs[REG_RIP];
+    const uintptr_t rip = ctx ? ctx->uc_mcontext.gregs[REG_RIP] : 0;
 #else
     const uintptr_t rip = 0;
 #endif
     const pid_t tid = gettid();
 
-    if (mgr.OnSignalTrap(rip, tid, uctx)) {
-        return; // Consumed our watchpoint single-step! Do not forward to guest hooks!
+    if (mgr.OnSignalTrap(rip, tid, info, uctx)) {
+        return; // Consumed our watchpoint single-step or breakpoint! Do not forward to guest hooks!
     }
 
     if (old_trap_action.sa_flags & SA_SIGINFO) {
@@ -200,9 +213,38 @@ void BreakpointManager::WorkerLoop() {
                 }
             }
 
-            // Watchdog: If watchpoint active and no single step pending, ensure page is read-only
-            if (watchpoint_active.load(std::memory_order_relaxed) && watched_page_start && !waiting_single_step.load(std::memory_order_relaxed)) {
-                mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size, PROT_READ);
+            // Timeout watchdog: If any thread has been stepping for > 250ms, clean it up
+            const auto loop_now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+            bool any_timed_out = false;
+            for (auto& slot : step_slots) {
+                pid_t st_tid = slot.tid.load(std::memory_order_relaxed);
+                if (st_tid != 0) {
+                    uint64_t arm_t = slot.arm_time_ms.load(std::memory_order_relaxed);
+                    if (arm_t != 0 && (static_cast<uint64_t>(loop_now) - arm_t > 250)) {
+                        slot.tid.store(0, std::memory_order_release);
+                        slot.page.store(0, std::memory_order_release);
+                        slot.arm_time_ms.store(0, std::memory_order_release);
+                        any_timed_out = true;
+                    }
+                }
+            }
+            if (any_timed_out) {
+                bool any_stepping = false;
+                for (const auto& slot : step_slots) {
+                    if (slot.tid.load(std::memory_order_relaxed) != 0) {
+                        any_stepping = true;
+                        break;
+                    }
+                }
+                if (!any_stepping) {
+                    waiting_single_step.store(false, std::memory_order_release);
+                    if (watchpoint_active.load(std::memory_order_relaxed) && watched_page_start) {
+                        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                                 PROT_READ | PROT_EXEC);
+                    }
+                }
             }
         }
 
@@ -227,8 +269,16 @@ bool BreakpointManager::SetWriteWatchpoint(uintptr_t address) {
     value_change_count.store(0, std::memory_order_release);
     hits.clear();
 
-    // Make page read-only so any write faults into SegvHandler
-    if (mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size, PROT_READ) != 0) {
+    for (auto& slot : step_slots) {
+        slot.tid.store(0, std::memory_order_release);
+        slot.page.store(0, std::memory_order_release);
+        slot.arm_time_ms.store(0, std::memory_order_release);
+    }
+    waiting_single_step.store(false, std::memory_order_release);
+
+    // Make page read-only (+exec) so any write faults into SegvHandler
+    if (mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                 PROT_READ | PROT_EXEC) != 0) {
         watched_address.store(0, std::memory_order_release);
         return false;
     }
@@ -240,16 +290,24 @@ bool BreakpointManager::SetWriteWatchpoint(uintptr_t address) {
 void BreakpointManager::ClearWriteWatchpoint() {
     if (!watchpoint_active.load(std::memory_order_relaxed)) return;
     if (watched_page_start) {
-        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size, PROT_READ | PROT_WRITE);
+        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                 PROT_READ | PROT_WRITE | PROT_EXEC);
     }
     watchpoint_active.store(false, std::memory_order_release);
     watched_address.store(0, std::memory_order_release);
     has_last_watched_value.store(false, std::memory_order_release);
     watched_page_start = 0;
+    waiting_single_step.store(false, std::memory_order_release);
+    for (auto& slot : step_slots) {
+        slot.tid.store(0, std::memory_order_release);
+        slot.page.store(0, std::memory_order_release);
+        slot.arm_time_ms.store(0, std::memory_order_release);
+    }
 }
 
 void BreakpointManager::OnSignalSegv(uintptr_t fault_addr, uintptr_t rip, pid_t tid, void* uctx) {
     auto* ctx = static_cast<ucontext_t*>(uctx);
+    if (!ctx) return;
 
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                          std::chrono::steady_clock::now().time_since_epoch())
@@ -291,9 +349,21 @@ void BreakpointManager::OnSignalSegv(uintptr_t fault_addr, uintptr_t rip, pid_t 
         game_paused.store(true, std::memory_order_relaxed);
     }
 
-    // Unprotect so the instruction can complete
+    // Unprotect page with PROT_READ | PROT_WRITE | PROT_EXEC so the instruction can complete
     if (watched_page_start) {
-        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size, PROT_READ | PROT_WRITE);
+        mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                 PROT_READ | PROT_WRITE | PROT_EXEC);
+    }
+
+    // Arm per-thread step slot
+    for (auto& slot : step_slots) {
+        pid_t expected = 0;
+        if (slot.tid.load(std::memory_order_relaxed) == tid ||
+            slot.tid.compare_exchange_strong(expected, tid, std::memory_order_acq_rel)) {
+            slot.page.store(watched_page_start, std::memory_order_release);
+            slot.arm_time_ms.store(static_cast<uint64_t>(now), std::memory_order_release);
+            break;
+        }
     }
 
 #if defined(__x86_64__)
@@ -303,21 +373,66 @@ void BreakpointManager::OnSignalSegv(uintptr_t fault_addr, uintptr_t rip, pid_t 
     waiting_single_step.store(true, std::memory_order_release);
 }
 
-bool BreakpointManager::OnSignalTrap(uintptr_t rip, pid_t tid, void* uctx) {
-    (void)rip;
-    (void)tid;
+bool BreakpointManager::OnSignalTrap(uintptr_t rip, pid_t tid, siginfo_t* info, void* uctx) {
     auto* ctx = static_cast<ucontext_t*>(uctx);
-    if (waiting_single_step.exchange(false, std::memory_order_acq_rel)) {
+    if (!ctx) return false;
+
+    // 1. Check if this is a single-step (trace trap) from our watchpoint
+    bool is_trace = false;
 #if defined(__x86_64__)
-        // Clear Trap Flag so subsequent instructions do not trap!
-        ctx->uc_mcontext.gregs[REG_EFL] &= ~0x100;
+    if ((ctx->uc_mcontext.gregs[REG_EFL] & 0x100) != 0) {
+        is_trace = true;
+    }
 #endif
-        // Single step completed: re-protect the page
-        if (watchpoint_active.load(std::memory_order_relaxed) && watched_page_start) {
-            mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size, PROT_READ);
+    if (info && (info->si_code == TRAP_TRACE || info->si_code == SI_KERNEL || info->si_code == TRAP_HWBKPT)) {
+        is_trace = true;
+    }
+
+    bool tid_in_slots = false;
+    for (auto& slot : step_slots) {
+        if (slot.tid.load(std::memory_order_relaxed) == tid) {
+            tid_in_slots = true;
+            slot.tid.store(0, std::memory_order_release);
+            slot.page.store(0, std::memory_order_release);
+            slot.arm_time_ms.store(0, std::memory_order_release);
+            break;
+        }
+    }
+
+    if (tid_in_slots || is_trace || waiting_single_step.load(std::memory_order_relaxed)) {
+#if defined(__x86_64__)
+        // Unconditionally clear Trap Flag so subsequent instructions do not trap!
+        ctx->uc_mcontext.gregs[REG_EFL] &= ~static_cast<greg_t>(0x100);
+#endif
+        // Check if any other threads are still single-stepping
+        bool any_stepping = false;
+        for (const auto& slot : step_slots) {
+            if (slot.tid.load(std::memory_order_relaxed) != 0) {
+                any_stepping = true;
+                break;
+            }
+        }
+
+        if (!any_stepping) {
+            waiting_single_step.store(false, std::memory_order_release);
+            // Re-apply protection if watchpoint is still active
+            if (watchpoint_active.load(std::memory_order_relaxed) && watched_page_start) {
+                mprotect(reinterpret_cast<void*>(watched_page_start), watched_page_size,
+                         PROT_READ | PROT_EXEC);
+            }
+        }
+        return true; // Consumed! Never forward single-step traps to guest hooks!
+    }
+
+    // 2. Check for software breakpoints (INT3 hit)
+    const uintptr_t bp_addr = rip ? (rip - 1) : 0;
+    if (bp_addr && HasBreakpoint(bp_addr)) {
+        if (auto_pause_on_hit.load(std::memory_order_relaxed)) {
+            game_paused.store(true, std::memory_order_relaxed);
         }
         return true;
     }
+
     return false;
 }
 

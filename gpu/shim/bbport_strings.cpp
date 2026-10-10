@@ -450,6 +450,48 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
         "Teclado: digite, Backspace = apagar, Enter = OK, Esc = cancelar",
         "Клавиатура: ввод, Backspace = удалить, Enter = OK, Esc = отмена"
     },
+    // KbSpace
+    {
+        "Space",
+        "Espaço",
+        "Пробел"
+    },
+    // KbBackspace
+    {
+        "Delete",
+        "Apagar",
+        "Стереть"
+    },
+    // KbClear
+    {
+        "Clear",
+        "Limpar",
+        "Очистить"
+    },
+    // KbConfirm
+    {
+        "Confirm (OK)",
+        "Confirmar (OK)",
+        "Готово (OK)"
+    },
+    // KbCancel
+    {
+        "Cancel",
+        "Cancelar",
+        "Отмена"
+    },
+    // KbCaps
+    {
+        "Caps",
+        "Caps",
+        "Регистр"
+    },
+    // PromptGamepadHelp
+    {
+        "Gamepad: (X/A) Type  (Square/X) Delete  (Triangle/Y) Space  (L1/R1) Caps  (Start) OK  (Circle/B) Cancel",
+        "Controle: (X/A) Inserir  (Quadrado/X) Apagar  (Triângulo/Y) Espaço  (L1/R1) Caps  (Start) OK  (Círculo/B) Cancelar",
+        "Геймпад: (Крест/A) Ввод  (Квадрат/X) Удалить  (Треугольник/Y) Пробел  (L1/R1) Регистр  (Start) OK  (Круг/B) Отмена"
+    },
     // SectionFrameGeneration
     {
         "Frame Generation",

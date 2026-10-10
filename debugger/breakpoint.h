@@ -7,6 +7,8 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <array>
+#include <signal.h>
 #include <sys/types.h>
 
 namespace Debugger {
@@ -42,6 +44,13 @@ struct RawHitEvent {
 };
 
 constexpr size_t RING_BUFFER_CAPACITY = 256;
+
+struct StepSlot {
+    std::atomic<pid_t> tid{0};
+    std::atomic<uintptr_t> page{0};
+    std::atomic<uint64_t> arm_time_ms{0};
+};
+static constexpr size_t MAX_STEP_SLOTS = 64;
 
 struct WatchpointHit {
     uintptr_t rip{0};
@@ -99,7 +108,7 @@ public:
 
     // Internal signal handlers callbacks (lock-free & async-signal-safe)
     void OnSignalSegv(uintptr_t fault_addr, uintptr_t rip, pid_t tid, void* ucontext);
-    bool OnSignalTrap(uintptr_t rip, pid_t tid, void* ucontext);
+    bool OnSignalTrap(uintptr_t rip, pid_t tid, siginfo_t* info, void* ucontext);
 
     // Dedicated worker thread functions
     void StartWorker();
@@ -119,6 +128,7 @@ private:
     uintptr_t watched_page_start{0};
     size_t watched_page_size{4096};
     std::atomic<bool> waiting_single_step{false};
+    std::array<StepSlot, MAX_STEP_SLOTS> step_slots{};
 
     // Live memory monitor in worker thread
     std::atomic<uint64_t> last_watched_value{0};

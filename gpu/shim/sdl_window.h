@@ -36,6 +36,11 @@ public:
     int PollTextInput(std::string& text);
     /// Consumes accumulated relative mouse movement and wheel clicks since last call.
     void GetMouseMotion(float* dx, float* dy, int* wheel);
+    void AppendText(const std::string& append);
+    void BackspaceText();
+    void ClearText();
+    void ConfirmTextInput();
+    void CancelTextInput();
 
 private:
     std::atomic<s32> width, height;

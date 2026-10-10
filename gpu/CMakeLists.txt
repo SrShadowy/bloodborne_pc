@@ -109,7 +109,6 @@ add_host_shader(depth_resample.frag depth_resample_frag)
 add_host_shader(depth_resample.frag depth_stencil_resample_frag HAS_STENCIL=1)
 add_host_shader(depth_resample.frag depth_stencil_bits_frag STENCIL_BITS=1)
 add_host_shader(camera_motion.comp camera_motion_debug_comp DEBUG_OVERLAY=1)
-add_host_shader(sanitize_indirect.comp sanitize_indirect_comp)
 foreach(BPP IN ITEMS 8 16 32 64 96 128)
     add_host_shader(tiling.comp tiling_micro_${BPP}_comp BITS_PER_PIXEL=${BPP} IS_MACRO_TILED=0)
     add_host_shader(tiling.comp tiling_macro_${BPP}_comp BITS_PER_PIXEL=${BPP} IS_MACRO_TILED=1)
@@ -140,7 +139,7 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
     third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp
     third_party/imgui/backends/imgui_impl_vulkan.cpp)
 target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends
-    ${CMAKE_CURRENT_SOURCE_DIR}/../debugger ${CMAKE_CURRENT_SOURCE_DIR}/../ui)
+    ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../debugger ${CMAKE_CURRENT_SOURCE_DIR}/../ui)
 file(GLOB DEBUGGER_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../debugger/*.cpp)
 file(GLOB UI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../ui/*.cpp)
 target_sources(bbgpu PRIVATE ${DEBUGGER_SOURCES} ${UI_SOURCES})

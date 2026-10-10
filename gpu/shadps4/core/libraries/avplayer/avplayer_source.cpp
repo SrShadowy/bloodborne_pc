@@ -304,11 +304,6 @@ bool AvPlayerSource::Start() {
 bool AvPlayerSource::Stop() {
     std::unique_lock lock(m_state_mutex);
 
-    if (!HasRunningThreads()) {
-        LOG_WARNING(Lib_AvPlayer, "Could not stop playback: already stopped.");
-        return false;
-    }
-
     if (m_up_data_streamer) {
         m_up_data_streamer->Reset();
     }
@@ -375,7 +370,7 @@ bool AvPlayerSource::GetVideoData(AvPlayerFrameInfoEx& video_info) {
     const auto current_time = CurrentTime();
     const auto& new_frame = m_video_frames.Front();
     if (m_state.GetSyncMode() == AvPlayerAvSyncMode::Default) {
-        if (new_frame.info.timestamp > current_time) {
+        if (!m_is_eof && new_frame.info.timestamp > current_time) {
             return false;
         }
     }
@@ -604,12 +599,9 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
     m_video_buffers_cv.Notify();
     m_audio_buffers_cv.Notify();
 
-    m_video_decoder_thread.Join();
-    m_audio_decoder_thread.Join();
     m_state.OnEOF();
 
     LOG_INFO(Lib_AvPlayer, "Demuxer Thread exited normally");
-    m_demuxer_thread.Join();
 }
 
 AvPlayerSource::AVFramePtr AvPlayerSource::ConvertVideoFrame(const AVFrame& frame) {
@@ -726,9 +718,16 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
             return;
         }
         while (res >= 0) {
-            if (m_video_buffers.Size() == 0 &&
-                !m_video_buffers_cv.Wait(stop, [this] { return m_video_buffers.Size() != 0; })) {
-                break;
+            if (m_video_buffers.Size() == 0) {
+                if (m_is_eof) {
+                    if (!m_video_buffers_cv.WaitFor(milliseconds(100), stop,
+                                                    [this] { return m_video_buffers.Size() != 0; })) {
+                        LOG_INFO(Lib_AvPlayer, "Video decoder exiting on EOF due to buffer exhaustion");
+                        return;
+                    }
+                } else if (!m_video_buffers_cv.Wait(stop, [this] { return m_video_buffers.Size() != 0; })) {
+                    break;
+                }
             }
             auto up_frame = AVFramePtr(av_frame_alloc(), &ReleaseAVFrame);
             res = avcodec_receive_frame(m_video_codec_context.get(), up_frame.get());
@@ -765,7 +764,6 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
     }
 
     LOG_INFO(Lib_AvPlayer, "Video Decoder Thread exited normally");
-    m_video_decoder_thread.Join();
 }
 
 AvPlayerSource::AVFramePtr AvPlayerSource::ConvertAudioFrame(const AVFrame& frame) {
@@ -848,9 +846,16 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
             return;
         }
         while (res >= 0) {
-            if (m_audio_buffers.Size() == 0 &&
-                !m_audio_buffers_cv.Wait(stop, [this] { return m_audio_buffers.Size() != 0; })) {
-                break;
+            if (m_audio_buffers.Size() == 0) {
+                if (m_is_eof) {
+                    if (!m_audio_buffers_cv.WaitFor(milliseconds(100), stop,
+                                                    [this] { return m_audio_buffers.Size() != 0; })) {
+                        LOG_INFO(Lib_AvPlayer, "Audio decoder exiting on EOF due to buffer exhaustion");
+                        return;
+                    }
+                } else if (!m_audio_buffers_cv.Wait(stop, [this] { return m_audio_buffers.Size() != 0; })) {
+                    break;
+                }
             }
 
             auto up_frame = AVFramePtr(av_frame_alloc(), &ReleaseAVFrame);
@@ -884,7 +889,6 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
     }
 
     LOG_INFO(Lib_AvPlayer, "Audio Decoder Thread exited normally");
-    m_audio_decoder_thread.Join();
 }
 
 bool AvPlayerSource::HasRunningThreads() const {

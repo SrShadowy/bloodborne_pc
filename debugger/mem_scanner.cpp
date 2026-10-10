@@ -5,8 +5,13 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
-#include <sys/uio.h>
+#include <csetjmp>
+#include <csignal>
 #include <unistd.h>
+#include "gpu/bbgpu.h"
+
+extern "C" __thread sigjmp_buf* runtime_fault_recover;
+extern "C" int runtime_memory_write_backing(uintptr_t address, const void* data, uint64_t size);
 
 namespace Debugger {
 
@@ -49,18 +54,31 @@ const char* MemoryScanner::GetTypeName(DataType type) {
 
 bool MemoryScanner::ReadMemory(uintptr_t addr, void* dest, size_t size) {
     if (!addr || !dest || size == 0) return false;
-    struct iovec local_iov{dest, size};
-    struct iovec remote_iov{reinterpret_cast<void*>(addr), size};
-    const ssize_t n = process_vm_readv(getpid(), &local_iov, 1, &remote_iov, 1, 0);
-    return n == static_cast<ssize_t>(size);
+    sigjmp_buf recover;
+    if (sigsetjmp(recover, 1) != 0) {
+        runtime_fault_recover = nullptr;
+        return false;
+    }
+    runtime_fault_recover = &recover;
+    std::memcpy(dest, reinterpret_cast<const void*>(addr), size);
+    runtime_fault_recover = nullptr;
+    return true;
 }
 
 bool MemoryScanner::WriteMemory(uintptr_t addr, const void* src, size_t size) {
     if (!addr || !src || size == 0) return false;
-    struct iovec local_iov{const_cast<void*>(src), size};
-    struct iovec remote_iov{reinterpret_cast<void*>(addr), size};
-    const ssize_t n = process_vm_writev(getpid(), &local_iov, 1, &remote_iov, 1, 0);
-    return n == static_cast<ssize_t>(size);
+    if (runtime_memory_write_backing(addr, src, size)) {
+        return true;
+    }
+    sigjmp_buf recover;
+    if (sigsetjmp(recover, 1) != 0) {
+        runtime_fault_recover = nullptr;
+        return false;
+    }
+    runtime_fault_recover = &recover;
+    std::memcpy(reinterpret_cast<void*>(addr), src, size);
+    runtime_fault_recover = nullptr;
+    return true;
 }
 
 static double DecodeValue(DataType type, const void* ptr) {
@@ -133,22 +151,31 @@ std::vector<MemoryRegion> MemoryScanner::QueryRegions(ScanScope scope) {
     FILE* f = std::fopen("/proc/self/maps", "r");
     if (!f) return regions;
 
+    const uintptr_t img_base = bbgpu_get_guest_image_base();
+    const uint64_t img_size = bbgpu_get_guest_image_size();
+    const uintptr_t img_end = (img_base && img_size) ? (img_base + img_size) : (img_base + 0x20000000ULL);
+
     char line[512];
     while (std::fgets(line, sizeof(line), f)) {
         uintptr_t start = 0, end = 0;
         char perms[5] = {0};
         if (std::sscanf(line, "%lx-%lx %4s", &start, &end, perms) == 3) {
-            // Must be readable and writable
-            if (perms[0] != 'r' || perms[1] != 'w') {
+            // Must be readable. GPU write-tracked guest memory is r--p, so do not require 'w'
+            if (perms[0] != 'r') {
                 continue;
             }
             if (scope == ScanScope::ExecutableOnly) {
-                if (start >= 0x400000 && end <= 0x20000000) {
+                if (img_base != 0) {
+                    if (start >= img_base && end <= img_end) {
+                        regions.push_back({start, end});
+                    }
+                } else if (start >= 0x400000 && end <= 0x20000000) {
                     regions.push_back({start, end});
                 }
             } else if (scope == ScanScope::GuestHeap) {
-                // PS4 user space is below 1 TiB (0x100000000000)
-                if (start >= 0x400000 && end <= 0x100000000000) {
+                // PS4 user / guest space is [min_addr, 0x100000000000)
+                const uintptr_t min_addr = img_base ? img_base : 0x400000;
+                if (start >= min_addr && end <= 0x100000000000ULL) {
                     regions.push_back({start, end});
                 }
             } else {
@@ -227,7 +254,22 @@ void MemoryScanner::DoFirstScan(DataType type, ScanComparison comp, double value
         for (uintptr_t cur = r.start; cur < r.end; cur += CHUNK_SIZE) {
             if (cancel_requested.load()) break;
             const size_t to_read = std::min(CHUNK_SIZE, static_cast<size_t>(r.end - cur));
-            if (ReadMemory(cur, chunk.data(), to_read)) {
+            bool ok = ReadMemory(cur, chunk.data(), to_read);
+            if (!ok && to_read > 4096) {
+                // Page-by-page fallback so a single guarded page doesn't drop 256 KB
+                constexpr size_t PAGE_SIZE = 4096;
+                bool any_page_read = false;
+                for (size_t poff = 0; poff < to_read; poff += PAGE_SIZE) {
+                    size_t psz = std::min(PAGE_SIZE, to_read - poff);
+                    if (!ReadMemory(cur + poff, chunk.data() + poff, psz)) {
+                        std::memset(chunk.data() + poff, 0, psz);
+                    } else {
+                        any_page_read = true;
+                    }
+                }
+                ok = any_page_read;
+            }
+            if (ok) {
                 for (size_t off = 0; off + type_size <= to_read; off += type_size) {
                     const double val = DecodeValue(type, chunk.data() + off);
                     if (MatchesCondition(comp, type, val, val, value)) {

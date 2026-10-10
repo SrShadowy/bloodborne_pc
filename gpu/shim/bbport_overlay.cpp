@@ -633,23 +633,11 @@ void TextPrompt() {
         title = prompt_title;
         text = prompt_text;
     }
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
-                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowBgAlpha(0.9f);
-    ImGui::Begin("##textprompt", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
-                     ImGuiWindowFlags_NoFocusOnAppearing);
-    ImGui::TextUnformatted(title.c_str());
-    ImGui::Separator();
-    ImGui::Text("%s_", text.c_str());
-    ImGui::Separator();
     const auto& s = BbSettings::Get();
     const int lang = s.menu_language.load();
-    ImGui::TextUnformatted(BbStrings::Get(BbStrings::StringId::PromptKeyboardHelp, lang));
-    ImGui::End();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float display_scale = viewport ? (viewport->WorkSize.y / 1080.0f) : 1.0f;
+    BbVirtualKeyboard::Render(title, text, lang, display_scale);
 }
 
 } // namespace
@@ -670,11 +658,18 @@ void RenderGraphicsSettings() {
     RenderMemoryToolsSection();
 }
 
-void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
+void SetTextPrompt(bool active, const std::string& prompt, const std::string& text,
+                   const BbVirtualKeyboard::Callbacks& callbacks) {
     {
         std::scoped_lock lock{prompt_mutex};
         prompt_title = prompt;
         prompt_text = text;
+    }
+    if (active && !prompt_active) {
+        BbVirtualKeyboard::Reset();
+    }
+    if (callbacks.on_append || callbacks.on_confirm) {
+        BbVirtualKeyboard::SetCallbacks(callbacks);
     }
     prompt_active = active;
 }
@@ -758,6 +753,7 @@ bool HandleEvent(const SDL_Event& event) {
     }
     ImGuiIO& io = ImGui::GetIO();
     const bool is_open = menu_open;
+    const bool is_prompt = prompt_active;
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
@@ -780,6 +776,9 @@ bool HandleEvent(const SDL_Event& event) {
     }
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+        if (is_prompt && BbVirtualKeyboard::HandleGamepadEvent(event)) {
+            return true;
+        }
         const bool down = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
         const u8 button = event.gbutton.button;
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {
@@ -799,6 +798,12 @@ bool HandleEvent(const SDL_Event& event) {
         }
         return true;
     }
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        if (is_prompt && BbVirtualKeyboard::HandleGamepadEvent(event)) {
+            return true;
+        }
+        return false;
+    }
     case SDL_EVENT_TEXT_INPUT: {
         // Typed characters (Ctrl+click on a slider, a text field): key events alone erase but
         // do not type. SDL sends them while text input is on (UpdateTextInput).
@@ -809,7 +814,7 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_MOUSE_MOTION: {
-        if (!is_open) {
+        if (!is_open && !is_prompt) {
             return false;
         }
         const float density = PixelDensity(event.motion.windowID);
@@ -818,7 +823,7 @@ bool HandleEvent(const SDL_Event& event) {
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        if (!is_open) {
+        if (!is_open && !is_prompt) {
             return false;
         }
         const int button = event.button.button == SDL_BUTTON_LEFT    ? 0
@@ -831,7 +836,7 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_MOUSE_WHEEL:
-        if (!is_open) {
+        if (!is_open && !is_prompt) {
             return false;
         }
         io.AddMouseWheelEvent(event.wheel.x, event.wheel.y);
@@ -839,6 +844,7 @@ bool HandleEvent(const SDL_Event& event) {
     default:
         return false;
     }
+    return false;
 }
 
 bool Visible() {

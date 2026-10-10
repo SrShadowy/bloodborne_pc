@@ -10,7 +10,10 @@
 
 namespace Frontend {
 
+static WindowSDL* s_active_window = nullptr;
+
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
+    s_active_window = this;
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
@@ -51,6 +54,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
 }
 
 WindowSDL::~WindowSDL() {
+    if (s_active_window == this) {
+        s_active_window = nullptr;
+    }
     SDL_DestroyWindow(window);
 }
 
@@ -68,11 +74,74 @@ int WindowSDL::PollTextInput(std::string& out) {
     return text_state;
 }
 
+void WindowSDL::AppendText(const std::string& append) {
+    std::scoped_lock lock{text_mutex};
+    if (text_active) {
+        text += append;
+        UpdateTextTitle();
+    }
+}
+
+void WindowSDL::BackspaceText() {
+    std::scoped_lock lock{text_mutex};
+    if (text_active && !text.empty()) {
+        size_t cut = text.size() - 1; // drop one UTF-8 code point
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+        text.erase(cut);
+        UpdateTextTitle();
+    }
+}
+
+void WindowSDL::ClearText() {
+    std::scoped_lock lock{text_mutex};
+    if (text_active) {
+        text.clear();
+        UpdateTextTitle();
+    }
+}
+
+void WindowSDL::ConfirmTextInput() {
+    std::scoped_lock lock{text_mutex};
+    if (text_active) {
+        text_state = 1;
+        text_active = false;
+        SDL_StopTextInput(window);
+        UpdateTextTitle();
+    }
+}
+
+void WindowSDL::CancelTextInput() {
+    std::scoped_lock lock{text_mutex};
+    if (text_active) {
+        text_state = 2;
+        text_active = false;
+        SDL_StopTextInput(window);
+        UpdateTextTitle();
+    }
+}
+
 void WindowSDL::UpdateTextTitle() {
     const std::string title = text_active ? base_title + " \u2014 " + text_prompt + ": " + text + "_  (Enter = OK, Esc = cancel)"
                                           : base_title;
     SDL_SetWindowTitle(window, title.c_str());
-    BbOverlay::SetTextPrompt(text_active, text_prompt, text);
+    BbVirtualKeyboard::Callbacks cb{
+        .on_append = [](const char* str) {
+            if (s_active_window && str) s_active_window->AppendText(str);
+        },
+        .on_backspace = []() {
+            if (s_active_window) s_active_window->BackspaceText();
+        },
+        .on_clear = []() {
+            if (s_active_window) s_active_window->ClearText();
+        },
+        .on_confirm = []() {
+            if (s_active_window) s_active_window->ConfirmTextInput();
+        },
+        .on_cancel = []() {
+            if (s_active_window) s_active_window->CancelTextInput();
+        },
+    };
+    BbOverlay::SetTextPrompt(text_active, text_prompt, text, cb);
 }
 
 bool WindowSDL::PollEvents() {

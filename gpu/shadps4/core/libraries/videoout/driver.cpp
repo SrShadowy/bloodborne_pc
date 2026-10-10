@@ -842,7 +842,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
         const auto now = std::chrono::steady_clock::now();
-        const bool flip_slot = !frame_limit || now >= next_flip;
+        const bool flip_slot = !frame_limit || (now + vblank_period / 2) >= next_flip;
         if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
             if (request && frame_limit) {

@@ -37,6 +37,8 @@ int bbgpu_get_mouse_invert_y(void);
 int bbgpu_get_mouse_invert_x(void);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
 void bbgpu_patch_image(unsigned char *image, uint64_t size);
+uintptr_t bbgpu_get_guest_image_base(void);
+uint64_t bbgpu_get_guest_image_size(void);
 /* Number of symbols registered by the vendored libraries (diagnostics). */
 unsigned bbgpu_symbol_count(void);
 #ifdef __cplusplus

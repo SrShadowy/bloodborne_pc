@@ -327,8 +327,21 @@ extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
     return BbFreeCheck::OnStaleTrapFault(reinterpret_cast<std::uint64_t>(address)) ? 1 : 0;
 }
 
+static uintptr_t g_guest_image_base = 0;
+static uint64_t g_guest_image_size = 0;
+
 extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
+    g_guest_image_base = reinterpret_cast<uintptr_t>(image);
+    g_guest_image_size = size;
     BbGnmHooks::PatchImage(image, size);
+}
+
+extern "C" uintptr_t bbgpu_get_guest_image_base(void) {
+    return g_guest_image_base;
+}
+
+extern "C" uint64_t bbgpu_get_guest_image_size(void) {
+    return g_guest_image_size;
 }
 
 extern "C" unsigned bbgpu_symbol_count(void) {

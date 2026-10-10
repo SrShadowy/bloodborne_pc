@@ -6,6 +6,7 @@
 #include "breakpoint.h"
 #include "cutscene_detector.h"
 #include "ui_manager.h"
+#include "gpu/bbgpu.h"
 
 #include <imgui.h>
 #include <SDL3/SDL.h>
@@ -17,6 +18,14 @@
 #include <chrono>
 
 namespace UI {
+
+static uintptr_t ResolveAddress(uintptr_t addr) {
+    const uintptr_t img = bbgpu_get_guest_image_base();
+    if (img != 0 && addr >= 0x00400000 && addr < 0x20000000) {
+        return img + (addr - 0x00400000);
+    }
+    return addr;
+}
 
 static char addr_input[64] = "0x00400000";
 static uintptr_t current_addr = 0x00400000;
@@ -37,15 +46,15 @@ static void CopyToClipboard(const char* text, const char* desc) {
 }
 
 void TabHexView::NavigateTo(uintptr_t addr) {
-    current_addr = addr;
-    selected_addr = addr;
+    current_addr = ResolveAddress(addr);
+    selected_addr = current_addr;
     has_selection = true;
     std::snprintf(addr_input, sizeof(addr_input), "0x%llx", static_cast<unsigned long long>(current_addr));
-    if (history.empty() || history[history_idx] != addr) {
+    if (history.empty() || history[history_idx] != current_addr) {
         if (history_idx + 1 < history.size()) {
             history.erase(history.begin() + history_idx + 1, history.end());
         }
-        history.push_back(addr);
+        history.push_back(current_addr);
         history_idx = history.size() - 1;
     }
 }
@@ -200,6 +209,17 @@ void TabHexView::Render() {
     }
 
     ImGui::Spacing();
+
+    const uintptr_t img = bbgpu_get_guest_image_base();
+    const uint64_t img_sz = bbgpu_get_guest_image_size();
+    if (img != 0 && current_addr >= img && current_addr < img + img_sz) {
+        const uintptr_t ps4_vaddr = 0x00400000 + (current_addr - img);
+        ImGui::TextColored(ImVec4(0.92f, 0.85f, 0.45f, 1.0f), "%s: 0x%08llx (%s: 0x%lx)",
+                           L("PS4 Virtual Address", "Endereco Virtual PS4", "Виртуальный адрес PS4"),
+                           static_cast<unsigned long long>(ps4_vaddr),
+                           L("eboot offset", "offset eboot", "смещение eboot"),
+                           static_cast<unsigned long>(current_addr - img));
+    }
 
     // 3. Memory Hex Grid
     constexpr size_t VIEW_SIZE = 256;
