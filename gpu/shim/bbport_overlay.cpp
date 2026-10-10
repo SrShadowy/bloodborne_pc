@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <mutex>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <SDL3/SDL.h>
 #include "bbport_settings.h"
@@ -45,7 +47,6 @@ std::atomic<bool> menu_open{false};
 bool l3_down = false, r3_down = false;
 bool dirty = false; // settings changed while open: saved on close
 float base_scale = 1.0f;
-
 // The game's text dialog (ImeDialog, the character name), typed on the keyboard: drawn while it
 // is open. In fullscreen the window title that showed it is not visible (issues #17, #19).
 std::mutex prompt_mutex;
@@ -193,14 +194,18 @@ void RenderUpscalerSection(BbSettings::Values& s, int lang) {
         "FSR 3.1",
         "FSR 4 (INT8)",
         fsr411_label.c_str(),
-        S(UpscalerTaa)
+        S(UpscalerTaa),
+        "DLSS (NVIDIA RTX)"
     };
-    static const char* later[] = {"DLSS", "XeSS"};
+    static_assert(sizeof(upscalers) / sizeof(upscalers[0]) == BbSettings::UpscalerCount);
+    static const char* later[] = {"XeSS"};
     int upscaler = s.upscaler;
     if (ImGui::BeginCombo(S(UpscalerCombo), upscalers[upscaler])) {
         for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
             const bool supported = i == BbSettings::UpscalerFsr4 ? s.fsr4_supported.load()
-                : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load() : true;
+                : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
+                : i == BbSettings::UpscalerDlss ? s.dlss_supported.load()
+                : true;
             ImGui::BeginDisabled(!supported);
             if (ImGui::Selectable(upscalers[i], i == upscaler)) {
                 Store(s.upscaler, i, true);
@@ -220,6 +225,11 @@ void RenderUpscalerSection(BbSettings::Values& s, int lang) {
         }
         ImGui::EndCombo();
     }
+    if (const char* problem = s.dlss_problem.load(); problem && s.upscaler == BbSettings::UpscalerDlss) {
+        ImGui::PushTextWrapPos();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "DLSS: %s", problem);
+        ImGui::PopTextWrapPos();
+    }
     if (const char* problem = s.fsr4_problem.load()) {
         ImGui::PushTextWrapPos();
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%s: %s",
@@ -227,6 +237,15 @@ void RenderUpscalerSection(BbSettings::Values& s, int lang) {
         if (!BbSettings::IsFsr4(s.upscaler))
             ImGui::TextUnformatted(S(Fsr4ActiveModeSelected));
         ImGui::PopTextWrapPos();
+    }
+    if (s.upscaler == BbSettings::UpscalerDlss) {
+        Hint(UI::L(
+            "NVIDIA DLSS Super Resolution (RTX GPUs; Native AA is DLAA). Needs the DLSS bridge "
+            "and NVIDIA's library next to the game; otherwise FSR 3.1 is used.",
+            "NVIDIA DLSS Super Resolution (GPUs RTX; Native AA é DLAA). Requer a ponte DLSS "
+            "e a biblioteca da NVIDIA junto ao jogo; caso contrário, usa o FSR 3.1.",
+            "NVIDIA DLSS Super Resolution (видеокарты RTX; Native AA — это DLAA). Нужны мост DLSS "
+            "и библиотека NVIDIA рядом с игрой; без них используется FSR 3.1."));
     }
     if (BbSettings::IsFsr4(s.upscaler)) {
         if (s.upscaler == BbSettings::UpscalerFsr411) {
@@ -388,7 +407,17 @@ void RenderEffectsSection(BbSettings::Values& s, int lang) {
         ImGui::EndCombo();
     }
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
+        const auto& effect = BbSettings::Effects[e];
         Checkbox(BbSettings::EffectLabel(e, lang), s.effects[e]);
+        if (std::string_view(effect.key) == "debug_camera") {
+            Hint(UI::L("Hold Cross and press L3 (keyboard: Space + Z).",
+                       "Segure Cross e aperte L3 (teclado: Space + Z).",
+                       "Удерживайте Cross и нажмите L3 (клавиатура: Space + Z)."));
+        } else if (std::string_view(effect.key) == "debug_menu") {
+            Hint(UI::L("Left side of the touchpad (Tab); right side: Backspace. Needs the adhoc folder from Nexus mod #253 (the fonts in adhoc/font).",
+                       "Lado esquerdo do touchpad (Tab); lado direito: Backspace. Requer a pasta adhoc do mod #253 do Nexus (fontes em adhoc/font).",
+                       "Левая сторона тачпада (Tab), правая — Backspace. Нужна папка adhoc из мода Nexus #253 (шрифты в adhoc/font)."));
+        }
     }
     Checkbox(S(PuddleReflections), s.puddle_reflections);
     Hint(S(HintPuddleReflections));
@@ -552,6 +581,8 @@ void FpsCounter() {
         upscaler_label = s.fsr411_fp8.load() ? "FSR 4.1.1 (FP8)" : "FSR 4.1.1";
     } else if (s.upscaler == BbSettings::UpscalerTaa) {
         upscaler_label = "TAA";
+    } else if (s.upscaler == BbSettings::UpscalerDlss) {
+        upscaler_label = "DLSS";
     }
 
     const bool fg_setting_on = s.frame_generation.load();
@@ -568,16 +599,16 @@ void FpsCounter() {
             upscaler_label = "FG";
         }
         std::snprintf(text_buf, sizeof(text_buf), "%.0f \\ %.0f FPS  %.1f %s  %s",
-                      orig_fps, total_fps,
-                      display_ms,
-                      BbStrings::Get(BbStrings::StringId::FpsMs, lang),
-                      upscaler_label.c_str());
+                       orig_fps, total_fps,
+                       display_ms,
+                       BbStrings::Get(BbStrings::StringId::FpsMs, lang),
+                       upscaler_label.c_str());
     } else {
         std::snprintf(text_buf, sizeof(text_buf), "%.0f FPS  %.1f %s  %s",
-                      total_fps > 0.0f ? total_fps : orig_fps,
-                      display_ms,
-                      BbStrings::Get(BbStrings::StringId::FpsMs, lang),
-                      upscaler_label.c_str());
+                       total_fps > 0.0f ? total_fps : orig_fps,
+                       display_ms,
+                       BbStrings::Get(BbStrings::StringId::FpsMs, lang),
+                       upscaler_label.c_str());
     }
 
     const ImVec2 text_size = ImGui::CalcTextSize(text_buf);
@@ -638,6 +669,59 @@ void TextPrompt() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float display_scale = viewport ? (viewport->WorkSize.y / 1080.0f) : 1.0f;
     BbVirtualKeyboard::Render(title, text, lang, display_scale);
+}
+
+/// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
+/// consumed when the file appears (it is removed), one key press per frame.
+void ScriptedKeys() {
+    static const char* path = std::getenv("BB_MENU_KEYS_FILE");
+    static std::chrono::steady_clock::time_point last_check{};
+    static std::vector<std::string> queue;
+    static bool release = false;
+    static ImGuiKey held = ImGuiKey_None;
+    if (!path) {
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    if (release) {
+        io.AddKeyEvent(held, false);
+        release = false;
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (queue.empty() && now - last_check > std::chrono::milliseconds(100)) {
+        last_check = now;
+        if (FILE* f = std::fopen(path, "r")) {
+            char token[32];
+            while (std::fscanf(f, "%31s", token) == 1) {
+                queue.emplace_back(token);
+            }
+            std::fclose(f);
+            std::remove(path);
+        }
+    }
+    if (queue.empty()) {
+        return;
+    }
+    const std::string token = queue.front();
+    queue.erase(queue.begin());
+    if (token == "toggle") {
+        SetOpen(!menu_open);
+        return;
+    }
+    held = token == "up" ? ImGuiKey_GamepadDpadUp : token == "down" ? ImGuiKey_GamepadDpadDown
+         : token == "left" ? ImGuiKey_GamepadDpadLeft : token == "right" ? ImGuiKey_GamepadDpadRight
+         : token == "enter" ? ImGuiKey_GamepadFaceDown : token == "l1" ? ImGuiKey_GamepadL1
+         : token == "r1" ? ImGuiKey_GamepadR1 : token == "kdown" ? ImGuiKey_DownArrow
+         : token == "kup" ? ImGuiKey_UpArrow : ImGuiKey_None;
+    if (token == "back") {
+        SetOpen(false);
+        return;
+    }
+    if (held != ImGuiKey_None) {
+        io.AddKeyEvent(held, true);
+        release = true;
+    }
 }
 
 } // namespace
@@ -892,6 +976,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
     }
     if (total_ms_avg == 0.0f) {
         total_ms_avg = orig_ms_avg;
+    }
+
+    if (std::getenv("BB_MENU_KEYS_FILE") && initialized) {
+        std::scoped_lock lock{imgui_mutex};
+        ScriptedKeys();
     }
 
     UI::UiManager::Tick();

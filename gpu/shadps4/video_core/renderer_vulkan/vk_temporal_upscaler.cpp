@@ -38,6 +38,13 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
                                          instance.IsFsr411Supported(),
                                          instance.IsFsr411Fp8Supported(),
                                          instance.IsFsr411MatrixSupported());
+    {
+        const Dlss* dlss = Dlss::Get();
+        static std::string problem;
+        problem = !dlss ? "the DLSS bridge and NVIDIA's DLSS library are not installed"
+                        : dlss->Problem();
+        BbSettings::ConfigureDlssSupport(dlss && dlss->Available(), problem.c_str());
+    }
     enabled = BbSettings::Get().upscaler != BbSettings::UpscalerOff;
     if (const char* env = std::getenv("BB_RENDER_RES")) {
         u32 w = 0, h = 0;
@@ -118,109 +125,57 @@ void TemporalUpscaler::OnSceneComposite() {
     if (w != width || h != height || !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) return;
     scheduler.EndRendering();
     if (reduced) {
-        VideoCore::ImageViewInfo ci;
-        ci.format = color.info.pixel_format;
-        const auto proxy = scene_targets.Read(scene_color, ci);
-        reactive_mask_pass.Record(proxy.view, w, h);
-        return;
+        reactive_mask_pass.GenerateMaskFromReduced(scene_targets, scene_color, color, w, h);
+    } else {
+        reactive_mask_pass.GenerateMask(runtime, color, w, h);
     }
-    const auto device = instance.GetDevice();
-    const auto color_view = Check(device.createImageView({
-        .image = vk::Image(color.backing->image), .viewType = vk::ImageViewType::e2D,
-        .format = vk::Format::eR16G16B16A16Sfloat, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-    }));
-    runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
-    runtime.FlushBarriers();
-    reactive_mask_pass.Record(color_view, w, h);
-    scheduler.DeferOperation([device, color_view] { device.destroyImageView(color_view); });
 }
-
-namespace {
-float Halton(u32 index, u32 base) {
-    float f = 1.0f, result = 0.0f;
-    for (u32 i = index; i > 0; i /= base) {
-        f /= float(base);
-        result += f * float(i % base);
-    }
-    return result;
-}
-} // namespace
 
 void TemporalUpscaler::OnDispatch(u64 cs_hash) {
-    if (cs_hash != trigger_hash || done_this_frame || failed || Scaled() || !Active()) return;
+    if (cs_hash != trigger_hash || done_this_frame || failed || Scaled()) return;
     done_this_frame = true;
-    if (!scene_color || !camera_motion.Ready() || !camera_motion.Depth()) {
+    if (!scene_color || !camera_motion.Ready() || !Active()) {
         reset = true;
         return;
     }
-    if (!texture_cache.HasImage(scene_color) || !texture_cache.HasImage(camera_motion.Depth())) {
-        reset = true;
-        return;
-    }
-    if (dispatch_failed.exchange(false, std::memory_order_relaxed)) failed = true;
-    if (failed) return;
     Run();
 }
 
 bool TemporalUpscaler::OnFrameStart() {
-    const auto& settings = BbSettings::Get();
-    const int preset = BbSettings::RenderPreset();
-    if (applied_preset != preset || settings.upscaler == BbSettings::UpscalerOff) failed = false;
-    if (dispatch_failed.exchange(false, std::memory_order_relaxed)) {
-        failed = true;
-    }
-    const bool active = Active();
-    const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
-    const int upscaler = settings.upscaler.load();
-    const int output = settings.output_res.load();
-    const bool output_changed = !scaled_session && applied_output != output;
-    if (output_changed) {
-        target_width = BbSettings::OutputWidths[output];
-        target_height = BbSettings::OutputHeights[output];
-        std::printf("Output resolution: %ux%u (live)\n", target_width, target_height);
-        failed = false;
-        fsr4_bridge.ResetFailure();
-    }
-    const bool changed = output_changed || applied_preset != preset || active != last_active ||
-                         jitter_on != last_jitter || applied_upscaler != upscaler;
-    if (applied_upscaler != upscaler) {
-        applied_upscaler = upscaler;
-        reset = true;
-        resources_ready = false;
-        fsr4_bridge.ResetFailure();
-    }
-    if (!scaled_session) {
-        scene_targets.SetSize(SceneResolution::ForPreset(active ? preset : 0,
-                                                        {target_width, target_height}));
-        render_width = scene_targets.Size().width;
-        render_height = scene_targets.Size().height;
-    }
-    BbSettings::Get().active_render_width = Scaled() ? render_width : scene_targets.Size().width;
-    BbSettings::Get().active_render_height = Scaled() ? render_height : scene_targets.Size().height;
-    if (changed || !dispatched_last_frame) reset = true;
-    if (changed) jitter_index = 0;
-    applied_preset = preset;
-    applied_output = output;
-    applied_upscaler = upscaler;
-    last_active = active;
-    last_jitter = jitter_on;
-    dispatched_last_frame = false;
-
-    // The display pass of an upscaled frame reads the upscaled UI image.
-    ui_pass.SetDisplayRedirect(ui_pass.IsUiPhase());
-    ui_pass.SetUiPhase(false);
-    ui_pass.SetLdrTarget({});
-    ui_pass.ResetFrame();
-    reactive_mask_pass.ResetFrame();
     done_this_frame = false;
-    scene_color = {};
-
+    ui_pass.ResetFrame();
+    view_cache.Clear();
+    if (!Active()) {
+        reset = true;
+        last_active = false;
+        return false;
+    }
+    bool changed = false;
+    const int upscaler = BbSettings::Get().upscaler;
+    const int preset = BbSettings::Get().preset;
+    if (upscaler != applied_upscaler || preset != applied_preset) {
+        changed = true;
+        applied_upscaler = upscaler;
+        applied_preset = preset;
+    }
+    const bool jitter_on = !BbToggle::Disabled(1u << 25) && BbSettings::Get().jitter;
+    if (jitter_on != last_jitter) {
+        last_jitter = jitter_on;
+        changed = true;
+    }
     if (!jitter_on) {
-        jitter = {};
+        jitter = {0.0f, 0.0f};
         camera_motion.SetJitter(jitter);
         return changed;
     }
+    static const auto Halton = [](u32 index, u32 base) {
+        float f = 1.0f, result = 0.0f;
+        for (u32 i = index; i > 0; i /= base) {
+            f /= float(base);
+            result += f * float(i % base);
+        }
+        return result;
+    };
     const u32 phases = Scaled() ? Motion::JitterPhases(render_width, target_width)
                                 : Motion::JitterPhases(scene_targets.Size().width, 1920);
     jitter_index = jitter_index % phases + 1;
@@ -234,14 +189,14 @@ bool TemporalUpscaler::RasterScaling() const {
 }
 
 float TemporalUpscaler::SceneMipBias() const {
-    if (!Active() || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) return 0.0f;
-    const float render = float(BbSettings::Get().active_render_width.load());
-    const float output = float(Scaled() ? target_width : 1920u);
-    return render > 0.0f && render < output ? std::log2(render / output) : 0.0f;
+    if (!Active()) return 0.0f;
+    const float scale = Scaled() ? float(target_width) / float(render_width)
+                                 : float(1920) / float(scene_targets.Size().width);
+    return scale > 1.0f ? -std::log2(scale) : 0.0f;
 }
 
 bool TemporalUpscaler::Scaled() const {
-    return scaled_session || target_width != 1920 || target_height != 1080;
+    return scaled_session || ui_pass.IsDisplayRedirect();
 }
 
 void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
@@ -256,6 +211,19 @@ void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
 
 void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color, VideoCore::ImageId depth,
                               bool native_viewport) {
+    // bbport (issue #67, patch by bmy): a UI draw without a color target (a Scaleform mask, color
+    // writes off) writes the stencil the UI's next draws test, so it must go into the UI's
+    // output-size depth like them.
+    if (ui_pass.IsUiPhase() && !color && depth && depth != ui_pass.GetUiDepth() && ui_pass.GetUiColor()) {
+        const auto& depth_image = texture_cache.GetImage(depth);
+        const auto& ui_target = texture_cache.GetImage(ui_pass.GetUiColor());
+        if (depth_image.info.size.width == ui_target.info.size.width &&
+            depth_image.info.size.height == ui_target.info.size.height) {
+            ui_pass.EnsureDepthResources(depth_image.info.pixel_format);
+            ui_pass.PrepareDepth(depth);
+        }
+        return;
+    }
     if (!Active() || !Scaled() || !color) return;
     if (ui_pass.IsUiPhase()) {
         ui_pass.SetDisplayRedirect(true);
@@ -265,8 +233,6 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color, VideoCore::
         ui_pass.RunUiOnly(color, depth, texture_cache, runtime, camera_motion, scene_targets,
                           scaled_session, render_width, render_height, target_width, target_height);
         reset = true;
-        done_this_frame = true;
-        ui_pass.SetDisplayRedirect(true);
         return;
     }
     if (vs_hash == ui_trigger_vs && ui_pass.GetLdrTarget() && camera_motion.Depth()) {
@@ -287,16 +253,22 @@ bool TemporalUpscaler::ReducedScene(const VideoCore::Image& color) const {
 }
 
 bool TemporalUpscaler::Active() const {
-    return enabled && BbSettings::Get().upscaler != BbSettings::UpscalerOff;
+    return enabled && !failed &&
+           (BbSettings::Get().upscaler == BbSettings::UpscalerFsr3 ||
+            BbSettings::IsFsr4(BbSettings::Get().upscaler) ||
+            BbSettings::Get().upscaler == BbSettings::UpscalerTaa ||
+            BbSettings::Get().upscaler == BbSettings::UpscalerDlss) &&
+           !BbToggle::Disabled(1u << 24);
 }
 
 bool TemporalUpscaler::ReactiveOn() const {
-    return BbSettings::Get().reactive && !BbToggle::Disabled(1u << 27);
+    return BbSettings::Get().reactive && !BbToggle::Disabled(1u << 27) && !UseDlss() &&
+           BbSettings::Get().upscaler != BbSettings::UpscalerTaa;
 }
 
 bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     const bool use_taa = BbSettings::Get().upscaler == BbSettings::UpscalerTaa;
-    const bool use_fsr4 = fsr4_bridge.IsActive();
+    const bool use_fsr4 = fsr4_bridge.IsActive() || UseDlss();
     if (resources_ready && width == w && height == h && out_width == ow && out_height == oh &&
         context_hdr == hdr && resources_fsr4 == use_fsr4 && resources_taa == use_taa) {
         return true;
@@ -449,6 +421,50 @@ void TemporalUpscaler::RunScaled() {
     last_frame = ctx.last_frame;
     dispatched_last_frame = ctx.dispatched_last_frame;
     done_this_frame = true;
+}
+
+bool TemporalUpscaler::UseDlss() const {
+    const Dlss* dlss = Dlss::Get();
+    return BbSettings::Get().upscaler == BbSettings::UpscalerDlss && dlss && dlss->Available() &&
+           !dlss_failed;
+}
+
+bool TemporalUpscaler::RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource& color,
+                                  const Dlss::Resource& depth, u32 w, u32 h, u32 ow, u32 oh,
+                                  float frame_ms, bool hdr) {
+    Dlss* dlss = Dlss::Get();
+    const Dlss::FeatureDesc desc{w, h, ow, oh, Dlss::QualityForScale(float(ow) / float(w)), hdr};
+    bool ok = true;
+    if (!dlss->HasFeature(desc)) {
+        scheduler.WaitSubmittedWork();
+        dlss->ReleaseFeature();
+        ok = dlss->CreateFeature(cmdbuf, desc);
+        reset = true;
+    }
+    if (ok) {
+        const float sign = BbToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
+        const auto& settings = BbSettings::Get();
+        ok = dlss->Evaluate(cmdbuf, {
+            .color = color,
+            .depth = depth,
+            .motion = {vk::Image(motion_image), *motion_view, vk::Format::eR16G16Sfloat,
+                       vk::ImageAspectFlagBits::eColor, w, h},
+            .output = {vk::Image(output_image), *output_view, vk::Format::eR16G16B16A16Sfloat,
+                       vk::ImageAspectFlagBits::eColor, ow, oh},
+            .jitter_x = sign * jitter[0],
+            .jitter_y = sign * jitter[1],
+            .reset = reset,
+            .frame_ms = frame_ms,
+            .sharpness = settings.sharpen ? std::min(settings.sharpness.load(), 1.0f) : 0.0f,
+        });
+    }
+    if (!ok) {
+        std::printf("Upscaler: DLSS failed; falling back to FSR 3.1\n");
+        BbSettings::Get().upscaler = BbSettings::UpscalerFsr3;
+        dlss_failed = true;
+        reset = true;
+    }
+    return ok;
 }
 
 } // namespace Vulkan

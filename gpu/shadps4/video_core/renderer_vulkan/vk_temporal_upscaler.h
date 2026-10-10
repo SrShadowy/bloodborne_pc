@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/upscaler/fsr3_bridge.h"
 #include "video_core/renderer_vulkan/upscaler/merge_pass.h"
 #include "video_core/renderer_vulkan/upscaler/view_cache.h"
+#include "video_core/renderer_vulkan/vk_dlss.h"
 
 namespace VideoCore {
 class TextureCache;
@@ -121,6 +122,13 @@ private:
     [[nodiscard]] bool Active() const;
     [[nodiscard]] bool ReactiveOn() const;
     bool EnsureResources(u32 width, u32 height, u32 out_width, u32 out_height, bool hdr);
+    /// bbport: DLSS selected and the bridge is ready (NVIDIA RTX, gpu/dlss_bridge).
+    [[nodiscard]] bool UseDlss() const;
+    /// Records DLSS into `cmdbuf` (output in General). `hdr`: linear scene color input.
+    bool RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource& color,
+                    const Dlss::Resource& depth, u32 w, u32 h, u32 ow, u32 oh, float frame_ms,
+                    bool hdr);
+
     const Instance& instance;
     Scheduler& scheduler;
     VideoCore::TextureCache& texture_cache;
@@ -167,7 +175,7 @@ private:
     bool resources_ready = false;
     bool resources_fsr4 = false;
     bool resources_taa = false;
-
+    bool dlss_failed = false;
     VideoCore::UniqueImage motion_image;
     VideoCore::UniqueImage output_image;
     vk::UniqueImageView motion_view;

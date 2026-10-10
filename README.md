@@ -14,12 +14,12 @@ directly on the PC:
 - **as in DXVK**, the game's graphics are translated to Vulkan — by a renderer derived from
   [shadPS4](https://github.com/shadps4-emu/shadPS4) and heavily extended for this game, including
   temporal upscaling with AMD FSR 3.1, FSR 4 and FSR 4.1.1;
-- memory and the GPU's work are moving to the PC model: the launcher has an experimental
-  *New memory and translation model* mode (AMD GPUs only); without it the game runs on the old
-  memory model, as in 0.3.
+- memory and the GPU's work follow the PC model on AMD GPUs by default (the new memory and
+  translation model); NVIDIA and other GPUs keep the old memory model of 0.3 for now. The
+  launcher's *Memory model* switches either way.
 
-Two steps remain to the full Wine + DXVK model: make the new mode the default, and move the
-reading of resource descriptors (textures, buffers) from the CPU to the GPU (see below).
+One step remains to the full Wine + DXVK model: the new model on NVIDIA as well, then removing the
+old memory model (see below).
 
 > **No game files are included.** You need your own dump of Bloodborne (CUSA03173, v1.09).
 > This project is not affiliated with Sony Interactive Entertainment, FromSoftware or AMD.
@@ -34,21 +34,28 @@ Mesa/RADV) has been tested thoroughly.
 - **Native execution.** The eboot is converted offline into a flat memory image; PS4 libc and
   libSceFios2 are linked into it as native code. No CPU emulation and no per-instruction
   translation: the game code runs at full speed.
-- **Two modes** (launcher → *Mode*):
-  - **Switch off (the default) — as in 0.3.** The old memory model: VRAM copies of the game's
-    memory, writes tracked through page protection. With every fix made since 0.3 (motion
-    vectors and the upscaler, flicker with DoF on, a damaged shader cache).
-  - **New memory and translation model — experimental, AMD GPUs only.** The game's memory lives
+- **Two memory models** (launcher → *Mode → Memory and translation model*; *Auto*, the default,
+  picks by GPU):
+  - **The old memory model, as in 0.3 — the default on NVIDIA, Intel and others.** VRAM copies
+    of the game's memory, writes tracked through page protection. With every fix made since 0.3
+    (motion vectors and the upscaler, flicker with DoF on, a damaged shader cache).
+  - **The new memory and translation model — the default on AMD.** The game's memory lives
     in system RAM and the GPU reads it where it is, as a PC game's buffers; data it reads often
-    is kept in VRAM and given back when unused (textures after 20 s, buffers after 60 s). No
-    write tracking, no copies of the whole GPU-visible memory. The PS4 command processor's work
+    is kept in VRAM and given back when unused (textures after 20 s, buffers after 60 s). The
+    layer's memory module tracks CPU writes to mirrored blocks to keep those copies coherent;
+    it does not copy the whole GPU-visible memory. The PS4 command processor's work
     is translated into Vulkan commands rather than emulated on the CPU: memory writes
-    (`WRITE_DATA`, DMA) are done by the GPU in command-stream order, and fences are written once
-    the GPU has really finished the work. Where the game is CPU-bound it runs 20–25% faster
-    (measured standing in the Hunter's Dream), with fewer stutters. **It may crash**, and has
-    been tested thoroughly only on the author's PC (RX 7800 XT). On NVIDIA and Intel the switch
-    is unavailable: NVIDIA's driver cannot map the game's memory as needed, Intel is untested.
-    Without the launcher: `BB_PC_MODEL=1`; to try it on another GPU: `BB_PC_MODEL_ANY_GPU=1`.
+    (`WRITE_DATA`, DMA) are done by the GPU in command-stream order, and fences are written by the
+    GPU itself at the end of the pipeline, at the same point of the stream as the PS4's command
+    processor writes them. On AMD the game's memory is kept in a sparse buffer (the arena); on
+    NVIDIA, Intel and others it goes through the layer's memory module: bound in place, VRAM
+    copies as separate buffers, no sparse rebinding (NVIDIA's sparse binding froze the GPU for
+    seconds); `BB_LAYER_MEMORY=1/0` chooses by hand. Tested on an RX 7800 XT. On NVIDIA it can be chosen by hand (*New*); testers' results differ by scene,
+    some scenes are slower than with the old model, so it is not the default there yet. Not
+    tested on Intel. Without the launcher: `BB_PC_MODEL=1/0` (unset: by GPU, as *Auto*).
+
+  [Changes in 0.5](docs/CHANGES_0.5.md); the prereleases: [pre4](docs/CHANGES_0.5-pre4.md),
+  [pre3](docs/CHANGES_0.5-pre3.md), [pre2](docs/CHANGES_0.5-pre2.md).
 
   Unused textures are freed in both modes, so VRAM no longer grows with every area visited.
 - **Unlocked frame rate.** Community patches (`patches/Bloodborne.xml`) make the simulation
@@ -75,9 +82,11 @@ Mesa/RADV) has been tested thoroughly.
   and draws are bound and recorded on another (two-stage pipeline), with a Vulkan recording
   thread and helper threads for memory copies. Early on the single GPU thread capped the game
   at ~26 FPS; now it runs at 90–150 FPS depending on resolution and scene.
-- **In-game menu** (Insert or L3+R3): upscaler, preset, sharpness, output resolution, game
-  effects (chromatic aberration, DoF, motion blur, SSAO, the game's own AA, SSR, model LOD).
-  It opens where it was left, with the mouse cursor shown over it.
+- **Settings inside the game's own menu:** *System → Display / Effects* (after *Screen/Sound*),
+  built and drawn by the game itself — output resolution, upscaler, preset, sharpness, FPS
+  counter, model detail and the game's effects, in the game's language.
+- **Overlay menu** (Insert or L3+R3), styled like the game's dialogs: everything above plus the
+  advanced settings, with gamepad, keyboard and mouse.
 - **GTK4 launcher** and an **AppImage** for the Steam Deck.
 
 ## How it differs from shadPS4
@@ -86,7 +95,7 @@ Mesa/RADV) has been tested thoroughly.
 |---|---|---|
 | Scope | General PS4 emulator, many games | One game: Bloodborne v1.09 |
 | Loading | Its own ELF loader and kernel emulation at run time | The eboot is converted offline (`scripts/`) into an image with PS4 libc/Fios2 linked in; a C loader maps it and jumps into the game (loader and runtime: ~5k lines) |
-| Memory | The GPU's view of PS4 memory is kept in VRAM copies, synchronized through page-protection write tracking | By default the same model (as in 0.3); in the *New memory and translation model* mode (AMD): the game's memory in system RAM, used by the GPU in place, frequently read data in VRAM, freed when unused |
+| Memory | The GPU's view of PS4 memory is kept in VRAM copies, synchronized through page-protection write tracking | By default the same model (as in 0.3); in the *New memory and translation model* mode: the game's memory in system RAM, used by the GPU in place, frequently read data in VRAM, freed when unused |
 | Command processor | Emulated: memory writes, DMA and fences are done by the CPU while decoding | By default the same; in the new mode translated into Vulkan commands that the GPU runs in stream order, fences written after the work has really finished |
 | System libraries | Broad HLE of the PS4 OS | A small runtime (`src/runtime_*.c`) that implements exactly what Bloodborne calls: memory, threads, sync, files, audio (incl. ATRAC9), pad, saves, AppContent |
 | GPU | shadPS4 video core and shader recompiler | The same core (vendored, GPL) with ~200 marked changes (`bbport:`) plus new modules: two-stage draw pipeline, render-state and texture-set memoization, render-scale proxies, motion vectors, FSR 3.1/4/4.1.1, frame capture and GPU profiler |
@@ -105,15 +114,20 @@ the graphics side.
   implements exactly the PS4 OS functions Bloodborne calls: memory, threads, files, audio, pad,
   saves.
 - **Memory.** In the new mode, as in a PC game: the game's data in system RAM, VRAM used the way
-  a PC game uses it. The mode is still experimental and runs on AMD GPUs only.
+  a PC game uses it. The mode is still experimental.
 - **Graphics.** The PS4 GPU's command stream (PM4) is a recording of the game's graphics API
   calls: it is written by 99 functions of the statically linked libGnm, so decoding the stream
   and translating the calls themselves come to the same thing. GCN shaders are translated to
   SPIR-V. In the new mode the command processor's work (memory writes, DMA, fences) is
-  translated into Vulkan commands as well. One part still works the old way: the translator
-  reads resource descriptors (textures, buffers) from the game's memory on the CPU, and
-  recognises textures by address. The next big step is the GPU reading the descriptors itself
-  (bindless), with textures as objects created at load time.
+  translated into Vulkan commands as well; fences are written by the GPU itself. Resource
+  descriptors (textures, buffers) are read by the translator on the CPU, as DXVK reads resource
+  bindings: a PS4 texture has to be converted from the PS4 tiling into a Vulkan image before the
+  draw runs, so the CPU must know its descriptor beforehand — translation, not emulation. The
+  descriptor tables (the constant engine's dumps) are read only by the translator, so the CPU
+  performs them. The game's occlusion queries (~60 a frame) are
+  Vulkan occlusion queries; predication, `COPY_DATA` and `COND_EXEC` are translated too (check:
+  `BB_PM4_SELFTEST=1`). Details:
+  [docs/EMULATION_REMOVAL_PLAN.ru.md](docs/EMULATION_REMOVAL_PLAN.ru.md), "Шаг 4" (Russian).
 
 "Port" here means a build for this one game, not a rewrite of its source code, which the project
 neither has nor includes.
@@ -121,7 +135,7 @@ neither has nor includes.
 ## Requirements
 
 - Linux x86-64, a Vulkan 1.3 GPU. Tested: AMD RX 7800 XT with Mesa 26 (RADV).
-  The *New memory and translation model* mode needs an AMD GPU.
+  The *New memory and translation model* mode is not tested on NVIDIA yet.
   FSR 4 / 4.1.1 require shader Float16, Int8/Int16, integer dot products, linear compute
   derivatives and extended storage image formats; FSR 4.1.1 additionally requires
   `VK_VALVE_shader_mixed_float_dot_product`. Unsupported choices fall back to FSR 3.1
@@ -154,7 +168,10 @@ when several are connected; `BB_GAMEPAD=<GUID or part of the name>`). The keyboa
 also next to a connected gamepad (the Steam Deck always has one); both are remapped in the
 launcher (*Controls*). The character name is typed on the keyboard in a box over the game.
 The touchpad: its left half (Tab, Back/Select) opens the gestures, the right half (Backspace)
-the key items.
+the key items. There is no PSN: the *Play online / offline* screen is skipped and the game opens
+its main menu offline (a game patch; the launcher's *Game effects → Skip the “play online / offline” choice*,
+`BB_SKIP_NETWORK_CHOICE=0` shows it). With several monitors, *Screen → Monitor* in the launcher
+(`BB_DISPLAY=<number or part of the name>`) picks the one for the game.
 
 **Resolution and preset changes:** for outputs other than 1080p (720p on the Steam Deck,
 1440p, 4K) the whole game renders at the preset's resolution, set by a patch at start — the
@@ -180,8 +197,11 @@ with enable switches and load order. A sibling `CUSA03173-mods/` overlay also wo
 The original game is preserved; later mods override conflicting files.
 **Third-party patches:** shadPS4-format XML patch files in the data directory's `patches/`,
 switched on and off in the launcher. See [mods and patches](docs/MODS.md).
+**DLC:** put your add-on dumps in `user/addcont/<title id>/<entitlement label>/` (shadPS4's
+layout, e.g. `user/addcont/CUSA03173/SPEXPANSIONDLC03` for The Old Hunters): each folder there is
+reported to the game as an installed add-on.
 
-**Launcher language:** Russian, English or Brazilian Portuguese (follows the system language by default).
+**Launcher language:** Russian, English, Brazilian Portuguese or Simplified Chinese (follows the system language by default).
 
 **Free camera and game debug menu** (v1.09): enable the corresponding switches in the
 launcher or in-game menu and restart. Free camera uses Lance McDonald's
@@ -229,6 +249,16 @@ time, ~1.7 GB); the AppImage runs the recording on the system itself, through th
 enable FSR 4.1 there, build on a PC and copy the `fsr4_411` folder. The same from the command
 line: the launcher's (and the AppImage's) `--build-fsr411 <DLL>`.
 
+**DLSS (NVIDIA GeForce RTX).** NVIDIA's DLSS SDK is not included: check out
+[github.com/NVIDIA/DLSS](https://github.com/NVIDIA/DLSS) (`include/` and `lib/Linux_x86_64` are
+enough) and build with `DLSS_SDK_ROOT=/path/to/DLSS bash build.sh`. That also builds the bridge
+`out/libbbport_dlss.so` (`gpu/dlss_bridge`, the only code that uses the SDK) and copies NVIDIA's
+`libnvidia-ngx-dlss.so.<version>` next to `out/bb-probe`; the driver provides the rest. Then pick
+*DLSS* in the launcher or the in-game menu: the preset sets the render size, Native AA is DLAA.
+DLSS gets the inputs FSR 3.1 gets (scene color, depth, motion vectors, jitter). Without the
+libraries, on other GPUs or with `BB_DLSS=0` it is listed as unavailable, and a DLSS setting falls
+back to FSR 3.1.
+
 From source the script takes its tools from the system (MinGW GCC, CMake, Ninja, Python 3,
 SPIRV-Tools, Git) or from Nix; the AppImage has them prebuilt.
 
@@ -268,7 +298,9 @@ NVIDIA userspace driver matched to the host kernel module. Standard Linux distri
 these libraries under `/usr/lib*`; on NixOS the AppImage's internal `/nix/store` may hide them.
 In that case copy the NVIDIA libraries into an accessible directory and set
 `BB_NVIDIA_LIB_DIR=/path/to/libraries` (the NVIDIA manifest must also be accessible).
-Explicit `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` overrides are preserved. Diagnose drivers inside
+With the host's NVIDIA driver the AppImage also passes the host's EGL vendor files, NVIDIA's
+first (`__EGL_VENDOR_LIBRARY_FILENAMES`; without them NVIDIA's ICD gave no `vkCreateInstance` on
+some hosts, #107; `BB_NVIDIA_EGL=0`: off). Explicit `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` overrides are preserved. Diagnose drivers inside
 the package with:
 
 ```bash
@@ -286,7 +318,7 @@ When running from source, install MangoHud separately. A diagnostic launch with
 
 Useful variables: `BB_FRAME_STATS=1` (frame statistics, including a `Memory:` line: VRAM, GTT,
 RSS, images and guest blocks in VRAM), `BB_PC_MODEL=1` (the new memory and translation model,
-AMD only; 0, the old model as in 0.3, is the default), `BB_ANISO=N` (anisotropic filtering of scene textures; 16 by
+0, the old model as in 0.3, is the default), `BB_ANISO=N` (anisotropic filtering of scene textures; 16 by
 default, 0 = the game's own),
 `BB_GC_IDLE_SECONDS=N` / `BB_VRAM_IDLE_SECONDS=N` (how long unused textures / buffers stay in VRAM;
 20 / 60), `BB_BREADCRUMBS=0` (no GPU breadcrumbs; with them a GPU hang names the draw or dispatch
@@ -296,7 +328,9 @@ pass), `BB_FSR4_PROFILE=1` (GPU time per FSR 4 pass), `BB_UPSCALER=taa|fsr3|fsr4
 0 = unbounded), `BB_PRESENT_THREAD=0` (present on the vblank thread, as before),
 `BB_LIVE_RES=1` (live resolution changes instead of the startup patch for outputs other than 1080p),
 `BB_PAD_RECORD=file` / `BB_PAD_REPLAY=file` (record a route with F9, replay it in scripted tests),
-`BB_GC_BUDGET_MB=N` (texture cache budget, as on integrated GPUs), `BB_PRESENT_DUMP_TRIGGER=file`
+`BB_GC_BUDGET_MB=N` (texture cache budget, as on integrated GPUs), `BB_VRAM_LIMIT_MB=N` (the VRAM
+budget taken as at most N MiB: checks the behaviour of cards with little VRAM), `BB_ASYNC_PIPELINES=0`
+(new pipelines compile at once and the game waits; by default in the background), `BB_PRESENT_DUMP_TRIGGER=file`
 with `BB_PRESENT_DUMP_COUNT=N` (dump N consecutive presented frames),
 `BB_FSR411_VARIANT=int8|fp8|fp8emu` (FSR 4.1.1 variant; by default FP8 where the GPU has FP8
 matrices), `BB_READBACKS=0|1|2` (reads of GPU-written memory by the game: 1 by default, 2
@@ -322,18 +356,16 @@ Tests: `bash build.sh --test`, `python3 -m unittest discover -s tests`, and
 
 ## Roadmap
 
-- The new memory and translation model on by default once it is stable, NVIDIA included; the
-  old model is removed after that.
-- The GPU reads resource descriptors itself (bindless), textures are objects created at load
-  time: no shader code or constant engine executed on the CPU, no texture cache keyed by
-  address.
+- The new memory and translation model on by default on NVIDIA too, once it is as fast there;
+  the old model is removed after that.
+- Textures as objects created at load time (less guessing by address, uploads outside the
+  frame).
 - Shaders translated ahead of time, at install, not during play.
 - More CPU parallelism in GPU command processing (split the draw-recording stage further),
   scaling to all hardware threads — most important for the Steam Deck.
 - Async compute for the upscaler (the frame is GPU-bound at 4K).
 - XeSS (super resolution) and XeFG frame generation through a Wine helper sharing Vulkan
-  memory (a memory-bridge prototype is in `tools/bridge_helper`); DLSS for NVIDIA users;
-  inputs exposed so that OptiScaler-style mapping works.
+  memory (a memory-bridge prototype is in `tools/bridge_helper`); inputs exposed so that OptiScaler-style mapping works.
 - Frame generation (FSR 3.1 FG first), reactive and transparency masks for particles and fog.
 - Fix the races in AMD's FSR 4.1.1 shaders at output widths that are not multiples of 64
   (e.g. 1600×900), as already done for the left-edge race in FSR 4 v07 at 1080p.
@@ -350,5 +382,7 @@ FSR 4 v07 provider), AMD FidelityFX SDK (MIT), [LibAtrac9](https://github.com/Th
 (MIT), [Dear ImGui](https://github.com/ocornut/imgui) (MIT), DejaVu fonts,
 [dxil-spirv](https://github.com/HansKristian-Work/dxil-spirv) (MIT, used to build the
 FSR 4.1.1 assets). Game patches by Kyo, Lance McDonald, auser1337, illusion, emoose and other
-community members (`patches/Bloodborne.xml`). AMD's FSR 4 DLLs and model data are not
-distributed here.
+community members (`patches/Bloodborne.xml`). The DLSS bridge (`gpu/dlss_bridge`, MIT) and
+loader come from [Supermedo's Windows port](https://github.com/Supermedo/bloodborne_pc), adapted
+from [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR).
+AMD's FSR 4 DLLs and model data and NVIDIA's DLSS SDK and libraries are not distributed here.

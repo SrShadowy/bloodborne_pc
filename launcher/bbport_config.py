@@ -24,18 +24,21 @@ CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / 
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
 
-# The new memory and translation model runs on AMD GPUs only for now (None: unknown).
+# The memory model (run.sh: BB_PC_MODEL): "auto" leaves it to the GPU (the new one on AMD, the
+# 0.3 one elsewhere), or either by hand. The new one goes through the layer's memory module on
+# every GPU (no sparse binding of the game's memory; BB_LAYER_MEMORY=0: AMD's sparse arena).
 AMD_GPU = amd_gpu()
 PC_MODEL_SUBTITLE = (
-    "Эксперимент, только видеокарты AMD. Видеокарта работает с памятью игры "
-    "напрямую, как в игре для ПК, а команды графики переводятся, а не "
-    "эмулируются; возможны ошибки. Выключено — старая модель памяти, как в 0.3, "
-    "со всеми исправлениями"
+    "Новая: видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды "
+    "графики переводятся, а не эмулируются. Старая — модель памяти 0.3 со всеми "
+    "исправлениями. Если драйвер не проходит проверку при запуске — старая"
 )
 PC_MODEL_NO_AMD = (
     "Только для видеокарт AMD, а на этом компьютере её нет. Используется старая "
     "модель памяти, как в 0.3, со всеми исправлениями"
 )
+MEMORY_MODELS = [("Авто: новая на AMD, старая на других", "auto"), ("Новая", "new"),
+                 ("Старая (как в 0.3)", "old")]
 
 # The package's own environment must not reach Proton's container
 PACKAGE_ONLY_ENV = (
@@ -46,9 +49,9 @@ PACKAGE_ONLY_ENV = (
 )
 
 # Choices: (label, value). The first entry is the default. Labels are translated when shown.
-UI_LANGUAGES = [("Как в системе", ""), ("Português (Brasil)", "pt_BR"), ("English", "en"), ("Русский", "ru")]
+UI_LANGUAGES = [("Как в системе", ""), ("Português (Brasil)", "pt_BR"), ("English", "en"), ("Русский", "ru"), ("简体中文", "zh_CN")]
 UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
-             ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
+             ("TAA (нативное сглаживание)", "taa"), ("DLSS (NVIDIA RTX)", "dlss"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
 OUTPUT_RES = [("1280×720 (Steam Deck)", "1280x720"), ("1920×1080", "1920x1080"), ("2560×1440", "2560x1440"), ("3840×2160", "3840x2160")]
@@ -100,6 +103,8 @@ DEFAULTS = {
     "present_mode": "Mailbox",
     "gamepad": "",
     "gamepad_name": "",
+    "display": "",
+    "skip_network_choice": True,
     "fps_mode": "uncap",
     "fps_limit": 0,
     "draw_pipe": "2",
@@ -110,7 +115,7 @@ DEFAULTS = {
     "frame_stats": False,
     "save_log": False,
     "crash_diag": False,
-    "pc_model": False,
+    "memory_model": "auto",
     "as_0_3": False,
     "gpu_profile": False,
     "vk_validation": False,
@@ -237,6 +242,9 @@ def game_environment(s):
     env["BB_PRESENT_MODE"] = s["present_mode"]
     if s.get("gamepad"):
         env["BB_GAMEPAD"] = s["gamepad"]
+    if s.get("display"):
+        env["BB_DISPLAY"] = s["display"]
+    env["BB_SKIP_NETWORK_CHOICE"] = "1" if s.get("skip_network_choice", True) else "0"
     if s["hdr"]:
         env["BB_HDR"] = "1"
     env["BB_FPS"] = s["fps_mode"]
@@ -256,7 +264,9 @@ def game_environment(s):
         env["BB_FRAME_STATS"] = "1"
     if s.get("save_log"):
         env["BB_SAVE_LOG"] = "1"
-    env["BB_PC_MODEL"] = "1" if s.get("pc_model") and AMD_GPU is not False else "0"
+    model = s.get("memory_model", "auto")
+    if model in ("new", "old"):
+        env["BB_PC_MODEL"] = "1" if model == "new" else "0"
     if s.get("as_0_3"):
         env["BB_AS_0_3"] = "1"
     if s.get("crash_diag"):

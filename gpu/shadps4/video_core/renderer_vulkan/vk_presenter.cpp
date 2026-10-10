@@ -12,6 +12,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
+#include "bbport_game_menu.h"
 #include "bbport_overlay.h"
 #include "bbport_timeline.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
@@ -556,6 +557,20 @@ Frame* Presenter::PrepareBlankFrame(bool present_thread) {
     return frame;
 }
 
+void Presenter::WaitRendered(const Frame* frame) {
+    if (!frame || !frame->ready_semaphore) {
+        return;
+    }
+    const vk::SemaphoreWaitInfo info{
+        .semaphoreCount = 1,
+        .pSemaphores = &frame->ready_semaphore,
+        .pValues = &frame->ready_tick,
+    };
+    // A lost device ends the wait (the presenter reports it); a timeout waits again.
+    while (instance.GetDevice().waitSemaphores(&info, 1'000'000'000) == vk::Result::eTimeout) {
+    }
+}
+
 void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame) {
     // Free the frame for reuse
     const auto free_frame = [&] {
@@ -675,6 +690,7 @@ void Presenter::RecordPresentCommands(vk::CommandBuffer cmdbuf, vk::Image swapch
                      MakeImageBlitFit(src_w, src_h, extent.width, extent.height),
                      vk::Filter::eLinear);
 
+    BbGameMenu::Poll(); // the port's pages in the game's System menu
     const bool overlay = BbOverlay::Visible();
     const std::array post_barriers{
         vk::ImageMemoryBarrier{

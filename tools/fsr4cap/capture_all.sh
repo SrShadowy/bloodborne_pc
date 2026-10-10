@@ -64,6 +64,7 @@ if [[ -e /etc/NIXOS && ${BB_FSR4CAP_RUNNER:-} != steam ]] && ! command -v umu-ru
          "(and, in the AppImage, the user's systemd to start it on the host)." >&2
     exit 8
 fi
+rm -f "$R/.direct" # from an earlier build: the container is tried again
 mapfile -t candidates < <(proton_candidates)
 if [[ ${#candidates[@]} -eq 0 ]]; then
     echo "No Proton build found: install GE-Proton 10 or newer (ProtonUp-Qt), or Proton -" \
@@ -123,7 +124,8 @@ for candidate in "${candidates[@]}"; do
             break
         fi
         variant=int8
-        failures+=("${candidate##*/}: $(tail -1 "$R/fsr4cap.log" 2>/dev/null || tail -1 "$R/umu.log" 2>/dev/null || echo '?')")
+        # "no version matching": the DLL offered FSR 3/2 only under this vkd3d-proton.
+        failures+=("${candidate##*/}: $(failure_reason "$R")")
     fi
     echo "  FSR 4.1 did not start under it; next" >&2
 done
