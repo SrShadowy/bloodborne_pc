@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 from bbport_i18n import language
-from bbport_vulkan import amd_gpu
 
 PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / "scripts"))
@@ -27,15 +26,10 @@ MAX_LOG_LINES = 5000
 # The memory model (run.sh: BB_PC_MODEL): "auto" leaves it to the GPU (the new one on AMD, the
 # 0.3 one elsewhere), or either by hand. The new one goes through the layer's memory module on
 # every GPU (no sparse binding of the game's memory; BB_LAYER_MEMORY=0: AMD's sparse arena).
-AMD_GPU = amd_gpu()
 PC_MODEL_SUBTITLE = (
     "Новая: видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды "
     "графики переводятся, а не эмулируются. Старая — модель памяти 0.3 со всеми "
     "исправлениями. Если драйвер не проходит проверку при запуске — старая"
-)
-PC_MODEL_NO_AMD = (
-    "Только для видеокарт AMD, а на этом компьютере её нет. Используется старая "
-    "модель памяти, как в 0.3, со всеми исправлениями"
 )
 MEMORY_MODELS = [("Авто: новая на AMD, старая на других", "auto"), ("Новая", "new"),
                  ("Старая (как в 0.3)", "old")]
