@@ -83,10 +83,39 @@ class NativeUiTests(unittest.TestCase):
             with self.subTest(preset=preset):
                 self.assertEqual(scaled_sizes({'output_res': '1280x720', 'preset': str(preset)}),
                                  (expected, (1280, 720)))
+        # 960x540 (qHD / Handheld):
+        for preset, expected in [(0, (960, 540)), (1, (640, 360)), (2, (564, 318)), (3, (480, 270)), (4, (320, 180))]:
+            with self.subTest(res='960x540', preset=preset):
+                self.assertEqual(scaled_sizes({'output_res': '960x540', 'preset': str(preset)}),
+                                 (expected, (960, 540)))
+        # 1600x900 (900p):
+        for preset, expected in [(0, (1600, 900)), (1, (1066, 600)), (2, (942, 530)), (3, (800, 450)), (4, (534, 300))]:
+            with self.subTest(res='1600x900', preset=preset):
+                self.assertEqual(scaled_sizes({'output_res': '1600x900', 'preset': str(preset)}),
+                                 (expected, (1600, 900)))
         self.assertEqual(scaled_sizes({'output_res': '3840x2160', 'preset': '3'}),
                          ((1916, 1078), (3840, 2160)))
         # TAA is native-only and uses the live host targets.
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
+
+    def test_non_16_9_aspect_ratio_templates(self):
+        # 16:10 (Steam Deck 1280x800)
+        writes_16_10 = resolution_writes(XML, (1280, 800), '01.09', SEGMENTS)
+        self.assertEqual(immediate(writes_16_10, SCENE_WIDTH)[1], 1280)
+        self.assertEqual(immediate(writes_16_10, SCENE_HEIGHT)[1], 800)
+        self.assertEqual(len(writes_16_10), 82)
+
+        # 21:9 (Ultrawide 2560x1080)
+        writes_21_9 = resolution_writes(XML, (2560, 1080), '01.09', SEGMENTS)
+        self.assertEqual(immediate(writes_21_9, SCENE_WIDTH)[1], 2560)
+        self.assertEqual(immediate(writes_21_9, SCENE_HEIGHT)[1], 1080)
+        self.assertEqual(len(writes_21_9), 80)
+
+        # 32:9 (Super Ultrawide 5120x1440)
+        writes_32_9 = resolution_writes(XML, (5120, 1440), '01.09', SEGMENTS)
+        self.assertEqual(immediate(writes_32_9, SCENE_WIDTH)[1], 5120)
+        self.assertEqual(immediate(writes_32_9, SCENE_HEIGHT)[1], 1440)
+        self.assertEqual(len(writes_32_9), 81)
 
 
 class DebugPatchTests(unittest.TestCase):

@@ -392,8 +392,25 @@ void RenderFrameGenSection(BbSettings::Values& s, int lang) {
 
 void RenderResolutionSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionOutputResolution));
-    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
-    int output = s.output_res;
+    static const char* outputs[] = {
+        "960 x 540 (16:9)",
+        "1280 x 720 (16:9)",
+        "1600 x 900 (16:9)",
+        "1920 x 1080 (16:9)",
+        "2560 x 1440 (16:9)",
+        "3840 x 2160 (16:9)",
+        "1280 x 800 (16:10)",
+        "1920 x 1200 (16:10)",
+        "2560 x 1600 (16:10)",
+        "2560 x 1080 (21:9)",
+        "3440 x 1440 (21:9)",
+        "5120 x 2160 (21:9)",
+        "3840 x 1080 (32:9)",
+        "5120 x 1440 (32:9)",
+        "1280 x 960 (4:3)",
+        "1440 x 1080 (4:3)"
+    };
+    int output = std::clamp(s.output_res.load(), 0, BbSettings::OutputCount - 1);
     if (ImGui::BeginCombo(S(OutputResolutionCombo), outputs[output])) {
         for (int i = 0; i < BbSettings::OutputCount; ++i) {
             if (ImGui::Selectable(outputs[i], i == output)) {

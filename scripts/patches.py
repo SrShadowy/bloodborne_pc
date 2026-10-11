@@ -195,12 +195,28 @@ def scaled_sizes(settings):
     return render,out
 
 
+def select_resolution_template(size):
+    """Selects the best community patch template matching the target aspect ratio."""
+    ratio = size[0] / size[1]
+    if ratio > 3.0:
+        return 'Resolution Patch 5120x1440 (32:9)', 5120, 1440
+    elif ratio > 2.0:
+        return 'Resolution Patch 2560x1080 (21:9)', 2560, 1080
+    elif abs(ratio - 16 / 10) < 0.05:
+        return 'Resolution Patch 1280x800 (16:10)', 1280, 800
+    elif abs(ratio - 4 / 3) < 0.05:
+        return 'Resolution Patch 1280x960 (4:3)', 1280, 960
+    else:
+        return RESOLUTION_TEMPLATE, 1280, 720
+
+
 def resolution_writes(xml,size,app_version,segments,ui=OUTPUT_SIZE):
-    writes=compile_patches(xml,[RESOLUTION_TEMPLATE],app_version,segments)
-    replacements={SCENE_WIDTH:(0xB8,0x500,size[0]),
-                  SCENE_HEIGHT:(0xB8,0x2D0,size[1]),
-                  UI_WIDTH:(0xB8,0x500,ui[0]),
-                  UI_HEIGHT:(0xB9,0x2D0,ui[1])}
+    template, tw, th = select_resolution_template(size)
+    writes = compile_patches(xml, [template], app_version, segments)
+    replacements={SCENE_WIDTH:(0xB8,tw,size[0]),
+                  SCENE_HEIGHT:(0xB8,th,size[1]),
+                  UI_WIDTH:(0xB8,tw,ui[0]),
+                  UI_HEIGHT:(0xB9,th,ui[1])}
     out=[]
     seen=set()
     for offset,data in writes:

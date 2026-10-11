@@ -177,6 +177,8 @@ class ControlsMixin:
         else:
             return
 
+        self.input_assignment_active = True
+
         if kind == "mouse":
             prompt = tr("Кликните кнопкой мыши… (Esc — отмена)")
         elif kind == "key":
@@ -186,6 +188,7 @@ class ControlsMixin:
         row.set_subtitle(prompt)
 
         def done(proc, result):
+            self.input_assignment_active = False
             try:
                 _ok, out, _err = proc.communicate_utf8_finish(result)
             except GLib.Error:

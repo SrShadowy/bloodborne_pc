@@ -257,15 +257,17 @@ void DefineTexts() {
          AddText("Ultra Performance", "Ultra Desempenho", "Ultra Performance")},
         Kind::Steps);
 
+    std::vector<u32> outres_choices;
+    for (int i = 0; i < BbSettings::OutputCount; ++i) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%d x %d", BbSettings::OutputWidths[i], BbSettings::OutputHeights[i]);
+        outres_choices.push_back(AddText(buf, buf, buf));
+    }
     row(OutputRes, "Output resolution", "Resolução de saída", "Разрешение вывода",
-        "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
-        "Quadro final: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
-        "Готовый кадр: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
-        {AddText("1280 x 720", "1280 x 720", "1280 x 720"),
-         AddText("1920 x 1080", "1920 x 1080", "1920 x 1080"),
-         AddText("2560 x 1440", "2560 x 1440", "2560 x 1440"),
-         AddText("3840 x 2160", "3840 x 2160", "3840 x 2160")},
-        Kind::Steps);
+        "Final frame resolution (also configurable in launcher)",
+        "Resolução do quadro final (configurável também no launcher)",
+        "Разрешение готового кадра (также настраивается в лаунчере)",
+        std::move(outres_choices), Kind::Steps);
 
     row(Sharpness, "Sharpness", "Nitidez", "Резкость",
         "RCAS after the upscaler: 0 off, 10 strongest",
@@ -562,17 +564,16 @@ const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
                 }
             }
             int cur_choice = steps_count[OutputRes] ? ChoiceFromPosition(bytes[OutputRes], steps_count[OutputRes]) : values[OutputRes];
-            const char* name = (cur_choice == 0) ? "1280x720"
-                             : (cur_choice == 1) ? "1920x1080"
-                             : (cur_choice == 2) ? "2560x1440"
-                             : "3840x2160";
+            cur_choice = std::clamp(cur_choice, 0, BbSettings::OutputCount - 1);
+            char res_str[32];
+            std::snprintf(res_str, sizeof(res_str), "%dx%d", BbSettings::OutputWidths[cur_choice], BbSettings::OutputHeights[cur_choice]);
             char buf[256];
             if (game == GameLanguage::Portuguese) {
-                std::snprintf(buf, sizeof(buf), "Quadro final: [%s] | 0-1 720p, 2-4 1080p, 5-7 1440p, 8-10 4K", name);
+                std::snprintf(buf, sizeof(buf), "Quadro final: [%s] (Configurável também no Launcher)", res_str);
             } else if (game == GameLanguage::Russian) {
-                std::snprintf(buf, sizeof(buf), "Готовый кадр: [%s] | 0-1 720p, 2-4 1080p, 5-7 1440p, 8-10 4K", name);
+                std::snprintf(buf, sizeof(buf), "Готовый кадр: [%s] (Также настраивается в лаунчере)", res_str);
             } else {
-                std::snprintf(buf, sizeof(buf), "Final frame: [%s] | 0-1 720p, 2-4 1080p, 5-7 1440p, 8-10 4K", name);
+                std::snprintf(buf, sizeof(buf), "Final frame: [%s] (Configurable in launcher)", res_str);
             }
             static std::u16string s_dyn_outres;
             s_dyn_outres = Utf16(buf);

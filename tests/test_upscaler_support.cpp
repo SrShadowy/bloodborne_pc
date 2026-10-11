@@ -46,7 +46,7 @@ int main() {
                 assert(s.fsr4_supported == fsr4);
                 assert(s.fsr411_supported == (fsr4 && fsr411));
                 assert(bool(s.fsr4_problem.load()) == unsupported);
-                assert(s.preset == Performance && s.output_res == 2);
+                assert(s.preset == Performance && s.output_res == 4);
                 // Startup patch settings still describe the already applied guest patches.
                 assert(s.startup_upscaler == requested);
                 ConfigureUpscalerSupport(fsr4, fsr411);

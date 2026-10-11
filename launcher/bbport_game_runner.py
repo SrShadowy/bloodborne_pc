@@ -116,6 +116,8 @@ class GameRunnerMixin:
 
     def on_close(self, _window):
         self.store()
+        if hasattr(self, "gamepad_nav") and self.gamepad_nav:
+            self.gamepad_nav.close()
         if self.process:
             self.stop_game()
         if getattr(self, "fsr411_build", None):

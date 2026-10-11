@@ -51,6 +51,7 @@ from bbport_mods import ModsMixin
 from bbport_dlss import DlssMixin
 from bbport_log import LogMixin
 from bbport_game_runner import GameRunnerMixin
+from bbport_gamepad import GamepadNavigator
 
 
 class LauncherWindow(
@@ -74,7 +75,9 @@ class LauncherWindow(
         self.fsr411_mgr = Fsr411Manager(self)
         self.best_detected_dll = None
         self.best_detected_loader = None
+        self.gamepad_nav = None
         self.build()
+        self.gamepad_nav = GamepadNavigator(self)
         self.connect("close-request", self.on_close)
 
     @property
@@ -119,6 +122,44 @@ class LauncherWindow(
         button.suggested-action:active {
             background: #731111;
         }
+        .gamepad-hints-bar {
+            background-color: rgba(18, 21, 28, 0.95);
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 5px 12px;
+        }
+        .gamepad-badge {
+            background-color: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-weight: 700;
+            font-size: 11px;
+            color: #f0f0f0;
+        }
+        .gamepad-label {
+            font-size: 11px;
+            color: #9aa2b1;
+            margin-right: 4px;
+        }
+        .gamepad-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: #c9d1d9;
+            margin-right: 6px;
+        }
+        row:focus, row:focus-visible, button:focus, button:focus-visible {
+            outline: 2px solid #e03131;
+            outline-offset: -1px;
+        }
+        popover listview row:focus, popover listview row:focus-visible, popover listview row:selected {
+            background-color: rgba(224, 49, 49, 0.35);
+            outline: 2px solid #e03131;
+            outline-offset: -1px;
+        }
+        adw-dialog-host button:focus, adw-dialog-host button:focus-visible {
+            outline: 2px solid #e03131;
+            outline-offset: -1px;
+        }
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css.encode())
@@ -126,6 +167,12 @@ class LauncherWindow(
         if display:
             Gtk.StyleContext.add_provider_for_display(
                 display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def set_gamepad_hints_visible(self, visible, pad_name=""):
+        if hasattr(self, "gamepad_bar"):
+            self.gamepad_bar.set_visible(visible)
+            if hasattr(self, "gamepad_name_label") and pad_name:
+                self.gamepad_name_label.set_label(pad_name)
 
     def build(self):
         """(Re)creates the window's content in the current launcher language."""
@@ -145,6 +192,41 @@ class LauncherWindow(
         self.toasts = Adw.ToastOverlay()
         self.toasts.set_child(self.stack)
         toolbar.set_content(self.toasts)
+
+        # Gamepad hints bar (pinned at bottom, shown when gamepad connected)
+        self.gamepad_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        self.gamepad_bar.add_css_class("gamepad-hints-bar")
+        self.gamepad_bar.set_halign(Gtk.Align.CENTER)
+        self.gamepad_bar.set_visible(False)
+
+        pad_info = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        pad_icon = Gtk.Image.new_from_icon_name("input-gaming-symbolic")
+        self.gamepad_name_label = Gtk.Label(label="Gamepad")
+        self.gamepad_name_label.add_css_class("gamepad-name")
+        pad_info.append(pad_icon)
+        pad_info.append(self.gamepad_name_label)
+        self.gamepad_bar.append(pad_info)
+
+        def make_hint(keys, text):
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            for k in keys:
+                b = Gtk.Label(label=k)
+                b.add_css_class("gamepad-badge")
+                box.append(b)
+            lbl = Gtk.Label(label=text)
+            lbl.add_css_class("gamepad-label")
+            box.append(lbl)
+            return box
+
+        self.gamepad_bar.append(make_hint(["LB", "RB"], tr("Вкладки")))
+        self.gamepad_bar.append(make_hint(["D-Pad", "LS"], tr("Навигация")))
+        self.gamepad_bar.append(make_hint(["A"], tr("Выбрать")))
+        self.gamepad_bar.append(make_hint(["B"], tr("Назад")))
+        self.gamepad_bar.append(make_hint(["Y"], tr("В фокус Играть")))
+        self.gamepad_bar.append(make_hint(["Start"], tr("Запуск")))
+        self.gamepad_bar.append(make_hint(["RS"], tr("Прокрутка")))
+
+        toolbar.add_bottom_bar(self.gamepad_bar)
         self.set_content(toolbar)
 
         log_text = self.log_text() if hasattr(self, "log_view") else ""
@@ -220,6 +302,8 @@ class LauncherWindow(
         self.update_user_status()
         self.update_upscaler_status()
         self.update_fsr411_auto_row()
+        if hasattr(self, "gamepad_nav") and self.gamepad_nav and self.gamepad_nav.pad_handle:
+            self.set_gamepad_hints_visible(True, self.gamepad_nav.pad_name)
 
     def update_launch_button(self):
         running = self.process is not None
@@ -235,6 +319,11 @@ class LauncherWindow(
             self.fsr411_button.set_sensitive(not running and self.fsr411_build is None)
         if hasattr(self, "fsr411_auto_button"):
             self.fsr411_auto_button.set_sensitive(not running and self.fsr411_build is None and getattr(self, "best_detected_dll", None) is not None)
+        if hasattr(self, "set_gamepad_hints_visible"):
+            if running:
+                self.set_gamepad_hints_visible(False)
+            elif hasattr(self, "gamepad_nav") and self.gamepad_nav and self.gamepad_nav.pad_handle:
+                self.set_gamepad_hints_visible(True, self.gamepad_nav.pad_name)
 
     def update_fsr411_auto_row(self):
         if not hasattr(self, "fsr411_auto_row"):
