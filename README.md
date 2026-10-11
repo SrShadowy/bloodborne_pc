@@ -75,6 +75,30 @@ The launcher has been reorganized into clean, dedicated preference groups with f
 
 ---
 
+### 6. In-Game Memory Scanner & Reverse Engineering Debugger Suite
+Explore, reverse-engineer, and modify Bloodborne's runtime state live without external tools! Directly accessible from the in-game overlay menu (`Insert` / `L3+R3` → *Memory & Reverse Engineering*), this floating window provides a Cheat Engine-grade memory and debugging suite running natively on Linux.
+
+![In-Game Memory Operations & Debugger](prints/MemoryOperations.png)
+
+- **Asynchronous Memory Scanner (`[Scanner]`)**:
+  - Non-blocking multithreaded scanning across 10 data types (`u8` to `u64`, `Float`, `Double`).
+  - Scans across `Executable & .data`, `Guest Memory (PS4 Direct Heap: 0x1000000000)`, or `Full Process`.
+  - Filter by `Exact Value`, `Changed`, `Unchanged`, `Increased`, and `Decreased`.
+  - Instant 1-click actions: Add to Watchlist (`[+ Watch]`), inspect in Hex view (`[Hex]`), or track what writes (`[Who Writes?]`).
+- **Interactive Watchlist (`[Watchlist]`)**:
+  - Pin addresses with real-time value updates and live 60Hz background memory freezing.
+  - Interactive data type switching, click-to-copy address, and quick deletion.
+- **Hex Inspector & Data Card (`[Hex Inspector]`)**:
+  - 16-byte aligned live memory grid with ASCII view, navigation history (`<` / `>`), address offsets, and jump presets (`eboot Base`, `Heap`, `Params`).
+  - Multi-type decoder card simultaneously interpreting bytes as `u8`, `u16`, `u32`, `i32`, `Float`, and `Double` with direct memory write capabilities.
+- **Hardware Watchpoints & Real-Time Debugger (`[Debugger]`)**:
+  - Memory write protection via `mprotect(PROT_READ)` with lock-free `SIGSEGV`/`SIGTRAP` ring buffers.
+  - Interactive x86-64 disassembler powered by Zydis with jump/call highlighting and active RIP tracking.
+  - Dynamic instruction NOP patching (`[NOP]`) with instant, non-destructive restoration (`[Restore]`).
+  - Full 64-bit CPU register snapshot viewer (`RAX`–`R15`, `RIP`, `RFLAGS`) with 1-click clipboard export.
+
+---
+
 ## 🏛️ What is bbport?
 
 ![The Plain Doll Curious Head Tilt](prints/ue.GIF)
@@ -147,15 +171,17 @@ BB_GAME_DIR=/path/to/CUSA03173 bash run.sh
 | Context | Input | Action |
 | :--- | :--- | :--- |
 | **In-Game Overlay** | `Insert` or `L3 + R3` | Open / Close the in-game settings overlay |
+| **Memory Tools Suite**| Overlay (`Insert`) → *Memory Tools* | Open floating memory scanner, watchlist, hex editor & debugger |
 | **Character Name** | In-game dialog | Interactive virtual keyboard (controller & physical keyboard) |
 | **Launcher Navigation** | `D-Pad` / `Left Stick` | Move focus between launcher settings and categories |
 | **Launcher Values** | `D-Pad Left/Right` | Adjust sliders, cycle combo options, and toggle switches |
 | **Launcher Pages** | `LB` / `RB` (L1 / R1) | Switch launcher tabs |
 | **Launcher Quick Play**| `Start` or `Y` | Immediate game launch / focus main action button |
 | **Page Scrolling** | `Right Stick (RS)` | Smooth vertical scroll in launcher and menus |
-| **Touchpad Gestures** | Left Touchpad / `Tab` | Open gestures menu (or debug menu if enabled) |
+| **Touchpad Gestures** | Left Touchpad / `Tab` | Open gestures menu (or retail Debug Menu if patch enabled) |
 | **Touchpad Items** | Right Touchpad / `Backspace` | Open personal items menu |
-| **Free Camera** | Hold `✕` + press `L3` | Cycle camera modes (requires free camera patch) |
+| **Free Camera** | Hold `✕` + press `L3` | Cycle camera modes (requires free camera patch; keyboard: `Space` + `Z`) |
+| **FromSoftware Debug Menu** | Left Touchpad / `Tab` | Requires patch enabled + font files (`DbgFont14h.ccm`/`.tpf`) from [Nexus #253](https://www.nexusmods.com/bloodborne/mods/253) in `dvdroot_ps4/font/` |
 
 ![Hunter Reverence Bow Gesture](prints/reverencia.GIF)
 *(Performing gestures with the Plain Doll in the Hunter's Dream — open the gesture menu with `Tab` or Touchpad)*
@@ -214,6 +240,10 @@ BB_GAME_DIR=/path/to/CUSA03173 bash run.sh
 - **[Dear ImGui](https://github.com/ocornut/imgui)** by Omar Cornut (MIT): Lightweight in-game configuration overlay and real-time performance metrics HUD.
 - **[GNOME / Libadwaita & GTK4](https://gitlab.gnome.org/GNOME/libadwaita)** (LGPL-2.1+): Modern, accessible desktop launcher interface with custom CSS theming, organized preference groups, and i18n support.
 - **[DejaVu Fonts](https://dejavu-fonts.github.io/)**: Clear, high-legibility Unicode fonts used in the game overlay and debugging menus.
+
+### Reverse Engineering & Memory Tools
+- **[Zydis](https://github.com/zyantific/zydis)** (MIT): Fast and lightweight x86-64 disassembler library powering the in-game live instruction view and real-time disassembler.
+- **Custom Asynchronous Memory Engine**: Non-blocking multithreaded memory scanner, lock-free signal-based page watchpoints (`mprotect` + `SIGSEGV`/`SIGTRAP` ring buffer), interactive live watchlist, and hex data inspector engineered directly into the Vulkan overlay.
 
 ### Game Patches, Modding & Community Research
 - **Lance McDonald**: Pioneer of the Bloodborne 60 FPS patch, physics delta time decoupling research, frame pacing analysis, GoldHEN free camera patch, and game internals exploration.
