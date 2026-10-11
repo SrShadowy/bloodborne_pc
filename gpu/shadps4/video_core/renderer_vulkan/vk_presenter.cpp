@@ -40,7 +40,37 @@
 #include <vector>
 #include <vk_mem_alloc.h>
 
+#if defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
+
 namespace Vulkan {
+namespace {
+
+std::atomic<float> fg_frame_ms{16.6667f};
+
+template <typename TimePoint>
+void PreciseWaitUntil(TimePoint target) {
+    using Clock = std::chrono::steady_clock;
+    auto cur = Clock::now();
+    // Sleep for coarse part if > 2.0 ms remain, waking up ~1.5ms early
+    while (std::chrono::duration_cast<std::chrono::microseconds>(target - cur).count() > 2000) {
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+        cur = Clock::now();
+    }
+    // High-precision spin-wait with pause for the final 1.5ms
+    while (Clock::now() < target) {
+#if defined(__x86_64__) || defined(_M_X64)
+        _mm_pause();
+#elif defined(__aarch64__)
+        asm volatile("yield" ::: "memory");
+#else
+        std::this_thread::yield();
+#endif
+    }
+}
+
+} // anonymous namespace
 
 bool CanBlitToSwapchain(const vk::PhysicalDevice physical_device, vk::Format format) {
     const vk::FormatProperties props{physical_device.getFormatProperties(format)};
@@ -404,12 +434,16 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
 
+    const u64 fid = BbStats::frame_number.load();
+    frame->fg_slot = static_cast<u8>(fid % FrameGenerationManager::FG_RING_SIZE);
+    frame->has_interpolated_frame = false;
+
     // Numbered here, in command order; marked where the commands are recorded.
     const u32 stream = draw_scheduler.CrumbStream();
     const bool crumbs = Breadcrumbs::Enabled();
     const u32 fsr_crumb = crumbs ? Breadcrumbs::Note(stream, {.name = "presenter FSR"}) : 0;
     const u32 pp_crumb = crumbs ? Breadcrumbs::Note(stream, {.name = "presenter post process"}) : 0;
-    draw_scheduler.Record([this, frame, image_view, image_size, frame_subresources, stream,
+    draw_scheduler.Record([this, frame, fid, image_view, image_size, frame_subresources, stream,
                            fsr_crumb, pp_crumb, fsr = fsr_settings,
                            pp = pp_settings](vk::CommandBuffer cmdbuf) {
         // Frames of different submissions may be recorded on two threads at once.
@@ -447,8 +481,12 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             upscaler.SetDisplayInfo(frame->width, frame->height,
                                     swapchain.GetSurfaceFormat().format);
             if (auto* fg = upscaler.GetFrameGeneration(); fg && fg->IsActive()) {
-                upscaler.RecordFrameGenDispatch(cmdbuf, frame->image, frame->width, frame->height,
-                                                16.6f, BbStats::frame_number.load());
+                const float cur_ms = fg_frame_ms.load(std::memory_order_relaxed);
+                const bool dispatched = upscaler.RecordFrameGenDispatch(
+                    cmdbuf, frame->image, frame->width, frame->height,
+                    (cur_ms >= 4.0f && cur_ms <= 100.0f) ? cur_ms : 16.6667f,
+                    fid);
+                frame->has_interpolated_frame = dispatched;
             }
         }
     });
@@ -487,6 +525,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
 Frame* Presenter::PrepareBlankFrame(bool present_thread) {
     // Request a free presentation frame.
     Frame* frame = GetRenderFrame();
+    frame->has_interpolated_frame = false;
 
     auto& scheduler = present_thread ? present_scheduler : draw_scheduler;
     scheduler.EndRendering();
@@ -572,9 +611,15 @@ void Presenter::WaitRendered(const Frame* frame) {
 }
 
 void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame) {
+    auto* fg = rasterizer ? rasterizer->GetUpscaler().GetFrameGeneration() : nullptr;
+
     // Free the frame for reuse
     const auto free_frame = [&] {
         if (!is_reusing_frame) {
+            if (fg && frame->has_interpolated_frame) {
+                fg->ClearInterpolatedFrame(frame->fg_slot);
+                frame->has_interpolated_frame = false;
+            }
             last_submit_frame = frame;
             std::scoped_lock fl{free_mutex};
             free_queue.push(frame);
@@ -618,17 +663,24 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         draw_scheduler.WaitSubmitted(frame->ready_tick);
     }
 
-    auto* fg = rasterizer ? rasterizer->GetUpscaler().GetFrameGeneration() : nullptr;
-    const bool can_present_interpolated = fg && fg->CanPresentInterpolated();
+    const bool can_present_interpolated = fg && fg->IsActive() && frame->has_interpolated_frame &&
+                                          fg->CanPresentInterpolated(frame->fg_slot);
 
     using Clock = std::chrono::steady_clock;
     static auto last_present_time = Clock::now();
+    static double smoothed_real_ms = 16.6667;
     const auto now = Clock::now();
     const auto elapsed = now - last_present_time;
     last_present_time = now;
 
+    const double elapsed_ms = std::chrono::duration<double, std::milli>(elapsed).count();
+    if (elapsed_ms >= 4.0 && elapsed_ms <= 100.0) {
+        smoothed_real_ms = smoothed_real_ms * 0.90 + elapsed_ms * 0.10;
+        fg_frame_ms.store(static_cast<float>(smoothed_real_ms), std::memory_order_relaxed);
+    }
+
     if (can_present_interpolated) {
-        PresentWithFrameGeneration(frame, fg, elapsed);
+        PresentWithFrameGeneration(frame, fg, frame->fg_slot, elapsed);
     }
 
     BlitAndPresentFrame(frame->image, frame->width, frame->height, frame, true, false);
@@ -773,25 +825,27 @@ bool Presenter::BlitAndPresentFrame(vk::Image src_image, u32 src_w, u32 src_h,
     return true;
 }
 
-void Presenter::PresentWithFrameGeneration(Frame* frame, FrameGenerationManager* fg,
+void Presenter::PresentWithFrameGeneration(Frame* frame, FrameGenerationManager* fg, u32 fg_slot,
                                            std::chrono::steady_clock::duration elapsed) {
     using Clock = std::chrono::steady_clock;
-    const auto interp_image = fg->GetInterpolatedImage();
+    const auto interp_image = fg->GetInterpolatedImage(fg_slot);
     if (!interp_image) {
-        fg->ClearInterpolatedFrame();
+        fg->ClearInterpolatedFrame(fg_slot);
+        frame->has_interpolated_frame = false;
         return;
     }
     const auto gen_start = Clock::now();
     const bool presented = BlitAndPresentFrame(interp_image, frame->width, frame->height, frame, false, true);
 
     // Frame pacing between interpolated and real frame
-    if (presented && swapchain.GetPresentMode() != vk::PresentModeKHR::eFifo &&
-        elapsed >= std::chrono::milliseconds(5) &&
-        elapsed <= std::chrono::milliseconds(100)) {
-        const auto half_interval = elapsed / 2;
-        const auto target = gen_start + half_interval;
-        if (Clock::now() < target) {
-            std::this_thread::sleep_until(target);
+    if (presented && swapchain.GetPresentMode() != vk::PresentModeKHR::eFifo) {
+        const float cur_ms = fg_frame_ms.load(std::memory_order_relaxed);
+        const double half_ms = (cur_ms >= 4.0f && cur_ms <= 100.0f)
+                                   ? (double(cur_ms) * 0.5)
+                                   : (std::chrono::duration<double, std::milli>(elapsed).count() * 0.5);
+        if (half_ms >= 2.0 && half_ms <= 50.0) {
+            const auto target = gen_start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(half_ms));
+            PreciseWaitUntil(target);
         }
     }
 
@@ -799,7 +853,8 @@ void Presenter::PresentWithFrameGeneration(Frame* frame, FrameGenerationManager*
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
         swapchain.AcquireNextImage();
     }
-    fg->ClearInterpolatedFrame();
+    fg->ClearInterpolatedFrame(fg_slot);
+    frame->has_interpolated_frame = false;
 }
 
 Frame* Presenter::GetRenderFrame() {

@@ -38,7 +38,7 @@ public:
 
     bool RecordDispatch(vk::CommandBuffer cmdbuf, vk::Image current_color, u32 display_w,
                         u32 display_h, float frame_ms, CameraMotion& camera_motion,
-                        bool reset);
+                        bool reset, u64 frame_id = 0);
 
 private:
     const Instance& instance;
@@ -49,7 +49,7 @@ private:
     u32 disp_h{1080};
     vk::Format disp_format{vk::Format::eB8G8R8A8Unorm};
     u64 last_frame_id{0};
-    bool is_prepared{false};
+    std::array<std::atomic<bool>, FrameGenerationManager::FG_RING_SIZE> is_prepared{};
 };
 
 } // namespace Vulkan

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string>
 #include "common/types.h"
+#include "bbport_settings.h"
 
 enum GpuReadbacksMode : int { Disabled, Relaxed, Precise };
 
@@ -48,9 +49,19 @@ public:
         }();
         return value;
     }
-    /// Frames per second the present thread lets through; 0 = no limit (BB_FPS_LIMIT).
+    /// Frames per second the present thread lets through; 0 = no limit (BB_FPS_LIMIT or fps_limit in bbport.ini).
     u32 GetFrameLimit() {
-        static const u32 value = u32(std::max(0L, Number("BB_FPS_LIMIT", 0)));
+        static const u32 value = [] {
+            const long env_limit = Number("BB_FPS_LIMIT", -1);
+            if (env_limit >= 0) {
+                return u32(env_limit);
+            }
+            const int ini_limit = BbSettings::Get().fps_limit.load();
+            if (ini_limit > 0) {
+                return u32(ini_limit);
+            }
+            return 0u;
+        }();
         return value;
     }
     bool IsCopyGpuBuffers() { static const auto value = Flag("BB_COPY_GPU_BUFFERS", false); return value; }

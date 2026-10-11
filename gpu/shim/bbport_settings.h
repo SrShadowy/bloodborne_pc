@@ -91,6 +91,7 @@ struct Values {
     std::atomic<bool> mouse_invert_y{false};
     std::atomic<bool> mouse_invert_x{false};
     std::atomic<bool> mouse_capture{true};
+    std::atomic<int> fps_limit{0}; ///< Target frame rate limit (0 = uncapped)
 
     /// DLSS (gpu/dlss_bridge, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};

@@ -400,6 +400,26 @@ EN = {
     "Слои валидации Vulkan": "Vulkan validation layers",
     "Сильно замедляет": "Much slower",
     "Доп. переменные (ИМЯ=значение через пробел)": "Extra variables (NAME=value, space-separated)",
+    # Shader Cache
+    "Кэш шейдеров": "Shader Cache",
+    "Очистить все шейдеры": "Clear all shaders",
+    "Очистить кэш шейдеров": "Clear shader cache",
+    "Очистить…": "Clear…",
+    "Очистка…": "Clearing…",
+    "Открыть папку кэша": "Open cache folder",
+    "Очистка шейдеров и конвейеров полезна при графических артефактах или ошибках освещения":
+        "Clearing shaders and pipelines is useful for graphical glitches or lighting issues",
+    "Кэш игры: {} файлов ({:.1f} МБ)": "Game cache: {} files ({:.1f} MB)",
+    "Кэш пуст": "Cache is empty",
+    "Нельзя очистить кэш во время работы игры. Закройте игру перед очисткой.":
+        "Cannot clear cache while the game is running. Close the game before clearing.",
+    "Удаление кэша шейдеров помогает при графических артефактах и сбоях освещения. При следующем запуске игра скомпилирует их заново.\n\nВыберите вариант очистки:":
+        "Clearing shader cache helps with graphical artifacts and lighting glitches. The game will recompile them on next launch.\n\nChoose what to clear:",
+    "Только кэш игры": "Game cache only",
+    "Полная (+ Драйвер GPU)": "Full (+ GPU driver)",
+    "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)":
+        "Shader cache cleared: {} files ({:.1f} MB)",
+    "Кэш шейдеров уже пуст": "Shader cache is already empty",
 }
 PT = {
     # Window, pages, buttons
@@ -630,6 +650,26 @@ PT = {
     "Слои валидации Vulkan": "Camadas de validação Vulkan",
     "Сильно замедляет": "Muito mais lento",
     "Доп. переменные (ИМЯ=значение через пробел)": "Variáveis extras (NOME=valor separados por espaço)",
+    # Shader Cache
+    "Кэш шейдеров": "Cache de shaders",
+    "Очистить все шейдеры": "Limpar todos os shaders",
+    "Очистить кэш шейдеров": "Limpar cache de shaders",
+    "Очистить…": "Limpar…",
+    "Очистка…": "Limpando…",
+    "Открыть папку кэша": "Abrir pasta de cache",
+    "Очистка шейдеров и конвейеров полезна при графических артефактах или ошибках освещения":
+        "Limpar shaders e pipelines resolve glitches visuais e problemas de iluminação",
+    "Кэш игры: {} файлов ({:.1f} МБ)": "Cache do jogo: {} arquivos ({:.1f} MB)",
+    "Кэш пуст": "Cache vazio",
+    "Нельзя очистить кэш во время работы игры. Закройте игру перед очисткой.":
+        "Não é possível limpar o cache com o jogo aberto. Feche o jogo antes de limpar.",
+    "Удаление кэша шейдеров помогает при графических артефактах и сбоях освещения. При следующем запуске игра скомпилирует их заново.\n\nВыберите вариант очистки:":
+        "Limpar o cache de shaders ajuda a corrigir artefatos visuais e problemas de iluminação. Na próxima inicialização, o jogo os recompilará.\n\nEscolha o que deseja limpar:",
+    "Только кэш игры": "Apenas do jogo",
+    "Полная (+ Драйвер GPU)": "Completo (+ Driver GPU)",
+    "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)":
+        "Cache de shaders limpo com sucesso: {} arquivos ({:.1f} MB)",
+    "Кэш шейдеров уже пуст": "O cache de shaders já está vazio",
 }
 
 PT_BR = {
@@ -890,6 +930,26 @@ PT_BR = {
     "Слои валидации Vulkan": "Camadas de validação do Vulkan",
     "Сильно замедляет": "Muito mais lento",
     "Доп. переменные (ИМЯ=значение через пробел)": "Variáveis extras (NOME=valor, separadas por espaço)",
+    # Shader Cache
+    "Кэш шейдеров": "Cache de shaders",
+    "Очистить все шейдеры": "Limpar todos os shaders",
+    "Очистить кэш шейдеров": "Limpar cache de shaders",
+    "Очистить…": "Limpar…",
+    "Очистка…": "Limpando…",
+    "Открыть папку кэша": "Abrir pasta de cache",
+    "Очистка шейдеров и конвейеров полезна при графических артефактах или ошибках освещения":
+        "Limpar shaders e pipelines resolve glitches visuais e problemas de iluminação",
+    "Кэш игры: {} файлов ({:.1f} МБ)": "Cache do jogo: {} arquivos ({:.1f} MB)",
+    "Кэш пуст": "Cache vazio",
+    "Нельзя очистить кэш во время работы игры. Закройте игру перед очисткой.":
+        "Não é possível limpar o cache com o jogo aberto. Feche o jogo antes de limpar.",
+    "Удаление кэша шейдеров помогает при графических артефактах и сбоях освещения. При следующем запуске игра скомпилирует их заново.\n\nВыберите вариант очистки:":
+        "Limpar o cache de shaders ajuda a corrigir artefatos visuais e problemas de iluminação. Na próxima inicialização, o jogo os recompilará.\n\nEscolha o que deseja limpar:",
+    "Только кэш игры": "Apenas do jogo",
+    "Полная (+ Драйвер GPU)": "Completo (+ Driver GPU)",
+    "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)":
+        "Cache de shaders limpo com sucesso: {} arquivos ({:.1f} MB)",
+    "Кэш шейдеров уже пуст": "O cache de shaders já está vazio",
 }
 
 
@@ -1171,6 +1231,26 @@ ZH_CN = {
     "Слои валидации Vulkan": "Vulkan 验证层",
     "Сильно замедляет": "会大幅降低速度",
     "Доп. переменные (ИМЯ=значение через пробел)": "附加环境变量（用空格分隔的 名称=值）",
+    # Shader Cache
+    "Кэш шейдеров": "着色器缓存",
+    "Очистить все шейдеры": "清除所有着色器",
+    "Очистить кэш шейдеров": "清除着色器缓存",
+    "Очистить…": "清除…",
+    "Очистка…": "正在清除…",
+    "Открыть папку кэша": "打开缓存文件夹",
+    "Очистка шейдеров и конвейеров полезна при графических артефактах или ошибках освещения":
+        "清除着色器和管线有助于解决画面瑕疵或光照异常",
+    "Кэш игры: {} файлов ({:.1f} МБ)": "游戏缓存：{} 个文件（{:.1f} MB）",
+    "Кэш пуст": "缓存为空",
+    "Нельзя очистить кэш во время работы игры. Закройте игру перед очисткой.":
+        "游戏运行时无法清除缓存。请先退出游戏。",
+    "Удаление кэша шейдеров помогает при графических артефактах и сбоях освещения. При следующем запуске игра скомпилирует их заново.\n\nВыберите вариант очистки:":
+        "清除着色器缓存有助于修复图形伪影和光照异常。游戏下次启动时将重新编译。\n\n请选择清除方式：",
+    "Только кэш игры": "仅游戏缓存",
+    "Полная (+ Драйвер GPU)": "完整清理（+ GPU 驱动）",
+    "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)":
+        "着色器缓存已成功清除：{} 个文件（{:.1f} MB）",
+    "Кэш шейдеров уже пуст": "着色器缓存已经为空",
 }
 
 

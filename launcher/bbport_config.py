@@ -143,6 +143,7 @@ INI_DEFAULTS = {
     "mouse_invert_x": "0",
     "mouse_capture": "1",
     "draw_pipe": "2",
+    "fps_limit": "0",
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 
@@ -285,8 +286,10 @@ def game_environment(s):
     if s["hdr"]:
         env["BB_HDR"] = "1"
     env["BB_FPS"] = s["fps_mode"]
-    if s["fps_limit"] > 0:
-        env["BB_FPS_LIMIT"] = str(s["fps_limit"])
+    if s["fps_mode"] == "30":
+        env["BB_FPS_LIMIT"] = str(s["fps_limit"]) if s.get("fps_limit", 0) > 0 else "30"
+    else:
+        env["BB_FPS_LIMIT"] = str(s.get("fps_limit", 0))
     if s["draw_pipe"]:
         env["BB_DRAW_PIPE"] = s["draw_pipe"]
     if s.get("vk_record_threads") and s["vk_record_threads"] != "auto":

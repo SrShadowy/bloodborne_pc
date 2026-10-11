@@ -453,6 +453,48 @@
             <Line Type="bytes" Address="0x03ABC8CF" Value="EB"/>
             <Line Type="bytes" Address="0x03ABC8FB" Value="C8000000"/>
             <Line Type="bytes" Address="0x03ABCB20" Value="EB"/>
+            <Line Type="bytes" Address="0x04cad65c" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04cad660" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04cad664" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04cadc08" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04cadd28" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04caf1bc" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04caf290" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04caf294" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04caf340" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04caf344" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04cb03b8" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04cb03bc" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04ccc3f4" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04befdcc" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04c88688" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d25844" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d2585c" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d25864" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d265fc" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d26618" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d26c9c" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d270e4" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d27250" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d27258" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d27554" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d275f4" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d27720" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d27c4c" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d28418" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d28e98" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d29124" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d29128" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d29b80" Value="8988083D"/>
+            <Line Type="bytes" Address="0x04d29e74" Value="8988083D"/>
+            <Line Type="bytes" Address="0x0486aab4" Value="0000803F"/>
+            <Line Type="bytes" Address="0x0486aabc" Value="0000803F"/>
+            <Line Type="bytes" Address="0x04cc0024" Value="00002041"/>
+            <Line Type="bytes" Address="0x04b693f0" Value="0000003F"/>
+            <Line Type="bytes" Address="0x04bb63e4" Value="0000003F"/>
+            <Line Type="bytes" Address="0x04bb8474" Value="0000003F"/>
+            <Line Type="bytes" Address="0x04bb91c0" Value="0000003F"/>
+            <Line Type="bytes" Address="0x04bb98b8" Value="0000003F"/>
         </PatchList>
     </Metadata>
     <Metadata Title="Bloodborne" Name="60FPS (no deltatime)" Note="Just timesteps, no deltatime. Cloth, corpses, etc, won't 'jump' if you lag or stutter, but game speed might slow if you drop below 60 fps." Author="Kyo" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">

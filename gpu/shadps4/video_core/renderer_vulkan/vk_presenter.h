@@ -38,7 +38,8 @@ struct Frame {
     u64 ready_tick;
     bool is_hdr{false};
     u8 id{};
-
+    u8 fg_slot{0};
+    bool has_interpolated_frame{false};
 };
 
 enum SchedulerType {
@@ -120,7 +121,7 @@ private:
                                vk::Extent2D extent, vk::Image src_image,
                                u32 src_w, u32 src_h, bool is_generated = false);
 
-    void PresentWithFrameGeneration(Frame* frame, FrameGenerationManager* fg,
+    void PresentWithFrameGeneration(Frame* frame, FrameGenerationManager* fg, u32 fg_slot,
                                     std::chrono::steady_clock::duration elapsed);
 
 private:

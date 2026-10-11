@@ -79,8 +79,8 @@ int main() {
         prep.depth_image = vk::Image(depth_img);
         prep.depth_format = vk::Format::eD32Sfloat;
         prep.motion_image = vk::Image(motion_img);
-        prep.interpolation_source_image = fg.GetSourceImage();
-        prep.interpolation_source_view = fg.GetSourceView();
+        prep.interpolation_source_image = fg.GetSourceImage(frame);
+        prep.interpolation_source_view = fg.GetSourceView(frame);
         prep.render_w = W;
         prep.render_h = H;
         prep.frame_time_ms = 16.6f;
@@ -98,8 +98,8 @@ int main() {
         Vulkan::FrameGenerationManager::DispatchInputs disp{};
         disp.cmdbuf = cmdbuf;
         disp.current_color_image = vk::Image(current_color);
-        disp.hudless_color_image = (frame % 2 == 0) ? fg.GetSourceImage() : vk::Image{};
-        disp.output_image = fg.GetInterpolatedImage();
+        disp.hudless_color_image = (frame % 2 == 0) ? fg.GetSourceImage(frame) : vk::Image{};
+        disp.output_image = fg.GetInterpolatedImage(frame);
         disp.display_w = W;
         disp.display_h = H;
         disp.frame_time_ms = 16.6f;
@@ -113,17 +113,18 @@ int main() {
         assert(disp_ok);
 
         if (frame == 0) {
-            assert(!fg.CanPresentInterpolated());
+            assert(!fg.CanPresentInterpolated(frame));
         } else {
-            assert(fg.CanPresentInterpolated());
+            assert(fg.CanPresentInterpolated(frame));
         }
 
         Vulkan::SubmitInfo submit{};
         scheduler.Flush(submit);
         scheduler.Finish();
 
-        fg.ClearInterpolatedFrame();
-        assert(!fg.CanPresentInterpolated());
+        fg.ClearInterpolatedFrame(frame);
+        assert(!fg.CanPresentInterpolated(frame));
+        
     }
 
     fg.Destroy();

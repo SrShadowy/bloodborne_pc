@@ -73,20 +73,37 @@ public:
         u64 frame_id{0};
     };
 
+    static constexpr u32 FG_RING_SIZE = 4;
+
     bool RecordPrepare(const PrepareInputs& inputs);
     bool RecordDispatch(const DispatchInputs& inputs);
 
-    [[nodiscard]] bool CanPresentInterpolated() const noexcept {
-        return IsActive() && has_interpolated_frame.load(std::memory_order_acquire);
+    [[nodiscard]] bool CanPresentInterpolated(u32 slot = ~0u) const noexcept {
+        if (!IsActive()) return false;
+        const u32 s = (slot == ~0u) ? last_dispatched_slot.load(std::memory_order_acquire) : (slot % FG_RING_SIZE);
+        return has_interpolated_frame[s].load(std::memory_order_acquire);
     }
-    void ClearInterpolatedFrame() noexcept {
-        has_interpolated_frame.store(false, std::memory_order_release);
+    void ClearInterpolatedFrame(u32 slot = ~0u) noexcept {
+        const u32 s = (slot == ~0u) ? last_dispatched_slot.load(std::memory_order_acquire) : (slot % FG_RING_SIZE);
+        has_interpolated_frame[s].store(false, std::memory_order_release);
     }
 
-    [[nodiscard]] vk::Image GetInterpolatedImage() const { return vk::Image(interpolated_image); }
-    [[nodiscard]] vk::ImageView GetInterpolatedView() const { return *interpolated_view; }
-    [[nodiscard]] vk::Image GetSourceImage() const { return vk::Image(hudless_source_image); }
-    [[nodiscard]] vk::ImageView GetSourceView() const { return *hudless_source_view; }
+    [[nodiscard]] vk::Image GetInterpolatedImage(u32 slot = ~0u) const {
+        const u32 s = (slot == ~0u) ? last_dispatched_slot.load(std::memory_order_acquire) : (slot % FG_RING_SIZE);
+        return vk::Image(interpolated_image[s]);
+    }
+    [[nodiscard]] vk::ImageView GetInterpolatedView(u32 slot = ~0u) const {
+        const u32 s = (slot == ~0u) ? last_dispatched_slot.load(std::memory_order_acquire) : (slot % FG_RING_SIZE);
+        return *interpolated_view[s];
+    }
+    [[nodiscard]] vk::Image GetSourceImage(u32 slot = ~0u) const {
+        const u32 s = (slot == ~0u) ? last_prepared_slot.load(std::memory_order_acquire) : (slot % FG_RING_SIZE);
+        return vk::Image(hudless_source_image[s]);
+    }
+    [[nodiscard]] vk::ImageView GetSourceView(u32 slot = ~0u) const {
+        const u32 s = (slot == ~0u) ? last_prepared_slot.load(std::memory_order_acquire) : (slot % FG_RING_SIZE);
+        return *hudless_source_view[s];
+    }
 
 private:
     const Instance& instance;
@@ -96,7 +113,9 @@ private:
     bool failed{false};
     bool needs_reset{true};
     bool prepared{false};
-    std::atomic<bool> has_interpolated_frame{false};
+    std::array<std::atomic<bool>, FG_RING_SIZE> has_interpolated_frame{};
+    std::atomic<u32> last_dispatched_slot{0};
+    std::atomic<u32> last_prepared_slot{0};
     const char* problem{nullptr};
 
     u32 current_max_render_w{0};
@@ -107,10 +126,10 @@ private:
     vk::Format current_output_format{vk::Format::eUndefined};
     std::unique_ptr<FfxVkPortableFrameGenerationCreateInfo> create_info;
 
-    VideoCore::UniqueImage interpolated_image;
-    vk::UniqueImageView interpolated_view;
-    VideoCore::UniqueImage hudless_source_image;
-    vk::UniqueImageView hudless_source_view;
+    std::array<VideoCore::UniqueImage, FG_RING_SIZE> interpolated_image;
+    std::array<vk::UniqueImageView, FG_RING_SIZE> interpolated_view;
+    std::array<VideoCore::UniqueImage, FG_RING_SIZE> hudless_source_image;
+    std::array<vk::UniqueImageView, FG_RING_SIZE> hudless_source_view;
 };
 
 } // namespace Vulkan

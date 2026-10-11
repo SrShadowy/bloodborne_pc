@@ -55,7 +55,7 @@ F Game(u64 va) {
 // ---- Texts: ids from IdBase up, looked up by the game like its own messages. ----
 constexpr u32 IdBase = 0x7f0000;
 struct Text {
-    std::u16string english, russian;
+    std::u16string english, portuguese, russian;
 };
 std::vector<Text> texts;
 
@@ -83,27 +83,35 @@ std::u16string Utf16(const char* utf8) {
     }
     return out;
 }
-u32 AddText(const char* english, const char* russian) {
-    texts.push_back({Utf16(english), Utf16(russian)});
+u32 AddText(const char* english, const char* portuguese, const char* russian) {
+    texts.push_back({Utf16(english), Utf16(portuguese), Utf16(russian)});
     return IdBase + u32(texts.size() - 1);
 }
-/// The game's own language decides (its "Screen/Sound" text in Cyrillic: Russian, else English);
-/// the port's menu language until the game has looked that text up.
-enum class GameLanguage { Unknown, English, Russian };
+/// The game's own language decides (Cyrillic -> Russian, Portuguese diacritics / setting -> Portuguese, else English)
+enum class GameLanguage { Unknown, English, Portuguese, Russian };
 std::atomic<GameLanguage> game_language{GameLanguage::Unknown};
 
 const char16_t* TextOf(u32 id) {
     const Text& t = texts[id - IdBase];
-    const GameLanguage game = game_language.load();
-    const bool russian = game == GameLanguage::Unknown
-                             ? BbSettings::Get().menu_language.load() == static_cast<int>(BbSettings::MenuLanguage::Russian)
-                             : game == GameLanguage::Russian;
-    return russian ? t.russian.c_str() : t.english.c_str();
+    GameLanguage game = game_language.load();
+    if (game == GameLanguage::Unknown) {
+        const int s_lang = BbSettings::Get().menu_language.load();
+        if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
+            game = GameLanguage::Russian;
+        } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
+            game = GameLanguage::Portuguese;
+        } else {
+            game = GameLanguage::English;
+        }
+    }
+    if (game == GameLanguage::Russian) return t.russian.c_str();
+    if (game == GameLanguage::Portuguese) return t.portuguese.c_str();
+    return t.english.c_str();
 }
 
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
-    OutputRes, Upscaler, Preset, Sharpness, ShowFps,
+    OutputRes, Upscaler, Preset, Sharpness, ShowFps, FrameGen,
     ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
@@ -140,6 +148,7 @@ void Fill(const BbSettings::Values& s, int* values) {
     values[Sharpness] =
         s.sharpen ? std::clamp(int(std::lround(s.sharpness / SharpnessStep)), 1, SharpnessSteps - 1) : 0;
     values[ShowFps] = s.show_fps;
+    values[FrameGen] = s.frame_generation.load() ? 1 : 0;
     values[ModelLod] = 1;
     for (int i = 0; i < 4; ++i) {
         if (LodValues[i] == s.model_lod) values[ModelLod] = i;
@@ -172,103 +181,154 @@ struct Page {
 };
 std::vector<Page> pages;
 
+u32 upscaler_help_id = 0;
+u32 preset_help_id = 0;
+u32 output_res_help_id = 0;
+
+/// Upscalers this GPU and build can run (known once the device exists, before any menu).
+bool UpscalerAvailable(int i) {
+    const auto& s = BbSettings::Get();
+    return i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
+           : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
+           : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
+                                             : true;
+}
+
 void DefineTexts() {
-    const u32 off = AddText("Off", "Выкл"), on = AddText("On", "Вкл");
+    const u32 off = AddText("Off", "Desligado", "Выкл");
+    const u32 on = AddText("On", "Ligado", "Вкл");
     const std::vector<u32> toggle = {off, on};
-    const auto page = [](const char* en, const char* ru, const char* help_en, const char* help_ru) {
-        const u32 name = AddText(en, ru);
-        pages.push_back({name, AddText(help_en, help_ru), {}});
+    const auto page = [](const char* en, const char* pt, const char* ru,
+                         const char* help_en, const char* help_pt, const char* help_ru) {
+        const u32 name = AddText(en, pt, ru);
+        pages.push_back({name, AddText(help_en, help_pt, help_ru), {}});
     };
-    const auto row = [](Field f, const char* en, const char* ru, const char* help_en,
-                        const char* help_ru, std::vector<u32> choices, Kind kind = Kind::List) {
+    const auto row = [&](Field f, const char* en, const char* pt, const char* ru,
+                         const char* help_en, const char* help_pt, const char* help_ru,
+                         std::vector<u32> choices, Kind kind = Kind::List) {
         if (kind == Kind::List && choices.size() == 2) {
             kind = Kind::Toggle; // left/right in place, as the game's own on/off rows
         }
-        pages.back().rows.push_back(
-            {f, AddText(en, ru), AddText(help_en, help_ru), std::move(choices), kind});
+        const u32 name_id = AddText(en, pt, ru);
+        const u32 help_id = AddText(help_en, help_pt, help_ru);
+        if (f == Upscaler) upscaler_help_id = help_id;
+        else if (f == Preset) preset_help_id = help_id;
+        else if (f == OutputRes) output_res_help_id = help_id;
+        pages.back().rows.push_back({f, name_id, help_id, std::move(choices), kind});
     };
 
-    // Two pages of the ControllSetting layout's six rows (the game's other layouts are fixed
-    // forms): the picture, then the game's effects. The other patches (intros, the free camera,
-    // the debug menu) and the game's own AA are in the overlay menu and the launcher.
-    page("Display", "Изображение", "Resolution, upscaler, sharpness and model detail (bbport)",
-         "Разрешение, апскейлер, резкость и детализация (bbport)");
-    // Sliders and toggles first, the pop-up list last: a list opens downwards over the rows
-    // below it, and their values showed through it.
-    row(Preset, "Quality preset", "Пресет",
+    // Page 0: Display (live settings)
+    page("Display", "Tela", "Изображение",
+         "Resolution, upscaler, frame generation, sharpness and FPS (bbport)",
+         "Resolução, upscaler, geração de quadros, nitidez e FPS (bbport)",
+         "Разрешение, апскейлер, генерация кадров, резкость и FPS (bbport)");
+
+    std::vector<u32> upscaler_choices = {
+        off,
+        AddText("FSR 3.1", "FSR 3.1", "FSR 3.1"),
+        AddText("FSR 4", "FSR 4", "FSR 4"),
+        AddText("FSR 4.1.1", "FSR 4.1.1", "FSR 4.1.1"),
+        AddText("TAA", "TAA", "TAA")
+    };
+    if (UpscalerAvailable(BbSettings::UpscalerDlss)) {
+        upscaler_choices.push_back(AddText("DLSS", "DLSS", "DLSS"));
+    }
+    const bool has_dlss = upscaler_choices.size() > 5;
+    const char* upscaler_help_en = has_dlss ? "Upscaler: 0-1 Off, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS"
+                                            : "Upscaler: 0-1 Off, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA";
+    const char* upscaler_help_pt = has_dlss ? "Upscaler: 0-1 Desligado, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS"
+                                            : "Upscaler: 0-1 Desligado, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA";
+    const char* upscaler_help_ru = has_dlss ? "Апскейлер: 0-1 Выкл, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS"
+                                            : "Апскейлер: 0-1 Выкл, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA";
+
+    // Sliders and toggles: all rows use native horizontal slider or toggle widgets (no drop-down popups),
+    // eliminating any overlap with the layout's Defaults button below row 5.
+    row(Upscaler, "Upscaler", "Upscaler", "Апскейлер",
+        upscaler_help_en, upscaler_help_pt, upscaler_help_ru, std::move(upscaler_choices), Kind::Steps);
+
+    row(Preset, "Quality preset", "Predefinição de qualidade", "Пресет",
         "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
+        "Resolução interna: 0-1 Native AA, 2-3 Qualidade, 4-6 Equilibrado, 7-8 Desempenho, 9-10 Ultra",
         "Разрешение сцены: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
-        {AddText("Native AA", "Native AA"), AddText("Quality", "Quality"), AddText("Balanced", "Balanced"),
-         AddText("Performance", "Performance"), AddText("Ultra Performance", "Ultra Performance")},
+        {AddText("Native AA", "Native AA", "Native AA"),
+         AddText("Quality", "Qualidade", "Quality"),
+         AddText("Balanced", "Equilibrado", "Balanced"),
+         AddText("Performance", "Desempenho", "Performance"),
+         AddText("Ultra Performance", "Ultra Desempenho", "Ultra Performance")},
         Kind::Steps);
-    row(Sharpness, "Sharpness", "Резкость", "RCAS after the upscaler: 0 off, 10 strongest",
-        "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
-    row(OutputRes, "Output resolution", "Разрешение вывода",
+
+    row(OutputRes, "Output resolution", "Resolução de saída", "Разрешение вывода",
         "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
+        "Quadro final: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
         "Готовый кадр: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
-        {AddText("1280 x 720", "1280 x 720"), AddText("1920 x 1080", "1920 x 1080"),
-         AddText("2560 x 1440", "2560 x 1440"), AddText("3840 x 2160", "3840 x 2160")},
+        {AddText("1280 x 720", "1280 x 720", "1280 x 720"),
+         AddText("1920 x 1080", "1920 x 1080", "1920 x 1080"),
+         AddText("2560 x 1440", "2560 x 1440", "2560 x 1440"),
+         AddText("3840 x 2160", "3840 x 2160", "3840 x 2160")},
         Kind::Steps);
-    row(ShowFps, "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
+
+    row(Sharpness, "Sharpness", "Nitidez", "Резкость",
+        "RCAS after the upscaler: 0 off, 10 strongest",
+        "Filtro RCAS após upscaler: 0 desligado, 10 máximo",
+        "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
+
+    row(FrameGen, "Frame generation", "Geração de quadros", "Генерация кадров",
+        "FSR 3 Frame Generation: inserts interpolated frames (best with 60+ FPS & 120Hz+)",
+        "FSR 3 Frame Generation: gera quadros intermediários (ideal com 60+ FPS e 120Hz+)",
+        "FSR 3 Frame Generation: генерация промежуточных кадров (лучше с 60+ FPS и 120Hz+)", toggle);
+
+    row(ShowFps, "FPS counter", "Contador de FPS", "Счётчик FPS",
+        "Frame rate in the top right corner",
+        "Taxa de quadros no canto superior direito",
         "Частота кадров в правом верхнем углу", toggle);
-    row(ModelLod, "Model detail", "Детализация",
+
+    // Page 1: Effects & Detail (settings applied after restart)
+    page("Effects", "Efeitos", "Эффекты",
+         "The game's effects and detail (bbport; after a restart)",
+         "Efeitos gráficos e detalhes do jogo (bbport; após reiniciar)",
+         "Эффекты игры и детализация (bbport; после перезапуска)");
+
+    row(ModelLod, "Model detail", "Detalhes de modelos", "Детализация",
         "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest",
+        "Após reiniciar: 0-1 máxima, 2-4 padrão do jogo, 5-7 menor, 8-10 mínima",
         "После перезапуска: 0-1 максимальная, 2-4 как в игре, 5-7 ниже, 8-10 минимальная",
-        {AddText("Highest", "Максимальная"), AddText("Game default", "Как в игре"),
-         AddText("Lower", "Ниже"), AddText("Lowest", "Минимальная")},
+        {AddText("Highest", "Máxima", "Максимальная"),
+         AddText("Game default", "Padrão do jogo", "Как в игре"),
+         AddText("Lower", "Menor", "Ниже"),
+         AddText("Lowest", "Mínima", "Минимальная")},
         Kind::Steps);
-    // The page's only pop-up list, last: it opens below itself.
-    row(Upscaler, "Upscaler", "Апскейлер", "Temporal upscaler and anti-aliasing",
-        "Временной апскейлер и сглаживание",
-        {off, AddText("FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4"), AddText("FSR 4.1.1", "FSR 4.1.1"),
-         AddText("TAA", "TAA"), AddText("DLSS", "DLSS")});
 
-    page("Effects", "Эффекты", "The game's effects (bbport; after a restart)",
-         "Эффекты игры (bbport; после перезапуска)");
-
-    // Short names for the game's narrow name column (BbSettings::Effects order); the help line
-    // has the details.
     struct Short {
-        const char *key, *en, *ru, *help_en, *help_ru;
+        const char *key, *en, *pt, *ru, *help_en, *help_pt, *help_ru;
         bool graphics = true;
     };
     static const Short shorts[] = {
-        {"effect_chromatic_aberration", "Chromatic aberration", "Хром. аберрация",
-         "Colour fringes at the frame edges", "Цветные каймы по краям кадра"},
-        {"effect_dof", "Depth of field", "Глубина резкости", "Blur of distant and near objects (DoF)",
-         "Размытие дальних и близких объектов (DoF)"},
-        {"effect_motion_blur", "Motion blur", "Размытие в движении", "Blur when the camera turns",
-         "Размытие при повороте камеры"},
-        {"effect_ssao", "Ambient occlusion", "Затенение SSAO", "Shading in corners and contacts (SSAO)",
-         "Затенение в углах и местах касания (SSAO)"},
-        {"effect_game_aa", "Game's own AA", "Сглаживание игры", "The game's own anti-aliasing",
-         "Собственное сглаживание игры", false},
-        {"effect_dynamic_shadows", "Dynamic shadows", "Динамические тени", "Shadows from dynamic lights",
-         "Тени от динамических источников света"},
-        {"effect_ssr", "SSR reflections", "Отражения SSR", "Screen-space reflections (not in the original)",
-         "Экранные отражения (не было в оригинале)"},
-        {"skip_intro", "Skip intros", "Пропуск заставок", "Skip the startup logos and intro",
-         "Пропуск логотипов и заставки при запуске", false},
-        {"debug_camera", "Free camera", "Свободная камера", "Toggled with Cross + L3",
-         "Включается Cross + L3", false},
-        {"debug_menu", "Debug menu", "Debug menu", "The game's debug menu (requires font files)",
-         "Отладочное меню игры (нужны файлы шрифтов)", false},
+        {"effect_chromatic_aberration", "Chromatic aberration", "Aberração cromática", "Хром. аберрация",
+         "Colour fringes at the frame edges", "Franjas de cores nas bordas do quadro", "Цветные каймы по краям кадра"},
+        {"effect_dof", "Depth of field", "Profundidade de campo", "Глубина резкости",
+         "Blur of distant and near objects (DoF)", "Desfoque de objetos distantes e próximos (DoF)", "Размытие дальних и близких объектов (DoF)"},
+        {"effect_motion_blur", "Motion blur", "Desfoque de movimento", "Размытие в движении",
+         "Blur when the camera turns", "Desfoque ao girar a câmera", "Размытие при повороте камеры"},
+        {"effect_ssao", "Ambient occlusion", "Oclusão de ambiente", "Затенение SSAO",
+         "Shading in corners and contacts (SSAO)", "Sombreamento em cantos e contatos (SSAO)", "Затенение в углах и местах касания (SSAO)"},
+        {"effect_dynamic_shadows", "Dynamic shadows", "Sombras dinâmicas", "Динамические тени",
+         "Shadows from dynamic lights", "Sombras de fontes de luz dinâmicas", "Тени от динамических источников света"},
+        {"effect_ssr", "SSR reflections", "Reflexos SSR", "Отражения SSR",
+         "Screen-space reflections (not in the original)", "Reflexos em espaço de tela (não existia no original)", "Экранные отражения (не было в оригинале)"},
     };
-    for (int e = 0; e < BbSettings::EffectCount; ++e) {
-        const auto& effect = BbSettings::Effects[e];
-        const Short* name = nullptr;
-        for (const Short& s : shorts) {
-            if (std::strcmp(s.key, effect.key) == 0) name = &s;
-        }
-        if ((name && !name->graphics) || pages.back().rows.size() == RowsPerPage) {
+    for (const auto& s : shorts) {
+        if (!s.graphics || pages.back().rows.size() == RowsPerPage) {
             continue; // the overlay menu and the launcher have it
         }
-        // A new effect without a short name: its full label.
-        const std::string help_en = std::string(name ? name->help_en : effect.label) + " (after a restart)";
-        const std::string help_ru =
-            std::string(name ? name->help_ru : effect.label_ru) + " (после перезапуска)";
-        row(Field(FirstEffect + e), name ? name->en : effect.label, name ? name->ru : effect.label_ru,
-            help_en.c_str(), help_ru.c_str(), toggle);
+        for (int e = 0; e < BbSettings::EffectCount; ++e) {
+            if (std::strcmp(s.key, BbSettings::Effects[e].key) == 0) {
+                const std::string help_en = std::string(s.help_en) + " (after a restart)";
+                const std::string help_pt = std::string(s.help_pt) + " (após reiniciar)";
+                const std::string help_ru = std::string(s.help_ru) + " (после перезапуска)";
+                row(Field(FirstEffect + e), s.en, s.pt, s.ru, help_en.c_str(), help_pt.c_str(), help_ru.c_str(), toggle);
+                break;
+            }
+        }
     }
 }
 
@@ -319,15 +379,6 @@ void MakeTexts(u8* pair, u32 name, u32 help) {
     using Make = void* (*)(void*, u32, u32);
     Game<Make>(MakeText)(pair, TextName, name);
     Game<Make>(MakeText)(pair + TextSize, TextHelp, help);
-}
-
-/// Upscalers this GPU and build can run (known once the device exists, before any menu).
-bool UpscalerAvailable(int i) {
-    const auto& s = BbSettings::Get();
-    return i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
-           : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
-           : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
-                                             : true;
 }
 
 void AddRows(void* page, const std::vector<Row>& rows) {
@@ -425,6 +476,108 @@ std::atomic<const void*> screen_sound_text{nullptr};
 
 const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
     if (id >= IdBase && id < IdBase + texts.size()) {
+        if (id == upscaler_help_id && upscaler_help_id != 0) {
+            GameLanguage game = game_language.load();
+            if (game == GameLanguage::Unknown) {
+                const int s_lang = BbSettings::Get().menu_language.load();
+                if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
+                    game = GameLanguage::Russian;
+                } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
+                    game = GameLanguage::Portuguese;
+                } else {
+                    game = GameLanguage::English;
+                }
+            }
+            int cur_choice = steps_count[Upscaler] ? ChoiceFromPosition(bytes[Upscaler], steps_count[Upscaler]) : values[Upscaler];
+            const char* name = (cur_choice == 0) ? (game == GameLanguage::Portuguese ? "Desligado" : (game == GameLanguage::Russian ? "Выкл" : "Off"))
+                             : (cur_choice == 1) ? "FSR 3.1"
+                             : (cur_choice == 2) ? "FSR 4"
+                             : (cur_choice == 3) ? "FSR 4.1.1"
+                             : (cur_choice == 4) ? "TAA"
+                             : "DLSS";
+            char buf[256];
+            if (game == GameLanguage::Portuguese) {
+                if (steps_count[Upscaler] > 5) {
+                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Desl, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS", name);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Desligado, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA", name);
+                }
+            } else if (game == GameLanguage::Russian) {
+                if (steps_count[Upscaler] > 5) {
+                    std::snprintf(buf, sizeof(buf), "Апскейлер: [%s] | 0-1 Выкл, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS", name);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "Апскейлер: [%s] | 0-1 Выкл, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA", name);
+                }
+            } else {
+                if (steps_count[Upscaler] > 5) {
+                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Off, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS", name);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Off, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA", name);
+                }
+            }
+            static std::u16string s_dyn_upscaler;
+            s_dyn_upscaler = Utf16(buf);
+            return s_dyn_upscaler.c_str();
+        }
+        if (id == preset_help_id && preset_help_id != 0) {
+            GameLanguage game = game_language.load();
+            if (game == GameLanguage::Unknown) {
+                const int s_lang = BbSettings::Get().menu_language.load();
+                if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
+                    game = GameLanguage::Russian;
+                } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
+                    game = GameLanguage::Portuguese;
+                } else {
+                    game = GameLanguage::English;
+                }
+            }
+            int cur_choice = steps_count[Preset] ? ChoiceFromPosition(bytes[Preset], steps_count[Preset]) : values[Preset];
+            const char* name = (cur_choice == 0) ? "Native AA"
+                             : (cur_choice == 1) ? (game == GameLanguage::Portuguese ? "Qualidade" : "Quality")
+                             : (cur_choice == 2) ? (game == GameLanguage::Portuguese ? "Equilibrado" : "Balanced")
+                             : (cur_choice == 3) ? (game == GameLanguage::Portuguese ? "Desempenho" : "Performance")
+                             : (game == GameLanguage::Portuguese ? "Ultra Desempenho" : "Ultra Performance");
+            char buf[256];
+            if (game == GameLanguage::Portuguese) {
+                std::snprintf(buf, sizeof(buf), "Resolução interna: [%s] | 0-1 Native AA, 2-3 Qualidade, 4-6 Equilibrado, 7-8 Desempenho, 9-10 Ultra", name);
+            } else if (game == GameLanguage::Russian) {
+                std::snprintf(buf, sizeof(buf), "Разрешение сцены: [%s] | 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra", name);
+            } else {
+                std::snprintf(buf, sizeof(buf), "Scene resolution: [%s] | 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra", name);
+            }
+            static std::u16string s_dyn_preset;
+            s_dyn_preset = Utf16(buf);
+            return s_dyn_preset.c_str();
+        }
+        if (id == output_res_help_id && output_res_help_id != 0) {
+            GameLanguage game = game_language.load();
+            if (game == GameLanguage::Unknown) {
+                const int s_lang = BbSettings::Get().menu_language.load();
+                if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
+                    game = GameLanguage::Russian;
+                } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
+                    game = GameLanguage::Portuguese;
+                } else {
+                    game = GameLanguage::English;
+                }
+            }
+            int cur_choice = steps_count[OutputRes] ? ChoiceFromPosition(bytes[OutputRes], steps_count[OutputRes]) : values[OutputRes];
+            const char* name = (cur_choice == 0) ? "1280x720"
+                             : (cur_choice == 1) ? "1920x1080"
+                             : (cur_choice == 2) ? "2560x1440"
+                             : "3840x2160";
+            char buf[256];
+            if (game == GameLanguage::Portuguese) {
+                std::snprintf(buf, sizeof(buf), "Quadro final: [%s] | 0-1 720p, 2-4 1080p, 5-7 1440p, 8-10 4K", name);
+            } else if (game == GameLanguage::Russian) {
+                std::snprintf(buf, sizeof(buf), "Готовый кадр: [%s] | 0-1 720p, 2-4 1080p, 5-7 1440p, 8-10 4K", name);
+            } else {
+                std::snprintf(buf, sizeof(buf), "Final frame: [%s] | 0-1 720p, 2-4 1080p, 5-7 1440p, 8-10 4K", name);
+            }
+            static std::u16string s_dyn_outres;
+            s_dyn_outres = Utf16(buf);
+            return s_dyn_outres.c_str();
+        }
         // BB_GAME_MENU_TRACE=1: how often the game asks for our texts (per 2 s).
         static const bool count = [] {
             const char* env = std::getenv("BB_GAME_MENU_TRACE");
@@ -460,10 +613,18 @@ const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
     if (category == TextName && id == ScreenSoundItem && text) {
         screen_sound_text = text;
         bool cyrillic = false;
+        bool portuguese = false;
         for (const char16_t* c = text; *c; ++c) {
             cyrillic = cyrillic || (*c >= 0x400 && *c < 0x500);
+            portuguese = portuguese || *c == u'ã' || *c == u'õ' || *c == u'ç' || *c == u'é';
         }
-        game_language = cyrillic ? GameLanguage::Russian : GameLanguage::English;
+        if (cyrillic) {
+            game_language = GameLanguage::Russian;
+        } else if (portuguese || BbSettings::Get().menu_language.load() == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
+            game_language = GameLanguage::Portuguese;
+        } else {
+            game_language = GameLanguage::English;
+        }
     }
     return text;
 }
@@ -598,21 +759,23 @@ void Poll() {
             values[f] = steps_count[f] ? ChoiceFromPosition(bytes[f], steps_count[f]) : bytes[f];
         }
     }
-    // The output resolution and the preset re-create the scene targets and the upscaler (a few
-    // grey frames): a slider walking through its steps did that at each one. Applied once they
-    // rest for 0.4 s; the other rows at once.
+    // The output resolution, preset and upscaler re-create the scene targets and upscaler
+    // pipelines (a few frames): a slider walking through its steps did that at each one. Applied
+    // once they rest for 0.4 s; the other rows at once.
     using Clock = std::chrono::steady_clock;
-    static int resting[2] = {-1, -1};
+    static int resting[3] = {-1, -1, -1};
     static Clock::time_point rested_since{};
     const auto now = Clock::now();
-    if (resting[0] != values[OutputRes] || resting[1] != values[Preset]) {
+    if (resting[0] != values[OutputRes] || resting[1] != values[Preset] || resting[2] != values[Upscaler]) {
         resting[0] = values[OutputRes];
         resting[1] = values[Preset];
+        resting[2] = values[Upscaler];
         rested_since = now;
     }
     if (now - rested_since < std::chrono::milliseconds(400)) {
         values[OutputRes] = applied[OutputRes];
         values[Preset] = applied[Preset];
+        values[Upscaler] = applied[Upscaler];
     }
     if (std::memcmp(values, applied, sizeof(values)) == 0) {
         return;
@@ -627,6 +790,7 @@ void Poll() {
         s.sharpness = std::clamp(values[Sharpness], 0, SharpnessSteps - 1) * SharpnessStep;
     }
     s.show_fps = values[ShowFps] != 0;
+    s.frame_generation = values[FrameGen] != 0;
     s.model_lod = LodValues[std::clamp(values[ModelLod], 0, 3)];
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         s.effects[e] = values[FirstEffect + e] != 0;

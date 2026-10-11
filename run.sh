@@ -91,10 +91,13 @@ if [[ -z ${BB_FPS:-} && -f ~/.config/bbport-launcher/settings.json ]]; then
     [[ -n $saved_fps ]] && BB_FPS=$saved_fps
 fi
 if [[ -z ${BB_FPS_LIMIT:-} && -f ~/.config/bbport-launcher/settings.json ]]; then
-    saved_limit=$(python3 -c "import json; print(json.load(open('$HOME/.config/bbport-launcher/settings.json')).get('fps_limit', 0))" 2>/dev/null || true)
-    [[ -n $saved_limit && $saved_limit -gt 0 ]] && export BB_FPS_LIMIT=$saved_limit
+    saved_limit=$(python3 -c "import json; print(json.load(open('$HOME/.config/bbport-launcher/settings.json')).get('fps_limit', ''))" 2>/dev/null || true)
+    [[ -n $saved_limit ]] && export BB_FPS_LIMIT=$saved_limit
 fi
 fps=${BB_FPS:-uncap}
+if [[ $fps == 30 ]]; then
+    export BB_FPS_LIMIT=${BB_FPS_LIMIT:-30}
+fi
 # bbport.ini output_res other than 1080p (720p for the Steam Deck, 1440p, 2160p): the whole game
 # renders at the preset's size of the output (a patch), the upscaler fills the output, the UI is
 # drawn at the output size. Preset and output changes need a restart.
@@ -215,7 +218,7 @@ export BB_READBACK_LINEAR=${BB_READBACK_LINEAR:-0}
 # Persistent shader cache sizing
 export MESA_SHADER_CACHE_MAX_SIZE=${MESA_SHADER_CACHE_MAX_SIZE:-4G}
 if [[ -z ${BB_VBLANK_HZ:-} ]]; then
-    case $fps in uncap) export BB_VBLANK_HZ=480 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
+    case $fps in uncap|30) export BB_VBLANK_HZ=480 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi
 # FSR 4: faster post passes next to the downloaded ones (incremental; tools/fsr4_optimize.sh).
 if [[ -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then

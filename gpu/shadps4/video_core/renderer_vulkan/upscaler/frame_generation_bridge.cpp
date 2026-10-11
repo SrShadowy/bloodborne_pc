@@ -17,7 +17,9 @@ void FrameGenerationBridge::Destroy() {
     if (frame_generation) {
         frame_generation->Destroy();
     }
-    is_prepared = false;
+    for (auto& p : is_prepared) {
+        p.store(false, std::memory_order_release);
+    }
 }
 
 void FrameGenerationBridge::SetDisplayInfo(u32 display_w, u32 display_h, vk::Format display_format) {
@@ -36,21 +38,22 @@ bool FrameGenerationBridge::Prepare(vk::CommandBuffer cmdbuf, vk::Image scene_im
                                     vk::Format depth_format, vk::Image motion_image,
                                     vk::ImageView motion_view, CameraMotion& camera_motion,
                                     float frame_ms, bool reset, u64 frame_id) {
+    const u32 slot = static_cast<u32>(frame_id % FrameGenerationManager::FG_RING_SIZE);
     if (!frame_generation || !BbSettings::Get().frame_generation.load()) {
-        is_prepared = false;
+        is_prepared[slot].store(false, std::memory_order_release);
         return false;
     }
 
     const u32 max_rw = std::min(std::max(render_w, 1u), disp_w);
     const u32 max_rh = std::min(std::max(render_h, 1u), disp_h);
     if (!frame_generation->Initialize(max_rw, max_rh, disp_w, disp_h, disp_format, disp_format)) {
-        is_prepared = false;
+        is_prepared[slot].store(false, std::memory_order_release);
         return false;
     }
 
-    const vk::Image hudless = frame_generation->GetSourceImage();
+    const vk::Image hudless = frame_generation->GetSourceImage(slot);
     if (!hudless || !scene_image) {
-        is_prepared = false;
+        is_prepared[slot].store(false, std::memory_order_release);
         return false;
     }
 
@@ -127,7 +130,7 @@ bool FrameGenerationBridge::Prepare(vk::CommandBuffer cmdbuf, vk::Image scene_im
     prep.motion_image = motion_image;
     prep.motion_view = motion_view;
     prep.interpolation_source_image = hudless;
-    prep.interpolation_source_view = frame_generation->GetSourceView();
+    prep.interpolation_source_view = frame_generation->GetSourceView(slot);
     prep.render_w = render_w;
     prep.render_h = render_h;
     camera_motion.GetJitter(prep.jitter_x, prep.jitter_y);
@@ -141,19 +144,22 @@ bool FrameGenerationBridge::Prepare(vk::CommandBuffer cmdbuf, vk::Image scene_im
     prep.frame_id = frame_id;
     last_frame_id = frame_id;
 
-    is_prepared = frame_generation->RecordPrepare(prep);
-    return is_prepared;
+    const bool ok = frame_generation->RecordPrepare(prep);
+    is_prepared[slot].store(ok, std::memory_order_release);
+    return ok;
 }
 
 bool FrameGenerationBridge::RecordDispatch(vk::CommandBuffer cmdbuf, vk::Image current_color,
                                            u32 display_w, u32 display_h, float frame_ms,
-                                           CameraMotion& camera_motion, bool reset) {
-    if (!frame_generation || !frame_generation->IsActive() || !is_prepared) {
+                                           CameraMotion& camera_motion, bool reset, u64 frame_id) {
+    const u64 fid = frame_id ? frame_id : last_frame_id;
+    const u32 slot = static_cast<u32>(fid % FrameGenerationManager::FG_RING_SIZE);
+    if (!frame_generation || !frame_generation->IsActive() || !is_prepared[slot].load(std::memory_order_acquire)) {
         return false;
     }
 
     const auto all = vk::PipelineStageFlagBits2::eAllCommands;
-    const vk::Image output = frame_generation->GetInterpolatedImage();
+    const vk::Image output = frame_generation->GetInterpolatedImage(slot);
 
     const vk::ImageMemoryBarrier2 pre_barrier{
         .srcStageMask = all,
@@ -173,7 +179,7 @@ bool FrameGenerationBridge::RecordDispatch(vk::CommandBuffer cmdbuf, vk::Image c
     FrameGenerationManager::DispatchInputs disp{};
     disp.cmdbuf = cmdbuf;
     disp.current_color_image = current_color;
-    disp.hudless_color_image = frame_generation->GetSourceImage();
+    disp.hudless_color_image = frame_generation->GetSourceImage(slot);
     disp.output_image = output;
     disp.display_w = display_w;
     disp.display_h = display_h;
@@ -182,10 +188,10 @@ bool FrameGenerationBridge::RecordDispatch(vk::CommandBuffer cmdbuf, vk::Image c
     disp.far_plane = camera_motion.Far();
     disp.fov_radians = camera_motion.VerticalFov();
     disp.reset = reset;
-    disp.frame_id = last_frame_id;
+    disp.frame_id = fid;
 
     const bool ok = frame_generation->RecordDispatch(disp);
-    is_prepared = false;
+    is_prepared[slot].store(false, std::memory_order_release);
 
     const vk::ImageMemoryBarrier2 post_barrier{
         .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,

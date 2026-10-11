@@ -204,5 +204,20 @@
   "4 потока": "4 threads",
   "5 потоков": "5 threads",
   "5 потоков записи (рекомендуется для 12+ ядер)": "5 threads de gravação (recomendado para 12+ núcleos)",
-  "6 потоков": "6 threads"
+  "6 потоков": "6 threads",
+  "Кэш шейдеров": "Cache de shaders",
+  "Очистить все шейдеры": "Limpar todos os shaders",
+  "Очистить кэш шейдеров": "Limpar cache de shaders",
+  "Очистить…": "Limpar…",
+  "Очистка…": "Limpando…",
+  "Открыть папку кэша": "Abrir pasta de cache",
+  "Очистка шейдеров и конвейеров полезна при графических артефактах или ошибках освещения": "Limpar shaders e pipelines resolve glitches visuais e problemas de iluminação",
+  "Кэш игры: {} файлов ({:.1f} МБ)": "Cache do jogo: {} arquivos ({:.1f} MB)",
+  "Кэш пуст": "Cache vazio",
+  "Нельзя очистить кэш во время работы игры. Закройте игру перед очисткой.": "Não é possível limpar o cache com o jogo aberto. Feche o jogo antes de limpar.",
+  "Удаление кэша шейдеров помогает при графических артефактах и сбоях освещения. При следующем запуске игра скомпилирует их заново.\n\nВыберите вариант очистки:": "Limpar o cache de shaders ajuda a corrigir artefatos visuais e problemas de iluminação. Na próxima inicialização, o jogo os recompilará.\n\nEscolha o que deseja limpar:",
+  "Только кэш игры": "Apenas do jogo",
+  "Полная (+ Драйвер GPU)": "Completo (+ Driver GPU)",
+  "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)": "Cache de shaders limpo com sucesso: {} arquivos ({:.1f} MB)",
+  "Кэш шейдеров уже пуст": "O cache de shaders já está vazio"
 }

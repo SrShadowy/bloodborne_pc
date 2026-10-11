@@ -204,5 +204,20 @@
   "4 потока": "4 threads",
   "5 потоков": "5 threads",
   "5 потоков записи (рекомендуется для 12+ ядер)": "5 recording threads (recommended for 12+ cores)",
-  "6 потоков": "6 threads"
+  "6 потоков": "6 threads",
+  "Кэш шейдеров": "Shader Cache",
+  "Очистить все шейдеры": "Clear all shaders",
+  "Очистить кэш шейдеров": "Clear shader cache",
+  "Очистить…": "Clear…",
+  "Очистка…": "Clearing…",
+  "Открыть папку кэша": "Open cache folder",
+  "Очистка шейдеров и конвейеров полезна при графических артефактах или ошибках освещения": "Clearing shaders and pipelines is useful for graphical glitches or lighting issues",
+  "Кэш игры: {} файлов ({:.1f} МБ)": "Game cache: {} files ({:.1f} MB)",
+  "Кэш пуст": "Cache is empty",
+  "Нельзя очистить кэш во время работы игры. Закройте игру перед очисткой.": "Cannot clear cache while the game is running. Close the game before clearing.",
+  "Удаление кэша шейдеров помогает при графических артефактах и сбоях освещения. При следующем запуске игра скомпилирует их заново.\n\nВыберите вариант очистки:": "Clearing shader cache helps with graphical artifacts and lighting glitches. The game will recompile them on next launch.\n\nChoose what to clear:",
+  "Только кэш игры": "Game cache only",
+  "Полная (+ Драйвер GPU)": "Full (+ GPU driver)",
+  "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)": "Shader cache cleared: {} files ({:.1f} MB)",
+  "Кэш шейдеров уже пуст": "Shader cache is already empty"
 }

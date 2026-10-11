@@ -99,7 +99,7 @@ public:
     bool RecordFrameGenDispatch(vk::CommandBuffer cmdbuf, vk::Image current_color,
                                 u32 display_w, u32 display_h, float frame_ms, u64 frame_id) {
         return fg_bridge.RecordDispatch(cmdbuf, current_color, display_w, display_h, frame_ms,
-                                        camera_motion, reset);
+                                        camera_motion, reset, frame_id);
     }
 
 private:

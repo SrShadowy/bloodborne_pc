@@ -38,6 +38,7 @@
 #include "bbport_settings.h"
 #include "game_profile.h"
 #include "bbport_toggles.h"
+#include "bbport_shader_tracker.h"
 
 namespace Vulkan {
 
@@ -434,11 +435,15 @@ std::atomic<u32> g_bb_compiles;
 namespace {
 struct CompileTimer {
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    CompileTimer() {
+        BbShaderTracker::OnCompileStart();
+    }
     ~CompileTimer() {
         g_bb_compile_ns += u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                    std::chrono::steady_clock::now() - start)
                                    .count());
         ++g_bb_compiles;
+        BbShaderTracker::OnCompileEnd();
     }
 };
 } // namespace
@@ -579,10 +584,10 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         job->modules = sel.modules;
         pending_graphics.emplace(sel.graphics_key, job);
         ++async_started;
-        ++g_bb_compiles;
         compiler->Submit([this, job, key = sel.graphics_key, infos = sel.infos,
                           runtime_infos = sel.runtime_infos, fetch = sel.fetch_shader,
                           modules = sel.modules]() mutable {
+            CompileTimer timer;
             GraphicsPipeline::SerializationSupport sdata{};
             auto pipeline = std::make_unique<GraphicsPipeline>(
                 instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,

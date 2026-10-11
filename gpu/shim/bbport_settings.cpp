@@ -104,6 +104,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mouse_invert_x = i != 0;
     } else if (key == "mouse_capture") {
         v.mouse_capture = i != 0;
+    } else if (key == "fps_limit") {
+        v.fps_limit = std::max(0, i);
     } else {
         for (int e = 0; e < EffectCount; ++e) {
             if (key == Effects[e].key) {
@@ -180,6 +182,7 @@ void Load() {
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
         {"BB_DRAW_PIPE", "draw_pipe"},              {"BB_FRAME_GEN", "frame_generation"},
+        {"BB_FPS_LIMIT", "fps_limit"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {

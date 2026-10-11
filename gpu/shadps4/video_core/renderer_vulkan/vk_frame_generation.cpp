@@ -14,6 +14,9 @@ namespace Vulkan {
 
 FrameGenerationManager::FrameGenerationManager(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
+    for (auto& flag : has_interpolated_frame) {
+        flag.store(false, std::memory_order_relaxed);
+    }
     FfxVkPortableDeviceCapabilities caps{};
     caps.structSize = sizeof(caps);
     if (ffxVkPortableQueryDeviceCapabilities(instance.GetPhysicalDevice(), &caps) == FFX_VK_PORTABLE_OK) {
@@ -124,12 +127,15 @@ bool FrameGenerationManager::Initialize(u32 max_render_w, u32 max_render_h, u32 
             .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         }));
     };
-    make_res(interpolated_image, interpolated_view, output_format,
-             vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
-                 vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst);
-    make_res(hudless_source_image, hudless_source_view, source_format,
-             vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
-                 vk::ImageUsageFlagBits::eTransferSrc);
+    for (u32 i = 0; i < FG_RING_SIZE; ++i) {
+        make_res(interpolated_image[i], interpolated_view[i], output_format,
+                 vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                     vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst);
+        make_res(hudless_source_image[i], hudless_source_view[i], source_format,
+                 vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
+                     vk::ImageUsageFlagBits::eTransferSrc);
+        has_interpolated_frame[i].store(false, std::memory_order_release);
+    }
 
     current_max_render_w = max_render_w;
     current_max_render_h = max_render_h;
@@ -142,8 +148,8 @@ bool FrameGenerationManager::Initialize(u32 max_render_w, u32 max_render_h, u32 
     prepared = false;
     problem = nullptr;
     BbSettings::Get().frame_generation_problem.store(nullptr);
-    std::printf("FrameGen: Initialized context (%ux%u -> display %ux%u)\n",
-                max_render_w, max_render_h, display_w, display_h);
+    std::printf("FrameGen: Initialized context (%ux%u -> display %ux%u, ring size %u)\n",
+                max_render_w, max_render_h, display_w, display_h, FG_RING_SIZE);
     return true;
 }
 
@@ -154,12 +160,14 @@ void FrameGenerationManager::Destroy() {
         context = nullptr;
     }
     create_info.reset();
-    interpolated_view.reset();
-    interpolated_image = VideoCore::UniqueImage{};
-    hudless_source_view.reset();
-    hudless_source_image = VideoCore::UniqueImage{};
+    for (u32 i = 0; i < FG_RING_SIZE; ++i) {
+        interpolated_view[i].reset();
+        interpolated_image[i] = VideoCore::UniqueImage{};
+        hudless_source_view[i].reset();
+        hudless_source_image[i] = VideoCore::UniqueImage{};
+        has_interpolated_frame[i].store(false, std::memory_order_release);
+    }
     prepared = false;
-    has_interpolated_frame.store(false, std::memory_order_release);
 }
 
 bool FrameGenerationManager::RecordPrepare(const PrepareInputs& in) {
@@ -168,8 +176,9 @@ bool FrameGenerationManager::RecordPrepare(const PrepareInputs& in) {
         return false;
     }
 
+    const u32 slot = static_cast<u32>(in.frame_id % FG_RING_SIZE);
     const vk::Image source = in.interpolation_source_image ? in.interpolation_source_image
-                                                           : vk::Image(hudless_source_image);
+                                                           : vk::Image(hudless_source_image[slot]);
     const auto prep = BuildPrepareInfo(in, needs_reset || in.reset);
     FfxVkPortableImage interp_source = MakeFgImage(
         source, current_source_format, current_display_w, current_display_h,
@@ -194,18 +203,23 @@ bool FrameGenerationManager::RecordPrepare(const PrepareInputs& in) {
         return false;
     }
     prepared = true;
+    last_prepared_slot.store(slot, std::memory_order_release);
     return true;
 }
 
 bool FrameGenerationManager::RecordDispatch(const DispatchInputs& in) {
+    const u32 slot = static_cast<u32>(in.frame_id % FG_RING_SIZE);
     if (!context || failed || !prepared) {
-        has_interpolated_frame.store(false, std::memory_order_release);
+        has_interpolated_frame[slot].store(false, std::memory_order_release);
         return false;
     }
 
     DispatchInputs adjusted = in;
-    if (!adjusted.hudless_color_image && hudless_source_image) {
-        adjusted.hudless_color_image = vk::Image(hudless_source_image);
+    if (!adjusted.hudless_color_image && hudless_source_image[slot]) {
+        adjusted.hudless_color_image = vk::Image(hudless_source_image[slot]);
+    }
+    if (!adjusted.output_image && interpolated_image[slot]) {
+        adjusted.output_image = vk::Image(interpolated_image[slot]);
     }
 
     const bool is_reset = needs_reset || in.reset;
@@ -217,7 +231,7 @@ bool FrameGenerationManager::RecordDispatch(const DispatchInputs& in) {
             std::printf("FrameGen: Dispatch validation failed (issues: 0x%llx: %s)\n",
                         static_cast<unsigned long long>(issues),
                         ffxVkPortableValidationIssueName(issues));
-            has_interpolated_frame.store(false, std::memory_order_release);
+            has_interpolated_frame[slot].store(false, std::memory_order_release);
             prepared = false;
             return false;
         }
@@ -226,12 +240,13 @@ bool FrameGenerationManager::RecordDispatch(const DispatchInputs& in) {
     const auto res = ffxVkPortableFrameGenerationContextRecordDispatch(context, &disp);
     if (res != FFX_VK_PORTABLE_OK) {
         std::printf("FrameGen: RecordDispatch failed (%d)\n", static_cast<int>(res));
-        has_interpolated_frame.store(false, std::memory_order_release);
+        has_interpolated_frame[slot].store(false, std::memory_order_release);
         prepared = false;
         return false;
     }
     prepared = false;
-    has_interpolated_frame.store(!is_reset, std::memory_order_release);
+    last_dispatched_slot.store(slot, std::memory_order_release);
+    has_interpolated_frame[slot].store(!is_reset, std::memory_order_release);
     needs_reset = false;
     return true;
 }

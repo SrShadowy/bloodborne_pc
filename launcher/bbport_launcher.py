@@ -9,18 +9,13 @@ Russian, English, Brazilian Portuguese and Simplified Chinese (bbport_i18n: the 
 text is the key).
 """
 
-import json
-import shutil
 import os
-import re
-import signal
 import subprocess
 import threading
 import sys
-import time
 from pathlib import Path
 from bbport_assets import fsr411_problem
-from bbport_i18n import language, set_language, tr
+from bbport_i18n import set_language, tr
 
 import gi
 
@@ -31,34 +26,42 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 sys.path.insert(0, str(PORT_DIR / 'tools'))
-from mods import discover as discover_mods  # noqa: E402
 import game_check  # noqa: E402
 import online  # noqa: E402  (the online module: addresses and the connection test)
-from patches import external_patches  # noqa: E402
 import fsr4_wizard  # noqa: E402
 from bbport_config import (
-    PORT_DIR, PACKAGED, DATA_DIR, CONFIG_DIR, CONFIG_FILE, MAX_LOG_LINES,
+    PORT_DIR, PACKAGED, DATA_DIR, CONFIG_FILE,
     PC_MODEL_SUBTITLE, PACKAGE_ONLY_ENV,
     UI_LANGUAGES, UPSCALERS, PRESETS, OUTPUT_RES, EFFECTS, MODEL_LOD,
     FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
-    READBACKS, PREUPLOAD, VK_RECORD_THREADS, DEFAULTS, INI_DEFAULTS, CONTROLS,
-    MEMORY_MODELS,
+    READBACKS, PREUPLOAD, VK_RECORD_THREADS, MEMORY_MODELS,
     NGX_PREFIX, DLSS_SDK_URL, binaries_dir, ngx_libraries, online_module,
-    load_settings, save_settings, ini_path, load_ini, save_ini, patches_dir,
+    load_settings, save_settings, load_ini, save_ini,
     game_environment,
 )
 from bbport_fsr_builder import (
     FSR4CAP_DIR, FSR411_BUILD_ERRORS, Fsr411Manager, fsr411_dir, fsr411_build_command,
 )
-from bbport_devices import (
-    connected_gamepads, connected_displays, format_mouse_btn,
-)
 from bbport_ui_helpers import (
-    flat_button, open_folder, combo_row, combo_value, FolderList,
+    flat_button, open_folder, combo_row, combo_value,
 )
+from bbport_cache import CacheMixin
+from bbport_controls import ControlsMixin
+from bbport_mods import ModsMixin
+from bbport_dlss import DlssMixin
+from bbport_log import LogMixin
+from bbport_game_runner import GameRunnerMixin
 
 
-class LauncherWindow(Adw.ApplicationWindow):
+class LauncherWindow(
+    Adw.ApplicationWindow,
+    ControlsMixin,
+    ModsMixin,
+    CacheMixin,
+    DlssMixin,
+    GameRunnerMixin,
+    LogMixin,
+):
     def __init__(self, app):
         super().__init__(application=app, title="Bloodborne")
         self.set_default_size(980, 780)
@@ -322,7 +325,6 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.fullscreen_row = Adw.SwitchRow(title=tr("Полноэкранный режим"),
                                             active=self.settings["fullscreen"])
         screen.add(self.fullscreen_row)
-        # Issue #69: the window (and fullscreen) went to the monitor SDL calls primary.
         self.display_row = Adw.ComboRow(title=tr("Монитор"))
         self.display_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
                                                 lambda _button: self.fill_displays()))
@@ -341,7 +343,6 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.upscaler_row = combo_row(tr("Апскейлер"), None, UPSCALERS, self.ini["upscaler"])
         self.upscaler_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.upscaler_row)
-        # DLSS: NVIDIA's library, chosen like the FSR 4.1.1 DLL (the package may bring one).
         self.dlss_row = Adw.ActionRow(title=tr("DLSS: библиотека NVIDIA"))
         self.dlss_row.add_suffix(flat_button("document-open-symbolic", tr("Выбрать файл…"),
                                              lambda _b: self.choose_ngx()))
@@ -414,13 +415,29 @@ class LauncherWindow(Adw.ApplicationWindow):
                 row.set_subtitle(tr("Отражения в лужах"))
             self.effect_rows[key] = row
             effects.add(row)
-        # The title's "play online / play offline": the port has no PSN.
         self.skip_network_row = Adw.SwitchRow(
             title=tr("Пропускать выбор «по сети / вне сети»"),
             subtitle=tr("Игра сразу открывает главное меню в режиме вне сети (патч игры)"),
             active=self.settings.get("skip_network_choice", True))
         effects.add(self.skip_network_row)
         page.add(effects)
+
+        cache_group = Adw.PreferencesGroup(
+            title=tr("Кэш шейдеров"),
+            description=tr("Очистка шейдеров и конвейеров полезна при графических артефактах или ошибках освещения"))
+        self.clear_cache_row = Adw.ActionRow(
+            title=tr("Очистить все шейдеры"),
+            subtitle=tr("Вычисляет размер…"))
+        self.clear_cache_row.add_suffix(flat_button("system-file-manager-symbolic",
+                                                    tr("Открыть папку кэша"),
+                                                    lambda _b: open_folder(self, self.user_dir() / "cache")))
+        self.clear_cache_button = Gtk.Button(valign=Gtk.Align.CENTER, label=tr("Очистить…"))
+        self.clear_cache_button.add_css_class("destructive-action")
+        self.clear_cache_button.connect("clicked", self.on_clear_shaders)
+        self.clear_cache_row.add_suffix(self.clear_cache_button)
+        cache_group.add(self.clear_cache_row)
+        page.add(cache_group)
+        self.update_cache_status()
 
         return page
 
@@ -448,51 +465,51 @@ class LauncherWindow(Adw.ApplicationWindow):
         perf.add(self.pipe_row)
         self.record_threads_row = combo_row(
             tr("Потоки записи Vulkan"),
-            tr("Параллельная запись командных буферов Vulkan (до 5 потоков на 20+ поточных CPU)"),
+            tr("Параллельная запись команд; ускоряет рендеринг при упоре в CPU"),
             VK_RECORD_THREADS, self.settings.get("vk_record_threads", "auto"))
         perf.add(self.record_threads_row)
         page.add(perf)
 
-        mem = Adw.PreferencesGroup(title=tr("Память и VRAM"))
-        self.readbacks_row = combo_row(tr("Чтение данных GPU процессором"), None, READBACKS,
-                                       self.settings["readbacks"])
-        mem.add(self.readbacks_row)
+        vram = Adw.PreferencesGroup(title=tr("Память и VRAM"))
         self.preupload_row = combo_row(
             tr("Фоновая загрузка в видеопамять"),
             tr("Меньше рывков при подгрузке зон"), PREUPLOAD,
-            self.settings.get("preupload", ""))
-        mem.add(self.preupload_row)
-        page.add(mem)
+            self.settings["preupload"])
+        vram.add(self.preupload_row)
+        self.readbacks_row = combo_row(
+            tr("Чтение данных GPU процессором"),
+            tr("Для поиска сбоев: чтение текстур обратно в память"), READBACKS,
+            self.settings["readbacks"])
+        vram.add(self.readbacks_row)
+        page.add(vram)
 
         dev = Adw.PreferencesGroup(title=tr("Для разработчика"))
         self.mangohud_row = Adw.SwitchRow(title="MangoHud", active=self.settings["mangohud"])
         dev.add(self.mangohud_row)
+        self.stats_row = Adw.SwitchRow(title=tr("Статистика кадров в журнале"),
+                                       active=self.settings["frame_stats"])
+        dev.add(self.stats_row)
         self.save_log_row = Adw.SwitchRow(
             title=tr("Сохранять журнал и статистику в файл"),
             subtitle=tr("В папку logs в каталоге данных: для разбора рывков и вылетов"),
-            active=self.settings.get("save_log", False))
+            active=self.settings["save_log"])
         dev.add(self.save_log_row)
         self.crash_diag_row = Adw.SwitchRow(
             title=tr("Диагностика вылетов"),
             subtitle=tr("Проверяет кучу игры и записывает записи в её память; немного медленнее"),
-            active=self.settings.get("crash_diag", False))
+            active=self.settings["crash_diag"])
         dev.add(self.crash_diag_row)
         self.as_0_3_row = Adw.SwitchRow(
             title=tr("Синхронизация как в 0.3"),
             subtitle=tr("Для поиска регрессий: старая модель памяти и ожидания копий как в релизе 0.3"),
-            active=self.settings.get("as_0_3", False))
+            active=self.settings["as_0_3"])
         dev.add(self.as_0_3_row)
-        self.stats_row = Adw.SwitchRow(title=tr("Статистика кадров в журнале"),
-                                       subtitle="BB_FRAME_STATS",
-                                       active=self.settings["frame_stats"])
-        dev.add(self.stats_row)
         self.profile_row = Adw.SwitchRow(title=tr("Профиль GPU в журнале"),
-                                         subtitle="BB_GPU_PROFILE",
                                          active=self.settings["gpu_profile"])
         dev.add(self.profile_row)
-        self.validation_row = Adw.SwitchRow(title=tr("Слои валидации Vulkan"),
-                                            subtitle=tr("Сильно замедляет"),
-                                            active=self.settings["vk_validation"])
+        self.validation_row = Adw.SwitchRow(
+            title=tr("Слои валидации Vulkan"),
+            subtitle=tr("Сильно замедляет"), active=self.settings["vk_validation"])
         dev.add(self.validation_row)
         self.extra_row = Adw.EntryRow(title=tr("Доп. переменные (ИМЯ=значение через пробел)"),
                                       text=self.settings["extra_env"])
@@ -501,159 +518,19 @@ class LauncherWindow(Adw.ApplicationWindow):
 
         return page
 
-    # --- Controls page -------------------------------------------------------------------
+    # --- UI Helpers & Status -------------------------------------------------------------
 
-    def build_controls_page(self):
-        page = Adw.PreferencesPage()
-
-        # --- Keyboard & Mouse (Combined) -------------------------------------------------
-        kbm_group = Adw.PreferencesGroup(
-            title=tr("Клавиатура и мышь"),
-            description=tr("Управление камерой аналоговым движением мыши, как правым стиком. Нажмите иконку клавиатуры или мыши для назначения."))
-
-        self.mouse_sens_row = Adw.SpinRow.new_with_range(0.1, 5.0, 0.1)
-        self.mouse_sens_row.set_title(tr("Чувствительность камеры (мышь)"))
-        self.mouse_sens_row.set_subtitle(tr("Скорость поворота камеры аналоговым движением мыши"))
-        try:
-            cur_sens = float(self.ini.get("mouse_sensitivity", "1.00") or 1.0)
-        except (ValueError, TypeError):
-            cur_sens = 1.0
-        self.mouse_sens_row.set_value(cur_sens)
-        self.mouse_sens_row.connect("notify::value", lambda *_: self.on_mouse_setting_changed())
-        kbm_group.add(self.mouse_sens_row)
-
-        self.mouse_inv_y_row = Adw.SwitchRow(title=tr("Инвертировать по вертикали (Y)"),
-                                             active=self.ini.get("mouse_invert_y") == "1")
-        self.mouse_inv_y_row.connect("notify::active", lambda *_: self.on_mouse_setting_changed())
-        kbm_group.add(self.mouse_inv_y_row)
-
-        self.mouse_inv_x_row = Adw.SwitchRow(title=tr("Инвертировать по горизонтали (X)"),
-                                             active=self.ini.get("mouse_invert_x") == "1")
-        self.mouse_inv_x_row.connect("notify::active", lambda *_: self.on_mouse_setting_changed())
-        kbm_group.add(self.mouse_inv_x_row)
-
-        self.mouse_capture_row = Adw.SwitchRow(
-            title=tr("Захват курсора в игре"),
-            subtitle=tr("Блокирует курсор в окне во время игры; Insert или F10 освобождают"),
-            active=self.ini.get("mouse_capture", "1") != "0")
-        self.mouse_capture_row.connect("notify::active", lambda *_: self.on_mouse_setting_changed())
-        kbm_group.add(self.mouse_capture_row)
-
-        self.kbm_expander = Adw.ExpanderRow(
-            title=tr("Назначение клавиш и мыши"),
-            subtitle=tr("Клавиатура и мышь объединены; применяется при запуске игры"))
-        kbm_expander = self.kbm_expander
-        self.kbm_rows = {}
-        self.control_rows = {}
-        for name, label, key_default, pad_default, mouse_default in CONTROLS:
-            if key_default is None and mouse_default is None:
-                continue
-            row = Adw.ActionRow(title=tr(label))
-            row.add_suffix(flat_button("input-keyboard-symbolic", tr("Назначить клавишу"),
-                                       lambda _b, n=name: self.assign_control("key", n)))
-            if not name.startswith("move_"):
-                row.add_suffix(flat_button("input-mouse-symbolic", tr("Назначить кнопку мыши"),
-                                           lambda _b, n=name: self.assign_control("mouse", n)))
-            row.add_suffix(flat_button("edit-undo-symbolic", tr("Сбросить"),
-                                       lambda _b, n=name: self.reset_kbm_control(n)))
-            kbm_expander.add_row(row)
-            self.kbm_rows[name] = (row, key_default, mouse_default)
-            self.control_rows[("key", name)] = (row, key_default)
-            self.control_rows[("mouse", name)] = (row, mouse_default)
-            self.show_kbm_control(name)
-        kbm_group.add(kbm_expander)
-        page.add(kbm_group)
-
-        # --- Gamepad ---------------------------------------------------------------------
-        gamepad_group = Adw.PreferencesGroup(title=tr("Геймпад"))
-        self.gamepad_row = Adw.ComboRow(title=tr("Контроллер"))
-        self.gamepad_row.connect("notify::selected", lambda *_: self.show_gamepad())
-        self.gamepad_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
-                                                lambda _button: self.fill_gamepads()))
-        self.fill_gamepads()
-        gamepad_group.add(self.gamepad_row)
-
-        self.pad_expander = Adw.ExpanderRow(
-            title=tr("Назначение кнопок геймпада"),
-            subtitle=tr("Применяется при запуске игры"))
-        pad_expander = self.pad_expander
-        self.pad_rows = {}
-        for name, label, key_default, pad_default, mouse_default in CONTROLS:
-            if pad_default is None:
-                continue
-            row = Adw.ActionRow(title=tr(label))
-            row.add_suffix(flat_button("input-gaming-symbolic", tr("Назначить кнопку"),
-                                       lambda _b, n=name: self.assign_control("pad", n)))
-            row.add_suffix(flat_button("edit-undo-symbolic", tr("Сбросить"),
-                                       lambda _b, n=name: self.set_control("pad", n, None)))
-            pad_expander.add_row(row)
-            self.pad_rows[name] = (row, pad_default)
-            self.control_rows[("pad", name)] = (row, pad_default)
-            self.show_pad_control(name)
-        gamepad_group.add(pad_expander)
-        page.add(gamepad_group)
-
-        return page
-
-    # --- Mods page -----------------------------------------------------------------------
-
-    def build_mods_page(self):
-        page = Adw.PreferencesPage()
-
-        self.mods_group = Adw.PreferencesGroup(
-            title=tr("Моды"), description=tr(
-                "Распакуйте каждый мод в отдельную папку (с dvdroot_ps4 или сразу с chr/, parts/ и т. п.). "
-                "При совпадении файлов побеждает мод ниже в списке. Применяется при запуске."))
-        self.mods_enabled_row = Adw.SwitchRow(title=tr("Загружать моды"),
-                                               active=self.settings["mods_enabled"])
-        self.mods_group.add(self.mods_enabled_row)
-        self.mods_folder_row = Adw.ActionRow(title=tr("Папка модов"))
-        self.mods_folder_row.add_suffix(flat_button("folder-open-symbolic", tr("Выбрать папку модов"),
-                                                    self.on_choose_mods))
-        self.mods_folder_row.add_suffix(flat_button("system-file-manager-symbolic", tr("Открыть папку модов"),
-                                                    lambda _b: open_folder(self, self.mods_dir())))
-        self.mods_folder_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
-                                                    self.on_refresh_mods))
-        self.mods_group.add(self.mods_folder_row)
-        self.mod_list = FolderList(self.mods_group)
-        self.refresh_mods()
-        page.add(self.mods_group)
-
-        self.patches_group = Adw.PreferencesGroup(
-            title=tr("Сторонние патчи"),
-            description=tr("XML-патчи для версии 01.09 из папки патчей. "
-                           "Применяются при запуске."))
-        self.patches_folder_row = Adw.ActionRow(title=tr("Папка патчей"))
-        self.patches_folder_row.add_suffix(flat_button("folder-open-symbolic", tr("Выбрать папку патчей"),
-                                                       self.on_choose_patches))
-        self.patches_folder_row.add_suffix(flat_button(
-            "system-file-manager-symbolic", tr("Открыть папку патчей"),
-            lambda _b: open_folder(self, patches_dir(self.settings))))
-        self.patches_folder_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
-                                                       self.on_refresh_patches))
-        self.patches_group.add(self.patches_folder_row)
-        self.patch_list = FolderList(self.patches_group)
-        self.refresh_patches()
-        page.add(self.patches_group)
-
-        return page
-
-    def on_ui_language(self, row, _param):
-        choice = combo_value(row)
-        if choice == self.settings.get("ui_language", ""):
-            return
-        self.store()
-        self.settings["ui_language"] = choice
-        save_settings(self.settings)
-        if self.process:
-            # The log keeps streaming into the current page; rebuild on the next start.
+    def on_ui_language(self, _row, _pspec):
+        choice = combo_value(self.ui_language_row)
+        if choice != self.settings.get("ui_language"):
+            self.settings["ui_language"] = choice
             set_language(choice)
-            self.toasts.add_toast(Adw.Toast(
-                title=tr("Применится после перезапуска лаунчера, пока игра запущена")))
-            return
-        set_language(choice)
-        # After this handler returns: the row that emitted the signal is replaced.
-        GLib.idle_add(lambda: self.build() and False)
+            self.store()
+            if self.process:
+                self.toasts.add_toast(Adw.Toast(
+                    title=tr("Применится после перезапуска лаунчера, пока игра запущена")))
+                return
+            GLib.idle_add(lambda: self.build() and False)
 
     def game_dir(self):
         return Path(self.settings["game_dir"]).expanduser()
@@ -691,12 +568,16 @@ class LauncherWindow(Adw.ApplicationWindow):
         def chosen(path):
             self.settings["user_dir"] = path
             self.update_user_status()
+            if hasattr(self, "update_cache_status"):
+                self.update_cache_status()
             self.store()
         self.choose_folder(tr("Папка сохранений"), self.user_dir(), chosen)
 
     def on_reset_user(self, _button):
         self.settings["user_dir"] = ""
         self.update_user_status()
+        if hasattr(self, "update_cache_status"):
+            self.update_cache_status()
         self.store()
 
     def update_upscaler_status(self):
@@ -714,8 +595,6 @@ class LauncherWindow(Adw.ApplicationWindow):
             else:
                 hint = tr("{}. Соберите FSR 4.1.1 из своей DLL кнопкой «Выбрать DLL…» ниже").format(problem)
         elif value == "dlss":
-            # The game looks for the bridge and NVIDIA's library next to bb-probe (vk_dlss.cpp); the
-            # AppImage has neither (NVIDIA's DLSS SDK is not bundled): DLSS then falls back to FSR 3.1.
             binaries = PORT_DIR / ("bin" if PACKAGED else "out")
             found = (binaries / "libbbport_dlss.so").is_file() and bool(
                 ngx_libraries(self.user_dir() / "dlss") or ngx_libraries(binaries))
@@ -771,137 +650,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             self.settings["game_dir"] = path
             self.update_game_status()
             self.store()
-        self.choose_folder(tr("Папка игры (с eboot.bin)"), self.game_dir(), chosen)
-
-    def show_kbm_control(self, name):
-        if not hasattr(self, "kbm_rows") or name not in self.kbm_rows:
-            return
-        row, key_default, mouse_default = self.kbm_rows[name]
-        key_val = self.ini.get(f"key.{name}")
-        mouse_val = self.ini.get(f"mouse.{name}")
-
-        key_str = key_val if key_val is not None else key_default
-        mouse_str = mouse_val if mouse_val is not None else mouse_default
-
-        key_display = key_str if key_str else tr("не назначено")
-        mouse_display = format_mouse_btn(mouse_str) if mouse_str else tr("не назначено")
-
-        if name.startswith("move_"):
-            row.set_subtitle(tr("Клавиатура: {}").format(key_display))
-        else:
-            row.set_subtitle(tr("Клавиатура: {} • Мышь: {}").format(key_display, mouse_display))
-
-    def show_pad_control(self, name):
-        if not hasattr(self, "pad_rows") or name not in self.pad_rows:
-            return
-        row, pad_default = self.pad_rows[name]
-        val = self.ini.get(f"pad.{name}")
-        if val is None:
-            row.set_subtitle(tr("{} (по умолчанию)").format(pad_default) if pad_default else tr("не назначено"))
-        else:
-            row.set_subtitle(val or tr("не назначено"))
-
-    def show_control(self, kind, name):
-        if kind in ("key", "mouse"):
-            self.show_kbm_control(name)
-        elif kind == "pad":
-            self.show_pad_control(name)
-        elif hasattr(self, "control_rows") and (kind, name) in self.control_rows:
-            row, default = self.control_rows[(kind, name)]
-            value = self.ini.get(f"{kind}.{name}")
-            if value is None:
-                row.set_subtitle(tr("{} (по умолчанию)").format(default) if default else tr("не назначено"))
-            else:
-                row.set_subtitle(value or tr("не назначено"))
-
-    def reset_kbm_control(self, name):
-        self.ini[f"key.{name}"] = None
-        self.ini[f"mouse.{name}"] = None
-        self.show_kbm_control(name)
-        self.store()
-
-    def set_control(self, kind, name, value):
-        """value: the binding, or None for the default."""
-        self.ini[f"{kind}.{name}"] = value
-        self.show_control(kind, name)
-        self.store()
-
-    def assign_control(self, kind, name):
-        tool = PORT_DIR / ("bin" if PACKAGED else "out") / "bb-gpu-capabilities"
-        try:
-            process = Gio.Subprocess.new([str(tool), "--read-input", kind],
-                                         Gio.SubprocessFlags.STDOUT_PIPE)
-        except GLib.Error as error:
-            self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
-            return
-        if kind in ("key", "mouse") and hasattr(self, "kbm_rows") and name in self.kbm_rows:
-            row = self.kbm_rows[name][0]
-        elif kind == "pad" and hasattr(self, "pad_rows") and name in self.pad_rows:
-            row = self.pad_rows[name][0]
-        elif hasattr(self, "control_rows") and (kind, name) in self.control_rows:
-            row, _default = self.control_rows[(kind, name)]
-        else:
-            return
-
-        if kind == "mouse":
-            prompt = tr("Кликните кнопкой мыши… (Esc — отмена)")
-        elif kind == "key":
-            prompt = tr("Нажмите клавишу на клавиатуре… (Esc — отмена)")
-        else:
-            prompt = tr("Нажмите кнопку на геймпаде… (Esc — отмена)")
-        row.set_subtitle(prompt)
-
-        def done(proc, result):
-            try:
-                _ok, out, _err = proc.communicate_utf8_finish(result)
-            except GLib.Error:
-                out = ""
-            words = (out or "").strip().split(" ", 1)
-            if len(words) == 2 and words[0] == kind:
-                self.set_control(kind, name, words[1])
-            else:
-                self.show_control(kind, name)
-        process.communicate_utf8_async(None, None, done)
-
-    def on_mouse_setting_changed(self):
-        if hasattr(self, "mouse_sens_row"):
-            self.ini["mouse_sensitivity"] = f"{self.mouse_sens_row.get_value():.2f}"
-            self.ini["mouse_invert_y"] = "1" if self.mouse_inv_y_row.get_active() else "0"
-            self.ini["mouse_invert_x"] = "1" if self.mouse_inv_x_row.get_active() else "0"
-            self.ini["mouse_capture"] = "1" if self.mouse_capture_row.get_active() else "0"
-            self.store()
-
-    def fill_gamepads(self):
-        """The controller choices: the first connected one, the connected ones, and the saved
-        choice while it is not connected."""
-        current = self.settings.get("gamepad", "")
-        choices = [(tr("Авто"), "", tr("Первый подключённый"))]
-        choices += [(name, guid, name) for guid, name in connected_gamepads()]
-        if current and current not in [guid for _, guid, _ in choices]:
-            name = self.settings.get("gamepad_name") or current
-            choices.append((tr("{} (не подключён)").format(name), current, name))
-        self.gamepad_row.set_model(Gtk.StringList.new([label for label, _, _ in choices]))
-        self.gamepad_row.values = [guid for _, guid, _ in choices]
-        self.gamepad_row.names = [name for _, _, name in choices]
-        self.gamepad_row.set_selected(self.gamepad_row.values.index(current) if current in self.gamepad_row.values else 0)
-        self.show_gamepad()
-
-    def fill_displays(self):
-        """The monitor choices: the primary one, the connected ones, and the saved choice while it
-        is not connected."""
-        current = self.settings.get("display", "")
-        choices = [(tr("Основной"), "")] + [(label, value) for value, label in connected_displays()]
-        if current and current not in [value for _, value in choices]:
-            choices.append((tr("{} (не подключён)").format(current), current))
-        self.display_row.set_model(Gtk.StringList.new([label for label, _ in choices]))
-        self.display_row.values = [value for _, value in choices]
-        self.display_row.set_selected(self.display_row.values.index(current) if current in self.display_row.values else 0)
-
-    def show_gamepad(self):
-        names = getattr(self.gamepad_row, "names", None)
-        selected = names[self.gamepad_row.get_selected()] if names else ""
-        self.gamepad_row.set_subtitle("\n".join(
-            line for line in (selected, tr("Выбранный берётся, как только подключится")) if line))
+        self.choose_folder(tr("Папка игры (CUSA03173)"), self.game_dir(), chosen)
 
     def store(self):
         s = self.settings
@@ -963,6 +712,7 @@ class LauncherWindow(Adw.ApplicationWindow):
                     "en" if self.settings.get("ui_language") == "en" else self.ini.get("menu_language", "pt")
                 )
             ),
+            "fps_limit": str(s["fps_limit"]),
         })
         save_ini(self.ini, self.ini_lines)
         self.ini, self.ini_lines = load_ini()
@@ -970,118 +720,7 @@ class LauncherWindow(Adw.ApplicationWindow):
     def environment(self):
         return game_environment(self.settings)
 
-    # --- mods ----------------------------------------------------------------------------
-
-    def mods_dir(self):
-        return Path(self.settings.get("mods_dir") or DATA_DIR / "mods").expanduser()
-
-    def save_mod_profile(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        rows = self.mod_list.rows
-        profile = {"order": [name for name, _ in rows],
-                   "disabled": [name for name, row in rows if not row.get_active()]}
-        (DATA_DIR / "mods.json").write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    def refresh_mods(self):
-        self.mod_list.clear()
-        self.mods_folder_row.set_subtitle(str(self.mods_dir()))
-        try:
-            profile = json.loads((DATA_DIR / "mods.json").read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            profile = {}
-        available = discover_mods(self.mods_dir())
-        order = list(dict.fromkeys(n for n in [*profile.get("order", []), *available] if n in available))
-        for name in order:
-            row = Adw.SwitchRow(title=name, active=name not in profile.get("disabled", []))
-            row.add_suffix(flat_button("go-up-symbolic", tr("Загрузить раньше"),
-                                        lambda _b, n=name: self.move_mod(n, -1)))
-            row.add_suffix(flat_button("go-down-symbolic", tr("Загрузить позже"),
-                                        lambda _b, n=name: self.move_mod(n, 1)))
-            self.mod_list.add(name, row)
-        if not order:
-            self.mods_folder_row.set_subtitle(f"{self.mods_dir()} — {tr('Модов нет')}")
-
-    def move_mod(self, name, direction):
-        rows = self.mod_list.rows
-        index = next(i for i, (n, _) in enumerate(rows) if n == name)
-        target = index + direction
-        if 0 <= target < len(rows):
-            rows[index], rows[target] = rows[target], rows[index]
-            self.save_mod_profile()
-            self.refresh_mods()
-
-    def on_refresh_mods(self, _button):
-        self.save_mod_profile()
-        self.refresh_mods()
-
-    def on_choose_mods(self, _button):
-        self.save_mod_profile()
-
-        def chosen(path):
-            self.settings["mods_dir"] = path
-            self.refresh_mods()
-            self.store()
-        self.choose_folder(tr("Папка модов"), self.mods_dir(), chosen)
-
-    # --- third-party patches -------------------------------------------------------------
-
-    def save_patch_profile(self):
-        """patches.json: the switches that differ from each file's isEnabled."""
-        enabled, disabled = [], []
-        for key, row in self.patch_list.rows:
-            if row.get_active() != row.default:
-                (enabled if row.get_active() else disabled).append(key)
-        path = DATA_DIR / "patches.json"
-        try:
-            profile = json.loads(path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            profile = {}
-        # Patches of files not listed now (another folder) keep their choice.
-        shown = {key for key, _ in self.patch_list.rows}
-        profile = {"enabled": sorted({k for k in profile.get("enabled", []) if k not in shown} | set(enabled)),
-                   "disabled": sorted({k for k in profile.get("disabled", []) if k not in shown} | set(disabled))}
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    def refresh_patches(self):
-        self.patch_list.clear()
-        directory = patches_dir(self.settings)
-        try:
-            profile = json.loads((DATA_DIR / "patches.json").read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            profile = {}
-        found = external_patches(directory)
-        for key, _path, meta in found:
-            default = meta.get("isEnabled", "false").lower() == "true"
-            active = key in profile.get("enabled", []) or (default and key not in profile.get("disabled", []))
-            subtitle = key.split("/", 1)[0]
-            if meta.get("Author"):
-                subtitle += " · " + tr("Автор: {}").format(meta.get("Author"))
-            row = Adw.SwitchRow(title=GLib.markup_escape_text(meta.get("Name") or key),
-                                subtitle=GLib.markup_escape_text(subtitle), active=active)
-            if meta.get("Note"):
-                row.set_tooltip_text(meta.get("Note").replace("\\n", "\n"))
-            row.default = default
-            self.patch_list.add(key, row)
-        self.patches_folder_row.set_subtitle(
-            str(directory) if found else f"{directory} — {tr('Патчей нет')}")
-
-    def on_refresh_patches(self, _button):
-        self.save_patch_profile()
-        self.refresh_patches()
-
-    def on_choose_patches(self, _button):
-        self.save_patch_profile()
-
-        def chosen(path):
-            self.settings["patches_dir"] = path
-            self.refresh_patches()
-            self.store()
-        self.choose_folder(tr("Папка патчей"), patches_dir(self.settings), chosen)
-
-    # --- log page ------------------------------------------------------------------------
-
-    # --- online page ---------------------------------------------------------------------
+    # --- Online page ---------------------------------------------------------------------
 
     def build_online_page(self):
         s = self.settings
@@ -1161,7 +800,6 @@ class LauncherWindow(Adw.ApplicationWindow):
 
         def show(results):
             for name, address, ok, detail in results:
-                # Plain text: an error such as "<urlopen error ...>" is not Pango markup.
                 row = Adw.ActionRow(title=GLib.markup_escape_text(f"{names[name]}: {address}"),
                                     subtitle=GLib.markup_escape_text(
                                         tr("доступен") if ok else f'{tr("недоступен")} ({detail})'))
@@ -1177,220 +815,6 @@ class LauncherWindow(Adw.ApplicationWindow):
             GLib.idle_add(show, results)
         threading.Thread(target=work, daemon=True).start()
 
-    def build_log_page(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-
-        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        toolbar.add_css_class("log-toolbar")
-
-        self.log_status_badge = Gtk.Label(label=tr("Игра не запущена"))
-        self.log_status_badge.add_css_class("badge")
-        self.log_status_badge.add_css_class("badge-warning")
-        toolbar.append(self.log_status_badge)
-
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        toolbar.append(spacer)
-
-        copy_btn = Gtk.Button(label=tr("Скопировать"), icon_name="edit-copy-symbolic")
-        copy_btn.add_css_class("flat")
-        copy_btn.connect("clicked", self.on_copy_log)
-        toolbar.append(copy_btn)
-
-        clear_btn = Gtk.Button(label=tr("Очистить"), icon_name="edit-clear-symbolic")
-        clear_btn.add_css_class("flat")
-        clear_btn.connect("clicked", self.on_clear_log)
-        toolbar.append(clear_btn)
-
-        open_logs_btn = Gtk.Button(label=tr("Открыть папку журнала"), icon_name="folder-open-symbolic")
-        open_logs_btn.add_css_class("flat")
-        open_logs_btn.connect("clicked", lambda _b: open_folder(self, DATA_DIR / "logs"))
-        toolbar.append(open_logs_btn)
-
-        self.autoscroll_check = Gtk.CheckButton(label=tr("Автопрокрутка"), active=True)
-        toolbar.append(self.autoscroll_check)
-
-        box.append(toolbar)
-
-        self.log_view = Gtk.TextView(editable=False, monospace=True, cursor_visible=False,
-                                     wrap_mode=Gtk.WrapMode.WORD_CHAR)
-        self.log_view.add_css_class("log-terminal")
-        self.log_view.set_top_margin(10)
-        self.log_view.set_bottom_margin(10)
-        self.log_view.set_left_margin(12)
-        self.log_view.set_right_margin(12)
-        scroller = Gtk.ScrolledWindow(vexpand=True, child=self.log_view)
-        self.log_scroller = scroller
-        box.append(scroller)
-        bar = Gtk.ActionBar()
-        self.export_log_button = Gtk.Button(label=tr("Экспорт журнала…"))
-        self.export_log_button.connect("clicked", self.on_export_log)
-        bar.pack_end(self.export_log_button)
-        self.copy_log_button = Gtk.Button(label=tr("Копировать"))
-        self.copy_log_button.connect("clicked", self.on_copy_log)
-        bar.pack_end(self.copy_log_button)
-        box.append(bar)
-        buffer = self.log_view.get_buffer()
-        buffer.connect("changed", self.on_log_changed)
-        self.on_log_changed(buffer)
-        return box
-
-    def on_log_changed(self, buffer):
-        has_text = buffer.get_char_count() > 0
-        if hasattr(self, "copy_log_button"):
-            self.copy_log_button.set_sensitive(has_text)
-        if hasattr(self, "export_log_button"):
-            self.export_log_button.set_sensitive(has_text)
-
-    def log_text(self):
-        buffer = self.log_view.get_buffer()
-        return buffer.get_text(*buffer.get_bounds(), False)
-
-    def on_copy_log(self, _button):
-        self.get_clipboard().set(self.log_text())
-        self.toasts.add_toast(Adw.Toast(title=tr("Журнал скопирован")))
-
-    def on_clear_log(self, _button):
-        self.log_view.get_buffer().set_text("")
-
-    def on_export_log(self, _button):
-        text = self.log_text()
-        dialog = Gtk.FileDialog(title=tr("Экспорт журнала"))
-        dialog.set_initial_name(f"bbport-{time.strftime('%Y%m%d_%H%M%S')}.log")
-
-        def finish(dialog, result):
-            try:
-                chosen = dialog.save_finish(result)
-            except GLib.Error:
-                return
-            if not chosen or not chosen.get_path():
-                return
-            try:
-                Path(chosen.get_path()).write_text(text, encoding="utf-8")
-            except OSError as error:
-                self.toasts.add_toast(Adw.Toast(
-                    title=tr("Не удалось сохранить журнал: {}").format(error.strerror or error)))
-                return
-            self.toasts.add_toast(Adw.Toast(title=tr("Журнал сохранён: {}").format(chosen.get_path())))
-        dialog.save(self, None, finish)
-
-    def append_log(self, text):
-        buffer = self.log_view.get_buffer()
-        buffer.insert(buffer.get_end_iter(), text)
-        extra = buffer.get_line_count() - MAX_LOG_LINES
-        if extra > 0:
-            buffer.delete(buffer.get_start_iter(), buffer.get_iter_at_line(extra)[1])
-        if getattr(self, "autoscroll_check", None) is None or self.autoscroll_check.get_active():
-            adj = self.log_scroller.get_vadjustment()
-            GLib.idle_add(lambda: adj.set_value(adj.get_upper()) and False)
-
-    # --- process -------------------------------------------------------------------------
-
-    def on_launch(self, _button):
-        if self.process:
-            self.stop_game()
-            return
-        npid = self.npid_row.get_text().strip()
-        if online_module() and not self.online_row.get_active() and npid and hasattr(Adw, "AlertDialog"):
-            dialog = Adw.AlertDialog(heading="Bloodborne", body=tr(
-                "Учётная запись для игры онлайн указана, но «Играть онлайн» выключено"))
-            dialog.add_response("cancel", tr("Отмена"))
-            dialog.add_response("offline", tr("Играть офлайн"))
-            dialog.add_response("online", tr("Играть онлайн"))
-            dialog.set_response_appearance("online", Adw.ResponseAppearance.SUGGESTED)
-
-            def on_response(_dialog, response):
-                if response != "cancel":
-                    self.online_row.set_active(response == "online")
-                    self.start_game()
-            dialog.connect("response", on_response)
-            dialog.present(self)
-            return
-        self.start_game()
-
-    def start_game(self):
-        if self.online_row.get_active() and "@" in self.npid_row.get_text():
-            self.alert("Bloodborne", tr("Online ID — это имя учётной записи (NPID), "
-                                        "зарегистрированное на сервере, а не адрес email"))
-            self.stack.set_visible_child_name("online")
-            return
-        self.store()
-        self.log_view.get_buffer().set_text("")
-        launcher = Gio.SubprocessLauncher.new(
-            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
-        launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
-        launcher.set_cwd(str(PORT_DIR))
-        try:
-            # setsid: the game and its helpers form one process group, stopped together.
-            self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
-        except GLib.Error as error:
-            self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
-            return
-        self.stream = Gio.DataInputStream.new(self.process.get_stdout_pipe())
-        self.read_line()
-        self.process.wait_async(None, self.on_exit)
-        self.update_launch_button()
-        if hasattr(self, "log_status_badge"):
-            pid = self.process.get_identifier()
-            self.log_status_badge.set_label(tr("Игра запущена (PID {})").format(pid))
-            self.log_status_badge.remove_css_class("badge-warning")
-            self.log_status_badge.add_css_class("badge-success")
-        self.stack.set_visible_child_name("log")
-
-    def read_line(self):
-        self.stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_line)
-
-    def on_line(self, stream, result):
-        try:
-            line, _length = stream.read_line_finish_utf8(result)
-        except GLib.Error:
-            return
-        if line is None:
-            return
-        self.append_log(line + "\n")
-        self.read_line()
-
-    def stop_game(self):
-        if not self.process:
-            return
-        pid = int(self.process.get_identifier())
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except OSError:
-            self.process.force_exit()
-        GLib.timeout_add_seconds(3, self.kill_if_running, pid)
-
-    def kill_if_running(self, pid):
-        if self.process:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except OSError:
-                pass
-        return False
-
-    def on_exit(self, process, result):
-        try:
-            process.wait_finish(result)
-        except GLib.Error:
-            pass
-        status = process.get_exit_status() if process.get_if_exited() else -1
-        self.process = None
-        self.update_launch_button()
-        self.update_game_status()
-        if hasattr(self, "log_status_badge"):
-            self.log_status_badge.set_label(tr("Игра не запущена"))
-            self.log_status_badge.remove_css_class("badge-success")
-            self.log_status_badge.add_css_class("badge-warning")
-        self.append_log(tr("\n— игра завершилась (код {}) —\n").format(status))
-
-    def on_close(self, _window):
-        self.store()
-        if self.process:
-            self.stop_game()
-        if self.fsr411_build:
-            self.stop_fsr411_build()
-        return False
-
     # --- FSR 4.1.1 from the user's DLL -----------------------------------------------------
 
     def update_fsr411_row(self, progress=None):
@@ -1403,79 +827,6 @@ class LauncherWindow(Adw.ApplicationWindow):
             dialog.present(self)
         else:
             self.toasts.add_toast(Adw.Toast(title=f"{heading}: {body}", timeout=10))
-
-    def update_dlss_row(self):
-        own = ngx_libraries(self.user_dir() / "dlss")
-        bundled = ngx_libraries(binaries_dir())
-        bridge = (binaries_dir() / "libbbport_dlss.so").is_file()
-        if own:
-            text = tr("Своя: {}").format(own[-1].name[len(NGX_PREFIX):])
-        elif bundled:
-            text = tr("Из сборки: {}").format(bundled[-1].name[len(NGX_PREFIX):])
-        else:
-            text = tr("Нет: выберите libnvidia-ngx-dlss.so.* из DLSS SDK NVIDIA ({})").format(DLSS_SDK_URL)
-        if not bridge:
-            text += "\n" + tr("Эта сборка без моста DLSS (libbbport_dlss.so): DLSS работать не будет")
-        self.dlss_row.set_subtitle(text)
-        self.dlss_reset_button.set_sensitive(bool(own))
-        if hasattr(self, "sharpness_row"):  # built after this row
-            self.update_upscaler_status()
-
-    def choose_ngx(self):
-        dialog = Gtk.FileDialog(title=tr("Библиотека DLSS NVIDIA (libnvidia-ngx-dlss.so.*)"))
-        files = Gtk.FileFilter()
-        files.set_name("libnvidia-ngx-dlss.so.*, nvngx_dlss.dll")
-        for pattern in ("libnvidia-ngx-dlss.so*", "*.dll", "*.DLL"):
-            files.add_pattern(pattern)
-        filters = Gio.ListStore.new(Gtk.FileFilter)
-        filters.append(files)
-        dialog.set_filters(filters)
-        dialog.set_default_filter(files)
-
-        def finish(dialog, result):
-            try:
-                chosen = dialog.open_finish(result)
-            except GLib.Error:
-                return
-            if chosen and chosen.get_path():
-                self.install_ngx(Path(chosen.get_path()))
-        dialog.open(self, None, finish)
-
-    def install_ngx(self, path):
-        if path.suffix.lower() == ".dll":
-            self.alert(tr("Нужна библиотека для Linux"), tr(
-                "{} — библиотека DLSS для Windows; на Linux NVIDIA её не загружает. Нужна "
-                "libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}").format(path.name, DLSS_SDK_URL))
-            return
-        try:
-            with open(path, "rb") as f:
-                elf = f.read(4) == b"\x7fELF"
-        except OSError as error:
-            self.alert(tr("Не удалось прочитать файл"), str(error))
-            return
-        if not path.name.startswith(NGX_PREFIX) or not elf:
-            self.alert(tr("Это не библиотека DLSS"), tr(
-                "Нужен файл libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}").format(DLSS_SDK_URL))
-            return
-        target = self.user_dir() / "dlss"
-        try:
-            target.mkdir(parents=True, exist_ok=True)
-            for old in ngx_libraries(target):
-                old.unlink()
-            shutil.copy2(path, target / path.name)
-        except OSError as error:
-            self.alert(tr("Не удалось скопировать библиотеку"), str(error))
-            return
-        self.toasts.add_toast(Adw.Toast(title=tr("DLSS {}: готово").format(path.name[len(NGX_PREFIX):])))
-        self.update_dlss_row()
-
-    def reset_ngx(self):
-        for old in ngx_libraries(self.user_dir() / "dlss"):
-            try:
-                old.unlink()
-            except OSError:
-                pass
-        self.update_dlss_row()
 
     def choose_dll(self, title, done):
         self.fsr411_mgr.choose_dll(title, done)
