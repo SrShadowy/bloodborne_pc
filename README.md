@@ -85,8 +85,10 @@ Explore, reverse-engineer, and modify Bloodborne's runtime state live without ex
   - Scans across `Executable & .data`, `Guest Memory (PS4 Direct Heap: 0x1000000000)`, or `Full Process`.
   - Filter by `Exact Value`, `Changed`, `Unchanged`, `Increased`, and `Decreased`.
   - Instant 1-click actions: Add to Watchlist (`[+ Watch]`), inspect in Hex view (`[Hex]`), or track what writes (`[Who Writes?]`).
-- **Interactive Watchlist (`[Watchlist]`)**:
+- **Interactive Watchlist & Multi-Level Pointer Chains (`[Watchlist]`)**:
+  - Support for multi-level pointer chains (`Base + Offsets`, e.g. `[[0x80553B130] + 0x08] + 0x94`) with real-time resolution, live preview, and crash-safe dereferencing.
   - Pin addresses with real-time value updates and live 60Hz background memory freezing.
+  - Native **`.bbt` (Bloodborne Table)** table persistence: saves and restores structured JSON cheat tables directly in `user/cheats/` (`Save .bbt` / `Load .bbt`) with auto-persistence.
   - Interactive data type switching, click-to-copy address, and quick deletion.
 - **Hex Inspector & Data Card (`[Hex Inspector]`)**:
   - 16-byte aligned live memory grid with ASCII view, navigation history (`<` / `>`), address offsets, and jump presets (`eboot Base`, `Heap`, `Params`).

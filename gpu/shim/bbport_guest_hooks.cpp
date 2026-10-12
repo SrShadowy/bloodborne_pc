@@ -20,6 +20,7 @@ extern "C" void runtime_memory_note_write(uintptr_t address, uint64_t size);
 namespace BbGuestHooks {
 namespace {
 using u64 = std::uint64_t;
+using u32 = std::uint32_t;
 using u8 = std::uint8_t;
 constexpr u64 ImageBase = 0x800000000ull;
 
@@ -46,6 +47,21 @@ constexpr unsigned char CollectorEntryCode[1] = {0x55};
 /// registry check (0xbf0790) fails: `js 0xbb5fc7` there, its result counted (eax).
 constexpr u64 ReleaseCheck = 0xbb5fb0;
 constexpr unsigned char ReleaseCheckCode[2] = {0x78, 0x15};
+
+/// Task scheduler / flipper frame allocator at 0x2199310:
+/// The second allocation in the frame flipper (0x21992fb) lacks a NULL check. If the 2 KiB linear
+/// buffer is exhausted, 0x800e45560 returns 0 (nullptr) in r12. The original code immediately does
+/// `mov [r12+8], r13`, causing a SIGSEGV at address 0x8 (guest offset 0x2199310, code 139).
+/// Our detour checks r12: if NULL, it safely skips writing and task dispatch (jumping to 0x2199346).
+constexpr u64 TaskAllocSite = 0x2199310;
+constexpr unsigned char TaskAllocCode[5] = {0x4d, 0x89, 0x6c, 0x24, 0x08};
+
+void OnTaskAllocNull() {
+    static std::atomic<u32> count{0};
+    if (count.fetch_add(1, std::memory_order_relaxed) < 5) {
+        std::printf("Guest safety: task allocator returned NULL at 0x2199310; skipped to prevent crash\n");
+    }
+}
 
 /// `call memcpy` (0x261a1b0: rdi destination, rsi source, rdx size) in the resource loaders:
 /// 0x216d420 and 0x2171d60 copy texture and buffer data into GPU memory (most of the write
@@ -78,8 +94,8 @@ struct NativeSite {
     u64 offset;
     std::atomic<u64> stub{0};
 };
-std::array<NativeSite, 4> native_sites{{{AllocReturn}, {HeapAllocReturns[0]}, {HeapAllocReturns[1]},
-                                        {HeapAllocReturns[2]}}};
+std::array<NativeSite, 5> native_sites{{{AllocReturn}, {HeapAllocReturns[0]}, {HeapAllocReturns[1]},
+                                        {HeapAllocReturns[2]}, {TaskAllocSite}}};
 u8* stub_page = nullptr;
 std::size_t stub_used = 0;
 constexpr std::size_t StubPageSize = 4096;
@@ -201,6 +217,26 @@ bool InstallDetour(NativeSite& site) {
         e.Bytes({0x48, 0x83, 0xc4, 0x18}); // add rsp, 0x18
         e.Bytes({0x5b});                   // pop rbx
         back = address + 5;
+    } else if (site.offset == TaskAllocSite) {
+        // `mov r13, 0x8(r12)` (5 bytes):
+        // If r12 == 0, call OnTaskAllocNull and jump to ImageBase + 0x2199346.
+        // If r12 != 0, execute mov r13, 0x8(r12) and jump back to ImageBase + 0x2199315.
+        e.Bytes({0x4d, 0x85, 0xe4}); // test r12, r12
+        // Displacement to jump over null handling (SaveVolatile 22 + CallAbs 12 + RestoreVolatile 18 + jmp 5 = 57 bytes)
+        e.Bytes({0x75, 57}); // jnz not_null (+57)
+        e.SaveVolatile();
+        e.CallAbs(reinterpret_cast<const void*>(&OnTaskAllocNull));
+        e.RestoreVolatile();
+        const u64 null_jmp_at = reinterpret_cast<u64>(stub_page + stub_used) + e.size;
+        std::uint32_t rel_null = 0;
+        if (!Rel32To(null_jmp_at + 5, ImageBase + 0x2199346, rel_null)) {
+            return false;
+        }
+        e.Bytes({0xe9});
+        e.U32(rel_null);
+        // not_null:
+        e.Bytes({0x4d, 0x89, 0x6c, 0x24, 0x08}); // mov r13, 0x8(r12)
+        back = address + 5;
     } else {
         // `mov rbx, rax; test rbx, rbx` (6 bytes) after the heap call; [rbp - 0x50]: the size.
         const auto* code = reinterpret_cast<const u8*>(address);
@@ -313,6 +349,17 @@ void OnTrap(int sig, siginfo_t* info, void* context) {
         g[REG_RIP] = greg_t(ImageBase + AllocReturn + sizeof(AllocReturnCode));
         return;
     }
+    if (rip == ImageBase + TaskAllocSite) {
+        const u64 r12 = u64(g[REG_R12]);
+        if (r12 == 0) {
+            OnTaskAllocNull();
+            g[REG_RIP] = greg_t(ImageBase + 0x2199346);
+        } else {
+            *reinterpret_cast<u64*>(r12 + 8) = u64(g[REG_R13]);
+            g[REG_RIP] = greg_t(ImageBase + TaskAllocSite + sizeof(TaskAllocCode));
+        }
+        return;
+    }
     for (std::size_t i = 0; i < MemcpySites.size(); ++i) {
         const auto& site = MemcpySites[i];
         if (rip != ImageBase + site.offset) {
@@ -400,6 +447,8 @@ void Install(RangeCallback on_gpu_range_allocated) {
     std::printf("Guest hooks: GPU heap allocations seen at %d of %zu call sites\n", heap_sites,
                 HeapAllocReturns.size());
     std::printf("Guest hooks: GPU memory allocator %s\n", allocator ? "tells the GPU side of new ranges" : "not found");
+    const bool task_alloc = Patch(ImageBase + TaskAllocSite, TaskAllocCode, sizeof(TaskAllocCode));
+    std::printf("Guest hooks: task allocator null-guard %s\n", task_alloc ? "active" : "not found");
     // Native detours over the traps just placed (BB_GUEST_HOOK_TRAPS=1 keeps the traps).
     const char* traps_env = std::getenv("BB_GUEST_HOOK_TRAPS");
     if (!(traps_env && traps_env[0] == '1') && (stub_page = MapStubPage()) != nullptr) {

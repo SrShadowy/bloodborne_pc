@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <setjmp.h>
+#include <cstring>
 // Renderer tests have no guest process. Clock/host-thread services work; guest accesses abort.
 extern "C" {
 thread_local sigjmp_buf* runtime_fault_recover = nullptr;
@@ -21,7 +22,13 @@ void runtime_memory_gpu_protect(uintptr_t, uint64_t, int, int) { std::abort(); }
 void runtime_restart() { std::abort(); }
 uint64_t runtime_process_time_counter() { return runtime_process_time_us() * 1000; }
 int32_t* runtime_errno() { std::abort(); }
-int runtime_memory_write_backing(uintptr_t, const void*, uint64_t) { std::abort(); }
+int runtime_memory_write_backing(uintptr_t addr, const void* data, uint64_t size) {
+    if (addr && data && size) {
+        std::memcpy(reinterpret_cast<void*>(addr), data, size);
+        return 0;
+    }
+    return -1;
+}
 void runtime_memory_read_backing(uintptr_t, void*, uint64_t) { std::abort(); }
 const uint64_t* runtime_memory_generation() { static const uint64_t generation = 0; return &generation; }
 void runtime_memory_note_write(uintptr_t, uint64_t) { std::abort(); }

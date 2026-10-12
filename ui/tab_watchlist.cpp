@@ -16,6 +16,25 @@
 
 namespace UI {
 
+static std::vector<int64_t> ParseOffsetsString(const char* str) {
+    std::vector<int64_t> result;
+    if (!str) return result;
+    const char* p = str;
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == ',') ++p;
+        if (!*p) break;
+        char* end = nullptr;
+        int64_t val = std::strtoll(p, &end, 0);
+        if (end != p) {
+            result.push_back(val);
+            p = end;
+        } else {
+            ++p;
+        }
+    }
+    return result;
+}
+
 void TabWatchlist::Render() {
     auto& editor = Debugger::MemoryEditor::Get();
     auto& cutscene = Debugger::CutsceneDetector::Get();
@@ -26,6 +45,46 @@ void TabWatchlist::Render() {
     ImGui::SameLine();
     const auto entries = editor.GetEntries();
     ImGui::TextDisabled("(%zu %s)", entries.size(), L("saved", "salvos", "сохранено"));
+
+    // Table persistence buttons (.bbt / Bloodborne Table)
+    ImGui::SameLine(ImGui::GetWindowWidth() - 320.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.40f, 0.35f, 0.80f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.52f, 0.45f, 0.95f));
+    if (ImGui::SmallButton(L("Save .bbt", "Salvar .bbt", "Сохранить .bbt"))) {
+        if (editor.SaveTableBBT()) {
+            UiManager::SetStatus(L("Table saved to user/cheats/default.bbt",
+                                   "Tabela salva em user/cheats/default.bbt",
+                                   "Таблица сохранена в user/cheats/default.bbt"));
+        } else {
+            UiManager::SetStatus(L("[ERROR] Failed to save table",
+                                   "[ERRO] Falha ao salvar tabela",
+                                   "[ОШИБКА] Ошибка сохранения"));
+        }
+    }
+    ImGui::PopStyleColor(2);
+
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.35f, 0.48f, 0.80f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.45f, 0.62f, 0.95f));
+    if (ImGui::SmallButton(L("Load .bbt", "Carregar .bbt", "Загрузить .bbt"))) {
+        if (editor.LoadTableBBT()) {
+            UiManager::SetStatus(L("Table loaded from user/cheats/default.bbt",
+                                   "Tabela carregada de user/cheats/default.bbt",
+                                   "Таблица загружена из user/cheats/default.bbt"));
+        } else {
+            UiManager::SetStatus(L("[INFO] No table found in user/cheats/default.bbt",
+                                   "[INFO] Nenhuma tabela encontrada em user/cheats/default.bbt",
+                                   "[ИНФО] Файл не найден в user/cheats/default.bbt"));
+        }
+    }
+    ImGui::PopStyleColor(2);
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton(L("Clear", "Limpar", "Очистить"))) {
+        editor.Clear();
+        UiManager::SetStatus(L("Watchlist cleared", "Lista limpa", "Список очищен"));
+    }
+
     ImGui::Separator();
 
     // Cutscene flag status indicator
@@ -42,7 +101,7 @@ void TabWatchlist::Render() {
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(active ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f) : ImVec4(0.45f, 1.0f, 0.55f, 1.0f),
                                "%s: [0x%012llx] -> %s (DrawPipe %s)",
-                               L("Active Cutscene Flag", "Flag de Cutscene Ativa", "Флаг кат-сцены"),
+                               L("Active Cutscene Flag", "Flag de Cutscene Ativa", "Флаг кат-сcenы"),
                                static_cast<unsigned long long>(cs_addr),
                                state_str,
                                pipe_str);
@@ -63,11 +122,11 @@ void TabWatchlist::Render() {
                                     "Нет сохраненных адресов. Добавьте результаты из вкладки 'Сканер' или поле ниже."));
         ImGui::Spacing();
     } else {
-        if (ImGui::BeginTable("WatchlistTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 310))) {
+        if (ImGui::BeginTable("WatchlistTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 290))) {
             ImGui::TableSetupColumn("##del", ImGuiTableColumnFlags_WidthFixed, 32.0f);
             ImGui::TableSetupColumn(L("Description", "Descricao", "Описание"), ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn(L("Address", "Endereco", "Адрес"), ImGuiTableColumnFlags_WidthFixed, 130.0f);
-            ImGui::TableSetupColumn(L("Type", "Tipo", "Тип"), ImGuiTableColumnFlags_WidthFixed, 105.0f);
+            ImGui::TableSetupColumn(L("Address / Pointer", "Endereco / Ponteiro", "Адрес / Указатель"), ImGuiTableColumnFlags_WidthFixed, 160.0f);
+            ImGui::TableSetupColumn(L("Type", "Tipo", "Тип"), ImGuiTableColumnFlags_WidthFixed, 100.0f);
             ImGui::TableSetupColumn(L("Current Value", "Valor Atual", "Текущее"), ImGuiTableColumnFlags_WidthFixed, 110.0f);
             ImGui::TableSetupColumn(L("Freeze", "Congelar", "Заморозка"), ImGuiTableColumnFlags_WidthFixed, 65.0f);
             ImGui::TableSetupColumn(L("Actions", "Acoes", "Действия"), ImGuiTableColumnFlags_WidthStretch);
@@ -75,6 +134,7 @@ void TabWatchlist::Render() {
 
             for (size_t i = 0; i < entries.size(); ++i) {
                 const auto& e = entries[i];
+                const uintptr_t resolved = editor.ResolveAddress(e);
                 ImGui::TableNextRow();
 
                 ImGui::PushID(static_cast<int>(i));
@@ -95,22 +155,53 @@ void TabWatchlist::Render() {
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%s", e.label.c_str());
 
-                // 2. Address (cyan highlight, click to copy)
+                // 2. Address / Pointer resolution
                 ImGui::TableSetColumnIndex(2);
-                char addr_str[32];
-                std::snprintf(addr_str, sizeof(addr_str), "0x%012llx", static_cast<unsigned long long>(e.address));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.80f, 1.0f, 1.0f));
+                char addr_str[64];
+                if (e.is_pointer) {
+                    if (resolved != 0) {
+                        std::snprintf(addr_str, sizeof(addr_str), "[P] -> 0x%010llx", static_cast<unsigned long long>(resolved));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.80f, 0.35f, 1.0f)); // Gold amber for pointers
+                    } else {
+                        std::snprintf(addr_str, sizeof(addr_str), "[P] -> (Null/??)");
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.45f, 0.45f, 1.0f)); // Soft red for unmapped
+                    }
+                } else {
+                    std::snprintf(addr_str, sizeof(addr_str), "0x%012llx", static_cast<unsigned long long>(e.address));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.80f, 1.0f, 1.0f)); // Cyan
+                }
+
                 if (ImGui::Selectable(addr_str, false, ImGuiSelectableFlags_None)) {
-                    ImGui::SetClipboardText(addr_str);
-                    SDL_SetClipboardText(addr_str);
+                    const uintptr_t copy_target = (e.is_pointer && resolved != 0) ? resolved : e.address;
+                    char copy_buf[32];
+                    std::snprintf(copy_buf, sizeof(copy_buf), "0x%012llx", static_cast<unsigned long long>(copy_target));
+                    ImGui::SetClipboardText(copy_buf);
+                    SDL_SetClipboardText(copy_buf);
                     char msg[64];
                     std::snprintf(msg, sizeof(msg), "%s: %s",
-                                  L("Copied", "Copiado", "Скопировано"), addr_str);
+                                  L("Copied", "Copiado", "Скопировано"), copy_buf);
                     UiManager::SetStatus(msg);
                 }
                 ImGui::PopStyleColor();
+
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", L("Click to copy address", "Clique para copiar o endereco", "Нажмите для копирования"));
+                    if (e.is_pointer) {
+                        char tip[256];
+                        std::string chain_str;
+                        for (size_t o = 0; o < e.offsets.size(); ++o) {
+                            char obuf[32];
+                            std::snprintf(obuf, sizeof(obuf), "+0x%llX ", static_cast<unsigned long long>(e.offsets[o]));
+                            chain_str += obuf;
+                        }
+                        std::snprintf(tip, sizeof(tip),
+                                      "Pointer Base: 0x%010llx\nOffsets: %s\nResolved: 0x%010llx\nClick to copy target address.",
+                                      static_cast<unsigned long long>(e.address),
+                                      chain_str.c_str(),
+                                      static_cast<unsigned long long>(resolved));
+                        ImGui::SetTooltip("%s", tip);
+                    } else {
+                        ImGui::SetTooltip("%s", L("Click to copy address", "Clique para copiar o endereco", "Нажмите для копирования"));
+                    }
                 }
 
                 // 3. Type (interactive combo)
@@ -121,7 +212,7 @@ void TabWatchlist::Render() {
                     "Float", "Double"
                 };
                 int type_idx = static_cast<int>(e.type);
-                ImGui::SetNextItemWidth(95.0f);
+                ImGui::SetNextItemWidth(90.0f);
                 if (ImGui::Combo("##type", &type_idx, type_names, IM_ARRAYSIZE(type_names))) {
                     editor.SetType(i, static_cast<Debugger::DataType>(type_idx));
                 }
@@ -129,8 +220,10 @@ void TabWatchlist::Render() {
                 // 4. Value / Edit
                 ImGui::TableSetColumnIndex(4);
                 double cur_num = 0;
-                std::string cur_str;
-                Debugger::MemoryScanner::ReadFormatted(e.address, e.type, cur_num, cur_str);
+                std::string cur_str = "-";
+                if (resolved != 0) {
+                    Debugger::MemoryScanner::ReadFormatted(resolved, e.type, cur_num, cur_str);
+                }
 
                 char edit_buf[32];
                 std::snprintf(edit_buf, sizeof(edit_buf), "%s", cur_str.c_str());
@@ -155,24 +248,26 @@ void TabWatchlist::Render() {
 
                 // 6. Actions (Who Writes? and Hex Inspector)
                 ImGui::TableSetColumnIndex(6);
+                const uintptr_t target_act = (resolved != 0) ? resolved : e.address;
+
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.32f, 0.50f, 0.80f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.42f, 0.65f, 0.95f));
                 if (ImGui::SmallButton(L("Who Writes?", "Quem Escreve?", "Кто пишет?"))) {
-                    const bool ok = bp.SetWriteWatchpoint(e.address);
+                    const bool ok = bp.SetWriteWatchpoint(target_act);
                     char addr_buf[32];
-                    std::snprintf(addr_buf, sizeof(addr_buf), "0x%012llx", static_cast<unsigned long long>(e.address));
+                    std::snprintf(addr_buf, sizeof(addr_buf), "0x%012llx", static_cast<unsigned long long>(target_act));
                     ImGui::SetClipboardText(addr_buf);
                     SDL_SetClipboardText(addr_buf);
 
-                    TabDebugger::SetBreakpointAddress(e.address);
-                    TabDebugger::SetDisasmAddress(e.address);
+                    TabDebugger::SetBreakpointAddress(target_act);
+                    TabDebugger::SetDisasmAddress(target_act);
 
                     UiManager::RequestTab(TabId::Debugger);
                     char msg[96];
                     if (ok) {
-                        std::snprintf(msg, sizeof(msg), "[OK] Watching 0x%012llx", static_cast<unsigned long long>(e.address));
+                        std::snprintf(msg, sizeof(msg), "[OK] Watching 0x%012llx", static_cast<unsigned long long>(target_act));
                     } else {
-                        std::snprintf(msg, sizeof(msg), "[ERRO] Falha ao monitorar escrita em 0x%012llx", static_cast<unsigned long long>(e.address));
+                        std::snprintf(msg, sizeof(msg), "[ERRO] Falha ao monitorar escrita em 0x%012llx", static_cast<unsigned long long>(target_act));
                     }
                     UiManager::SetStatus(msg);
                 }
@@ -182,7 +277,7 @@ void TabWatchlist::Render() {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.50f, 0.80f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.58f, 0.65f, 0.95f));
                 if (ImGui::SmallButton("Hex")) {
-                    TabHexView::NavigateTo(e.address);
+                    TabHexView::NavigateTo(target_act);
                     UiManager::RequestTab(TabId::HexView);
                 }
                 ImGui::PopStyleColor(2);
@@ -200,43 +295,93 @@ void TabWatchlist::Render() {
     ImGui::Spacing();
     static char manual_label[32] = "Item";
     static char manual_addr[32] = "0x";
+    static char manual_offsets[64] = "0x8, 0x94";
     static int manual_type = 2; // u32
+    static bool is_pointer_mode = false;
 
     ImGui::BeginGroup();
+    ImGui::Checkbox(L("Pointer (Offsets)", "Ponteiro (Offsets)", "Указатель (смещения)"), &is_pointer_mode);
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(95.0f);
     ImGui::InputTextWithHint("##m_label", L("Label", "Nome", "Имя"), manual_label, sizeof(manual_label));
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(125.0f);
-    ImGui::InputTextWithHint("##m_addr", "0x...", manual_addr, sizeof(manual_addr));
-    ImGui::SameLine();
-    if (ImGui::Button(L("Paste##wl", "Colar##wl", "Вставить##wl"))) {
-        const char* clip = SDL_GetClipboardText();
-        if (clip && clip[0]) {
-            std::snprintf(manual_addr, sizeof(manual_addr), "%s", clip);
+
+    if (!is_pointer_mode) {
+        ImGui::SetNextItemWidth(125.0f);
+        ImGui::InputTextWithHint("##m_addr", "0x...", manual_addr, sizeof(manual_addr));
+        ImGui::SameLine();
+        if (ImGui::Button(L("Paste##wl", "Colar##wl", "Вставить##wl"))) {
+            const char* clip = SDL_GetClipboardText();
+            if (clip && clip[0]) {
+                std::snprintf(manual_addr, sizeof(manual_addr), "%s", clip);
+            }
         }
+    } else {
+        ImGui::SetNextItemWidth(115.0f);
+        ImGui::InputTextWithHint("##m_base", "Base 0x...", manual_addr, sizeof(manual_addr));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110.0f);
+        ImGui::InputTextWithHint("##m_offs", "Offsets: 8, 94", manual_offsets, sizeof(manual_offsets));
     }
+
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80.0f);
     const char* type_names_short[] = { "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "Float", "Double" };
     ImGui::Combo("##m_type", &manual_type, type_names_short, IM_ARRAYSIZE(type_names_short));
     ImGui::SameLine();
+
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 0.35f, 0.80f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.65f, 0.45f, 0.95f));
-    if (ImGui::Button(L("+ Add Address", "+ Adicionar Endereco", "+ Добавить"))) {
-        const uintptr_t parsed = std::strtoull(manual_addr, nullptr, 16);
-        if (parsed) {
-            editor.AddWatch(manual_label, parsed, static_cast<Debugger::DataType>(manual_type));
-            UiManager::SetStatus(L("Address added to Watchlist!", "Endereco adicionado a Watchlist!", "Адрес добавлен в таблицу!"));
+
+    if (!is_pointer_mode) {
+        if (ImGui::Button(L("+ Add Address", "+ Adicionar Endereco", "+ Добавить"))) {
+            const uintptr_t parsed = std::strtoull(manual_addr, nullptr, 0);
+            if (parsed) {
+                editor.AddWatch(manual_label, parsed, static_cast<Debugger::DataType>(manual_type));
+                editor.SaveTableBBT();
+                UiManager::SetStatus(L("Address added to Watchlist!", "Endereco adicionado a Watchlist!", "Адрес добавлен в таблицу!"));
+            }
+        }
+    } else {
+        if (ImGui::Button(L("+ Add Pointer", "+ Adicionar Ponteiro", "+ Добавить указатель"))) {
+            const uintptr_t base_parsed = std::strtoull(manual_addr, nullptr, 0);
+            const auto offs = ParseOffsetsString(manual_offsets);
+            if (base_parsed) {
+                editor.AddPointerWatch(manual_label, base_parsed, offs, static_cast<Debugger::DataType>(manual_type));
+                editor.SaveTableBBT();
+                UiManager::SetStatus(L("Pointer added to Watchlist!", "Ponteiro adicionado a Watchlist!", "Указатель добавлен!"));
+            }
         }
     }
     ImGui::PopStyleColor(2);
-    ImGui::EndGroup();
 
-    ImGui::SameLine(ImGui::GetWindowWidth() - 140.0f);
-    if (ImGui::Button(L("Clear List", "Limpar Lista", "Очистить список"))) {
-        editor.Clear();
-        UiManager::SetStatus(L("Watchlist cleared", "Lista limpa", "Список очищен"));
+    // Live preview of pointer resolution if in pointer mode
+    if (is_pointer_mode) {
+        const uintptr_t base_p = std::strtoull(manual_addr, nullptr, 0);
+        const auto offs = ParseOffsetsString(manual_offsets);
+        if (base_p != 0) {
+            Debugger::WatchEntry test_e;
+            test_e.address = base_p;
+            test_e.is_pointer = true;
+            test_e.offsets = offs;
+            const uintptr_t test_res = editor.ResolveAddress(test_e);
+            if (test_res != 0) {
+                double val = 0; std::string str_val;
+                Debugger::MemoryScanner::ReadFormatted(test_res, static_cast<Debugger::DataType>(manual_type), val, str_val);
+                ImGui::TextColored(ImVec4(0.40f, 0.95f, 0.55f, 1.0f),
+                                   "Preview: Base [0x%llx] -> Target [0x%010llx] = %s",
+                                   static_cast<unsigned long long>(base_p),
+                                   static_cast<unsigned long long>(test_res),
+                                   str_val.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(0.90f, 0.50f, 0.40f, 1.0f),
+                                   "Preview: Base [0x%llx] -> (Pointer chain unmapped or null)",
+                                   static_cast<unsigned long long>(base_p));
+            }
+        }
     }
+
+    ImGui::EndGroup();
 }
 
 } // namespace UI
