@@ -551,9 +551,30 @@ void RenderMemoryToolsSection() {
         }
         ImGui::PopStyleColor(2);
     }
-    ImGui::TextDisabled("%s", UI::L("Opens a separate floating window for memory scanning and live debugging",
-                                   "Abre uma janela flutuante separada para varredura e depuração de memória",
-                                   "Открывает отдельное плавающее окно для сканирования и отладки памяти"));
+
+    const bool mv_open = UI::UiManager::IsMemoryViewerOpen();
+    if (mv_open) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.45f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.55f, 0.48f, 1.0f));
+        if (ImGui::Button(UI::L("Hide Memory Viewer###btn_memviewer",
+                                "Ocultar Memory Viewer###btn_memviewer",
+                                "Скрыть Memory Viewer###btn_memviewer"), ImVec2(-1, 28.0f * base_scale))) {
+            UI::UiManager::SetMemoryViewerOpen(false);
+        }
+        ImGui::PopStyleColor(2);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.32f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.42f, 0.54f, 1.0f));
+        if (ImGui::Button(UI::L("Open Memory Viewer###btn_memviewer",
+                                "Abrir Memory Viewer###btn_memviewer",
+                                "Открыть Memory Viewer###btn_memviewer"), ImVec2(-1, 28.0f * base_scale))) {
+            UI::UiManager::SetMemoryViewerOpen(true);
+        }
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::TextDisabled("%s", UI::L("Opens separate floating windows for memory scanning, hex view, and live disassembly",
+                                   "Abre janelas flutuantes separadas para varredura, hex view e desassemblagem em tempo real",
+                                   "Открывает отдельные плавающие окна для сканирования, hex-инспектора и дизассемблера"));
 }
 
 #undef S
@@ -633,7 +654,7 @@ void Menu() {
     }
 
     // Render the separate Memory Operations & Reverse Engineering window
-    UI::UiManager::RenderMemoryWindow();
+    UI::UiManager::Render();
 }
 
 void FpsCounter() {

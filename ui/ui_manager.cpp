@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ui_manager.h"
+#include "view_memviewer.h"
 #include "ui_strings.h"
 #include "tab_settings.h"
 #include "tab_scanner.h"
 #include "tab_watchlist.h"
-#include "tab_hexview.h"
 #include "tab_debugger.h"
 #include "mem_editor.h"
 #include "mem_scanner.h"
 #include "breakpoint.h"
+#include "modal_patch_inst.h"
+#include "modal_edit_watch.h"
 
 #include <imgui.h>
 #include <chrono>
@@ -42,9 +44,24 @@ void UiManager::ToggleMemoryWindow() {
     s_memory_window_open = !s_memory_window_open;
 }
 
+bool UiManager::IsMemoryViewerOpen() {
+    return ViewMemViewer::IsOpen();
+}
+
+void UiManager::SetMemoryViewerOpen(bool open) {
+    ViewMemViewer::SetOpen(open);
+}
+
+void UiManager::ToggleMemoryViewer() {
+    ViewMemViewer::Toggle();
+}
+
+void UiManager::RenderMemoryViewerWindow() {
+    ViewMemViewer::Render();
+}
+
 void UiManager::InitStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
-    // Rounding & borders
     style.WindowRounding    = 8.0f;
     style.ChildRounding     = 6.0f;
     style.FrameRounding     = 5.0f;
@@ -57,14 +74,12 @@ void UiManager::InitStyle() {
     style.FrameBorderSize  = 1.0f;
     style.PopupBorderSize  = 1.0f;
 
-    // Spacing
     style.WindowPadding     = ImVec2(12.0f, 12.0f);
     style.FramePadding      = ImVec2(8.0f, 5.0f);
     style.ItemSpacing       = ImVec2(8.0f, 6.0f);
     style.ItemInnerSpacing  = ImVec2(6.0f, 4.0f);
     style.CellPadding       = ImVec2(7.0f, 5.0f);
 
-    // Color Palette: Sleek Deep Slate with Teal/Cyan Highlights
     ImVec4* colors = style.Colors;
     colors[ImGuiCol_Text]                  = ImVec4(0.92f, 0.94f, 0.97f, 1.00f);
     colors[ImGuiCol_TextDisabled]          = ImVec4(0.48f, 0.53f, 0.60f, 1.00f);
@@ -120,9 +135,7 @@ void UiManager::Tick() {
 }
 
 void UiManager::RenderMemoryWindow() {
-    if (!s_memory_window_open) {
-        return;
-    }
+    if (!s_memory_window_open) return;
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     float scale = 1.0f;
@@ -158,22 +171,24 @@ void UiManager::RenderMemoryWindow() {
     auto& editor = Debugger::MemoryEditor::Get();
     auto& bp = Debugger::BreakpointManager::Get();
 
-    // Top Header info bar inside the Memory Tools window
     ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.75f, 1.0f), "%s",
                        L("Hunter's Direct Memory Workspace", "Espaco de Memoria do Cacador", "Рабочая область памяти"));
     ImGui::SameLine();
-    ImGui::TextDisabled("| %s: 0x1000000000",
-                        L("PS4 Direct Heap", "Heap Direto PS4", "Прямая куча PS4"));
+    ImGui::TextDisabled("| %s: 0x1000000000", L("PS4 Direct Heap", "Heap Direto PS4", "Прямая куча PS4"));
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    if (ImGui::SmallButton(L("Memory Viewer", "Memory Viewer", "Memory Viewer"))) {
+        ViewMemViewer::Toggle();
+    }
     ImGui::Separator();
 
-    // Badges in tab titles (using ###StaticID so tab identity never changes)
     char scanner_title[64];
     if (scanner.IsScanning()) {
         std::snprintf(scanner_title, sizeof(scanner_title), "%s (%.0f%%)###ScannerTab",
                       L("Scanner", "Scanner", "Сканер"), scanner.GetProgress() * 100.0f);
     } else {
-        std::snprintf(scanner_title, sizeof(scanner_title), "%s###ScannerTab",
-                      L("Scanner", "Scanner", "Сканер"));
+        std::snprintf(scanner_title, sizeof(scanner_title), "%s###ScannerTab", L("Scanner", "Scanner", "Сканер"));
     }
 
     char watchlist_title[64];
@@ -181,17 +196,14 @@ void UiManager::RenderMemoryWindow() {
         std::snprintf(watchlist_title, sizeof(watchlist_title), "%s (%zu)###WatchlistTab",
                       L("Watchlist", "Watchlist", "Таблица"), editor.GetCount());
     } else {
-        std::snprintf(watchlist_title, sizeof(watchlist_title), "%s###WatchlistTab",
-                      L("Watchlist", "Watchlist", "Таблица"));
+        std::snprintf(watchlist_title, sizeof(watchlist_title), "%s###WatchlistTab", L("Watchlist", "Watchlist", "Таблица"));
     }
 
     char debugger_title[64];
     if (bp.HasActiveWatchpoint()) {
-        std::snprintf(debugger_title, sizeof(debugger_title), "%s (*)###DebuggerTab",
-                      L("Debugger", "Depurador", "Отладчик"));
+        std::snprintf(debugger_title, sizeof(debugger_title), "%s (*)###DebuggerTab", L("Debugger", "Depurador", "Отладчик"));
     } else {
-        std::snprintf(debugger_title, sizeof(debugger_title), "%s###DebuggerTab",
-                      L("Debugger", "Depurador", "Отладчик"));
+        std::snprintf(debugger_title, sizeof(debugger_title), "%s###DebuggerTab", L("Debugger", "Depurador", "Отладчик"));
     }
 
     if (ImGui::BeginTabBar("MemoryTabBar", ImGuiTabBarFlags_None)) {
@@ -207,12 +219,6 @@ void UiManager::RenderMemoryWindow() {
             ImGui::EndTabItem();
         }
 
-        ImGuiTabItemFlags f_hex = (s_requested_tab == TabId::HexView) ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem(L("Hex Inspector###HexTab", "Inspetor Hex###HexTab", "Hex-инспектор###HexTab"), nullptr, f_hex)) {
-            TabHexView::Render();
-            ImGui::EndTabItem();
-        }
-
         ImGuiTabItemFlags f_dbg = (s_requested_tab == TabId::Debugger) ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem(debugger_title, nullptr, f_dbg)) {
             TabDebugger::Render();
@@ -223,7 +229,6 @@ void UiManager::RenderMemoryWindow() {
     }
     s_requested_tab = TabId::None;
 
-    // Toast status notification bar if active
     if (!s_status_msg.empty()) {
         const auto now = std::chrono::steady_clock::now();
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_status_time).count();
@@ -242,6 +247,9 @@ void UiManager::RenderMemoryWindow() {
 
 void UiManager::Render() {
     RenderMemoryWindow();
+    ViewMemViewer::Render();
+    ModalPatchInst::Render();
+    ModalEditWatch::Render();
 }
 
 } // namespace UI

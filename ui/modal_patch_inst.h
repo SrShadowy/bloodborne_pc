@@ -2,13 +2,14 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace UI {
 
-class TabHexView {
+class ModalPatchInst {
 public:
+    static void Open(uintptr_t addr, size_t len, const uint8_t* orig_code, const std::string& disasm_text);
     static void Render();
-    static void NavigateTo(uintptr_t addr);
 };
 
 } // namespace UI

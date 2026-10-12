@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "tab_debugger.h"
+#include "view_disasm.h"
+#include "view_registers.h"
 #include "ui_strings.h"
 #include "breakpoint.h"
 #include "mem_scanner.h"
-#include "tab_hexview.h"
+#include "view_memviewer.h"
 #include "ui_manager.h"
-#include "common/decoder.h"
 
 #include <imgui.h>
 #include <SDL3/SDL.h>
@@ -13,27 +14,23 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
-#include <unordered_map>
 #include <algorithm>
 
 namespace UI {
 
 static char bp_addr_input[32] = "0x00400000";
-static char disasm_addr_input[32] = "0x00400000";
-static uintptr_t disasm_current_addr = 0x00400000;
-static std::string patch_status_msg;
-static std::unordered_map<uintptr_t, std::vector<uint8_t>> patched_instructions;
-
 static Debugger::CpuRegisters selected_regs{};
 static bool has_selected_regs = false;
 
-void TabDebugger::SetDisasmAddress(uintptr_t address) {
-    disasm_current_addr = address;
-    std::snprintf(disasm_addr_input, sizeof(disasm_addr_input), "0x%llx", static_cast<unsigned long long>(address));
-}
-
+uintptr_t TabDebugger::GetDisasmAddress() { return ViewDisasm::GetDisasmAddress(); }
+void TabDebugger::SetDisasmAddress(uintptr_t address) { ViewDisasm::SetDisasmAddress(address); }
 void TabDebugger::SetBreakpointAddress(uintptr_t address) {
     std::snprintf(bp_addr_input, sizeof(bp_addr_input), "0x%llx", static_cast<unsigned long long>(address));
+}
+uintptr_t TabDebugger::FindPreviousInstruction(uintptr_t addr) { return ViewDisasm::FindPreviousInstruction(addr); }
+uintptr_t TabDebugger::FindNextInstruction(uintptr_t addr) { return ViewDisasm::FindNextInstruction(addr); }
+void TabDebugger::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool standalone) {
+    ViewDisasm::RenderDisassemblerView(cur_addr, height, standalone);
 }
 
 void TabDebugger::Render() {
@@ -56,22 +53,14 @@ void TabDebugger::Render() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.45f, 0.15f, 0.90f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.55f, 0.20f, 1.0f));
     }
-    if (ImGui::Button(pause_btn, ImVec2(130, 26))) {
-        bp.SetPaused(!paused);
-    }
-    if (paused) {
-        ImGui::PopStyleColor(2);
-    }
+    if (ImGui::Button(pause_btn, ImVec2(130, 26))) bp.SetPaused(!paused);
+    if (paused) ImGui::PopStyleColor(2);
 
     ImGui::SameLine();
-    if (ImGui::Button(L("Step 1 Frame", "Avancar 1 Frame", "Кадр вперед"), ImVec2(130, 26))) {
-        bp.StepFrame();
-    }
+    if (ImGui::Button(L("Step 1 Frame", "Avancar 1 Frame", "Кадр вперед"), ImVec2(130, 26))) bp.StepFrame();
     ImGui::SameLine();
     bool auto_pause = bp.GetAutoPauseOnHit();
-    if (ImGui::Checkbox(L("Auto-pause game on hit",
-                          "Pausar jogo ao detectar escrita",
-                          "Пауза при записи"), &auto_pause)) {
+    if (ImGui::Checkbox(L("Auto-pause game on hit", "Pausar jogo ao detectar escrita", "Пауза при записи"), &auto_pause)) {
         bp.SetAutoPauseOnHit(auto_pause);
     }
     ImGui::Spacing();
@@ -154,7 +143,6 @@ void TabDebugger::Render() {
                 }
             });
         } else {
-            // Default sort: highest count first
             std::sort(hits.begin(), hits.end(), [](const Debugger::WatchpointHit& a, const Debugger::WatchpointHit& b) {
                 return a.count > b.count;
             });
@@ -164,11 +152,9 @@ void TabDebugger::Render() {
             const auto& hit = hits[i];
             ImGui::TableNextRow();
 
-            // Column 0: Count (highlighted in gold/yellow)
             ImGui::TableSetColumnIndex(0);
             ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.25f, 1.0f), "%llu x", static_cast<unsigned long long>(hit.count));
 
-            // Column 1: Instruction RIP (click to copy)
             ImGui::TableSetColumnIndex(1);
             char rip_str[32];
             std::snprintf(rip_str, sizeof(rip_str), "0x%012llx", static_cast<unsigned long long>(hit.rip));
@@ -178,126 +164,74 @@ void TabDebugger::Render() {
                 UiManager::SetStatus(std::string("Copied: ") + rip_str);
             }
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", L("Click to copy address", "Clique para copiar o endereco", "Нажмите для копирования"));
-            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("Click to copy address", "Clique para copiar o endereco", "Нажмите для копирования"));
 
-            // Column 2: Disassembly
             ImGui::TableSetColumnIndex(2);
             ImGui::Text("%s", hit.disassembly.c_str());
 
-            // Column 3: Thread ID
             ImGui::TableSetColumnIndex(3);
             ImGui::Text("%d", hit.thread_id);
 
-            // Column 4: Timestamp
             ImGui::TableSetColumnIndex(4);
             ImGui::Text("%llu ms", static_cast<unsigned long long>(hit.timestamp % 1000000));
 
-            // Column 5: Actions
             ImGui::TableSetColumnIndex(5);
             ImGui::PushID(static_cast<int>(i));
 
-            // 1. Disasm button
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.38f, 0.58f, 0.75f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.48f, 0.72f, 0.95f));
-            if (ImGui::SmallButton(L("Disasm", "Desmontar", "Дизасм"))) {
-                SetDisasmAddress(hit.rip);
-                if (hit.registers.valid) {
-                    selected_regs = hit.registers;
-                    has_selected_regs = true;
-                }
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.50f, 0.75f, 1.0f));
+            if (ImGui::SmallButton("Disasm")) {
+                ViewDisasm::SetDisasmAddress(hit.rip);
             }
             ImGui::PopStyleColor(2);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", L("Navigate Disassembler to this RIP",
-                                          "Navegar Desassemblador para este RIP",
-                                          "Перейти в дизассемблер"));
-            }
 
-            // 2. Regs button
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.25f, 0.55f, 0.75f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.48f, 0.35f, 0.72f, 0.95f));
-            if (ImGui::SmallButton(L("Regs", "Regs", "Рег"))) {
-                if (hit.registers.valid) {
-                    selected_regs = hit.registers;
-                    has_selected_regs = true;
-                }
-            }
-            ImGui::PopStyleColor(2);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", L("Inspect captured CPU registers for this hit",
-                                          "Inspecionar registradores da CPU para este hit",
-                                          "Посмотреть регистры CPU"));
-            }
-
-            // 3. Hex button
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.50f, 0.80f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.58f, 0.65f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.35f, 0.75f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.60f, 0.45f, 1.0f));
             if (ImGui::SmallButton("Hex")) {
-                TabHexView::NavigateTo(hit.rip);
-                UiManager::RequestTab(TabId::HexView);
+                ViewMemViewer::NavigateHex(hit.rip);
             }
             ImGui::PopStyleColor(2);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", L("Inspect instruction bytes in Hex View",
-                                          "Inspecionar bytes da instrucao no Hex View",
-                                          "Открыть в Hex"));
+
+            ImGui::SameLine();
+            const bool has_bp = bp.HasBreakpoint(hit.rip);
+            if (has_bp) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.20f, 0.20f, 0.85f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.25f, 0.25f, 1.0f));
+                if (ImGui::SmallButton("Del BP")) bp.RemoveBreakpoint(hit.rip);
+                ImGui::PopStyleColor(2);
+            } else {
+                if (ImGui::SmallButton("+BP")) bp.AddBreakpoint(hit.rip, "Watchpoint trigger");
             }
 
-            // 4. NOP / Restore button
+            if (hit.registers.valid) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.30f, 0.60f, 0.75f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.58f, 0.38f, 0.78f, 1.0f));
+                if (ImGui::SmallButton("Regs")) {
+                    selected_regs = hit.registers;
+                    has_selected_regs = true;
+                }
+                ImGui::PopStyleColor(2);
+            }
+
             ImGui::SameLine();
-            if (patched_instructions.find(hit.rip) != patched_instructions.end()) {
+            if (ViewDisasm::HasPatch(hit.rip)) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 0.40f, 0.85f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.65f, 0.50f, 1.0f));
                 if (ImGui::SmallButton(L("Restore", "Restaurar", "Вернуть"))) {
-                    auto& orig = patched_instructions[hit.rip];
-                    if (Debugger::MemoryScanner::WriteMemory(hit.rip, orig.data(), orig.size())) {
-                        char msg[80];
-                        std::snprintf(msg, sizeof(msg), "Restored instruction at 0x%012llx",
-                                      static_cast<unsigned long long>(hit.rip));
-                        patch_status_msg = msg;
-                        UiManager::SetStatus(msg);
-                        patched_instructions.erase(hit.rip);
-                    }
+                    ViewDisasm::RestoreInstruction(hit.rip);
+                    UiManager::SetStatus(L("Restored instruction", "Instrucao restaurada", "Восстановлена инструкция"));
                 }
                 ImGui::PopStyleColor(2);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", L("Restore original instruction bytes",
-                                              "Restaurar bytes originais da instrucao",
-                                              "Восстановить исходные байты"));
-                }
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.20f, 0.20f, 0.85f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.25f, 0.25f, 1.0f));
                 if (ImGui::SmallButton("NOP")) {
-                    uint8_t code_buf[16] = {0};
-                    if (Debugger::MemoryScanner::ReadMemory(hit.rip, code_buf, sizeof(code_buf))) {
-                        ZydisDecodedInstruction inst;
-                        ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-                        if (ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(inst, operands, code_buf, sizeof(code_buf)))) {
-                            const size_t len = (inst.length > 0 && inst.length <= 15) ? inst.length : 1;
-                            std::vector<uint8_t> orig(code_buf, code_buf + len);
-                            std::vector<uint8_t> nops(len, 0x90);
-                            if (Debugger::MemoryScanner::WriteMemory(hit.rip, nops.data(), len)) {
-                                patched_instructions[hit.rip] = orig;
-                                char msg[80];
-                                std::snprintf(msg, sizeof(msg), "NOPed %zu byte(s) at 0x%012llx",
-                                              len, static_cast<unsigned long long>(hit.rip));
-                                patch_status_msg = msg;
-                                UiManager::SetStatus(msg);
-                            }
-                        }
-                    }
+                    ViewDisasm::NopInstruction(hit.rip);
+                    UiManager::SetStatus(L("NOP applied", "NOP aplicado", "NOP применен"));
                 }
                 ImGui::PopStyleColor(2);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", L("NOP (disable) this instruction",
-                                              "Substituir instrucao por NOP (desativar)",
-                                              "Отключить инструкцию (NOP)"));
-                }
             }
 
             ImGui::PopID();
@@ -308,300 +242,17 @@ void TabDebugger::Render() {
     ImGui::Spacing();
     ImGui::Separator();
 
-    // 4. CPU Registers Panel (Collapsible)
-    if (ImGui::CollapsingHeader(L("CPU Registers (x86-64)", "Registradores da CPU (x86-64)", "Регистры CPU (x86-64)"), ImGuiTreeNodeFlags_DefaultOpen)) {
-        auto regs = has_selected_regs ? selected_regs : bp.GetLastRegisters();
-        if (!regs.valid) {
-            ImGui::TextDisabled("%s", L("No register snapshot available. Registers are captured when watchpoint triggers.",
-                                        "Nenhum snapshot de registradores disponivel. Registradores sao capturados nos watchpoints.",
-                                        "Нет данных регистров. Регистры сохраняются при срабатывании точек останова."));
-        } else {
-            if (has_selected_regs) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
-                                   L("[Viewing snapshot from selected Hit]",
-                                     "[Visualizando snapshot do Hit selecionado]",
-                                     "[Просмотр снимка выбранного события]"));
-                ImGui::SameLine();
-                if (ImGui::SmallButton(L("Show Latest", "Mostrar Recente", "Последние"))) {
-                    has_selected_regs = false;
-                }
-            }
-            if (ImGui::BeginTable("RegTable", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0); ImGui::Text("RAX: 0x%016llx", static_cast<unsigned long long>(regs.rax));
-                ImGui::TableSetColumnIndex(1); ImGui::Text("RBX: 0x%016llx", static_cast<unsigned long long>(regs.rbx));
-                ImGui::TableSetColumnIndex(2); ImGui::Text("RCX: 0x%016llx", static_cast<unsigned long long>(regs.rcx));
-                ImGui::TableSetColumnIndex(3); ImGui::Text("RDX: 0x%016llx", static_cast<unsigned long long>(regs.rdx));
-
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0); ImGui::Text("RSI: 0x%016llx", static_cast<unsigned long long>(regs.rsi));
-                ImGui::TableSetColumnIndex(1); ImGui::Text("RDI: 0x%016llx", static_cast<unsigned long long>(regs.rdi));
-                ImGui::TableSetColumnIndex(2); ImGui::Text("RBP: 0x%016llx", static_cast<unsigned long long>(regs.rbp));
-                ImGui::TableSetColumnIndex(3); ImGui::Text("RSP: 0x%016llx", static_cast<unsigned long long>(regs.rsp));
-
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0); ImGui::Text("R8 : 0x%016llx", static_cast<unsigned long long>(regs.r8));
-                ImGui::TableSetColumnIndex(1); ImGui::Text("R9 : 0x%016llx", static_cast<unsigned long long>(regs.r9));
-                ImGui::TableSetColumnIndex(2); ImGui::Text("R10: 0x%016llx", static_cast<unsigned long long>(regs.r10));
-                ImGui::TableSetColumnIndex(3); ImGui::Text("R11: 0x%016llx", static_cast<unsigned long long>(regs.r11));
-
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0); ImGui::Text("R12: 0x%016llx", static_cast<unsigned long long>(regs.r12));
-                ImGui::TableSetColumnIndex(1); ImGui::Text("R13: 0x%016llx", static_cast<unsigned long long>(regs.r13));
-                ImGui::TableSetColumnIndex(2); ImGui::Text("R14: 0x%016llx", static_cast<unsigned long long>(regs.r14));
-                ImGui::TableSetColumnIndex(3); ImGui::Text("R15: 0x%016llx", static_cast<unsigned long long>(regs.r15));
-
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "RIP: 0x%016llx", static_cast<unsigned long long>(regs.rip));
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("RFL: 0x%08llx", static_cast<unsigned long long>(regs.rflags));
-                ImGui::TableSetColumnIndex(2);
-                if (ImGui::SmallButton(L("Copy Regs", "Copiar Regs", "Копировать"))) {
-                    char reg_text[512];
-                    std::snprintf(reg_text, sizeof(reg_text),
-                                  "RAX=%016llx RBX=%016llx RCX=%016llx RDX=%016llx\n"
-                                  "RSI=%016llx RDI=%016llx RBP=%016llx RSP=%016llx\n"
-                                  "R8 =%016llx R9 =%016llx R10=%016llx R11=%016llx\n"
-                                  "R12=%016llx R13=%016llx R14=%016llx R15=%016llx\n"
-                                  "RIP=%016llx RFL=%08llx\n",
-                                  static_cast<unsigned long long>(regs.rax), static_cast<unsigned long long>(regs.rbx),
-                                  static_cast<unsigned long long>(regs.rcx), static_cast<unsigned long long>(regs.rdx),
-                                  static_cast<unsigned long long>(regs.rsi), static_cast<unsigned long long>(regs.rdi),
-                                  static_cast<unsigned long long>(regs.rbp), static_cast<unsigned long long>(regs.rsp),
-                                  static_cast<unsigned long long>(regs.r8),  static_cast<unsigned long long>(regs.r9),
-                                  static_cast<unsigned long long>(regs.r10), static_cast<unsigned long long>(regs.r11),
-                                  static_cast<unsigned long long>(regs.r12), static_cast<unsigned long long>(regs.r13),
-                                  static_cast<unsigned long long>(regs.r14), static_cast<unsigned long long>(regs.r15),
-                                  static_cast<unsigned long long>(regs.rip), static_cast<unsigned long long>(regs.rflags));
-                    ImGui::SetClipboardText(reg_text);
-                }
-                ImGui::TableSetColumnIndex(3);
-                ImGui::EndTable();
-            }
-        }
-    }
+    // 4. CPU Registers Panel
+    auto regs = has_selected_regs ? selected_regs : bp.GetLastRegisters();
+    ViewRegisters::RenderRegistersTable(regs, has_selected_regs);
 
     ImGui::Spacing();
     ImGui::Separator();
 
     // 5. Interactive x86-64 Disassembler
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s",
-                       L("x86-64 Disassembler (Live View):",
-                         "Desassemblador x86-64 (Visao em Tempo Real):",
-                         "Дизассемблер x86-64 (В реальном времени):"));
-
-    ImGui::SetNextItemWidth(170.0f);
-    if (ImGui::InputText("##DisasmAddr", disasm_addr_input, sizeof(disasm_addr_input), ImGuiInputTextFlags_EnterReturnsTrue)) {
-        disasm_current_addr = std::strtoull(disasm_addr_input, nullptr, 16);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(L("Go", "Ir", "Перейти"))) {
-        disasm_current_addr = std::strtoull(disasm_addr_input, nullptr, 16);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(L("Paste##disasm", "Colar##disasm", "Вставить##disasm"))) {
-        const char* clip = SDL_GetClipboardText();
-        if (clip && clip[0]) {
-            std::snprintf(disasm_addr_input, sizeof(disasm_addr_input), "%s", clip);
-            disasm_current_addr = std::strtoull(disasm_addr_input, nullptr, 16);
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(L("Jump to RIP", "Pular para RIP", "К RIP"))) {
-        const uintptr_t rip = bp.GetLastHitRip();
-        if (rip) {
-            SetDisasmAddress(rip);
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("-32B")) {
-        if (disasm_current_addr >= 32) {
-            SetDisasmAddress(disasm_current_addr - 32);
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("+32B")) {
-        SetDisasmAddress(disasm_current_addr + 32);
-    }
-
-    if (!patch_status_msg.empty()) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", patch_status_msg.c_str());
-    }
-
-    // Read 256 bytes for disassembly window
-    uint8_t code_chunk[256];
-    const bool read_ok = Debugger::MemoryScanner::ReadMemory(disasm_current_addr, code_chunk, sizeof(code_chunk));
-    if (!read_ok) {
-        ImGui::TextDisabled("%s (0x%012llx)",
-                            L("Cannot read memory at this address (unmapped or protected page)",
-                              "Nao foi possivel ler a memoria neste endereco (pagina nao mapeada ou protegida)",
-                              "Невозможно прочитать память по этому адресу"),
-                            static_cast<unsigned long long>(disasm_current_addr));
-    } else {
-        if (ImGui::BeginTable("DisasmTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 230))) {
-            ImGui::TableSetupColumn("BP", ImGuiTableColumnFlags_WidthFixed, 36.0f);
-            ImGui::TableSetupColumn(L("Address", "Endereco", "Адрес"), ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            ImGui::TableSetupColumn(L("Bytes", "Bytes", "Байты"), ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn(L("Instruction", "Instrucao", "Инструкция"), ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn(L("Actions", "Acoes", "Действия"), ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            ImGui::TableHeadersRow();
-
-            uintptr_t cur_pc = disasm_current_addr;
-            size_t offset = 0;
-            const uintptr_t last_rip = bp.GetLastHitRip();
-            int inst_count = 0;
-
-            while (offset < sizeof(code_chunk) && inst_count < 28) {
-                ZydisDecodedInstruction inst;
-                ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-                const size_t rem_size = sizeof(code_chunk) - offset;
-                const ZyanStatus status = Common::Decoder::Instance()->decodeInstruction(
-                    inst, operands, code_chunk + offset, rem_size);
-
-                if (!ZYAN_SUCCESS(status)) {
-                    // Unknown / unaligned byte
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextDisabled(" . ");
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("0x%012llx", static_cast<unsigned long long>(cur_pc));
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextDisabled("%02X", code_chunk[offset]);
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::TextDisabled("db 0x%02X", code_chunk[offset]);
-                    ImGui::TableSetColumnIndex(4);
-
-                    offset += 1;
-                    cur_pc += 1;
-                    inst_count++;
-                    continue;
-                }
-
-                const size_t inst_len = (inst.length > 0 && inst.length <= 15) ? inst.length : 1;
-                const std::string disasm_text = Common::Decoder::Instance()->disassembleInst(inst, operands, cur_pc);
-
-                // Format raw bytes
-                char hex_bytes[48];
-                int pos = 0;
-                for (size_t b = 0; b < inst_len && b < 5; ++b) {
-                    pos += std::snprintf(hex_bytes + pos, sizeof(hex_bytes) - pos, "%02X ", code_chunk[offset + b]);
-                }
-                if (inst_len > 5) {
-                    std::snprintf(hex_bytes + pos, sizeof(hex_bytes) - pos, "..");
-                }
-
-                const bool is_hit_rip = (cur_pc == last_rip);
-                const bool has_bp = bp.HasBreakpoint(cur_pc);
-
-                ImGui::TableNextRow();
-                if (is_hit_rip) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImColor(70, 60, 20, 180));
-                }
-
-                // Column 0: BP
-                ImGui::TableSetColumnIndex(0);
-                if (has_bp) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "[BP]");
-                } else {
-                    ImGui::TextDisabled(" . ");
-                }
-
-                // Column 1: Address (click to copy)
-                ImGui::TableSetColumnIndex(1);
-                char addr_str[32];
-                std::snprintf(addr_str, sizeof(addr_str), "0x%012llx", static_cast<unsigned long long>(cur_pc));
-                if (is_hit_rip) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.3f, 1.0f));
-                }
-                if (ImGui::Selectable(addr_str, false, ImGuiSelectableFlags_None)) {
-                    ImGui::SetClipboardText(addr_str);
-                    SDL_SetClipboardText(addr_str);
-                    UiManager::SetStatus(std::string("Copied: ") + addr_str);
-                }
-                if (is_hit_rip) {
-                    ImGui::PopStyleColor();
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", L("Click to copy address", "Clique para copiar o endereco", "Нажмите для копирования"));
-                }
-
-                // Column 2: Bytes
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextDisabled("%s", hex_bytes);
-
-                // Column 3: Instruction
-                ImGui::TableSetColumnIndex(3);
-                if (inst.meta.category == ZYDIS_CATEGORY_CALL ||
-                    inst.meta.category == ZYDIS_CATEGORY_COND_BR ||
-                    inst.meta.category == ZYDIS_CATEGORY_UNCOND_BR) {
-                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), "%s", disasm_text.c_str());
-                } else {
-                    ImGui::Text("%s", disasm_text.c_str());
-                }
-
-                // Column 4: Actions (BP, NOP/Restore)
-                ImGui::TableSetColumnIndex(4);
-                ImGui::PushID(reinterpret_cast<void*>(cur_pc));
-                const char* bp_label = has_bp ? "Del BP" : "+ BP";
-                if (ImGui::SmallButton(bp_label)) {
-                    if (has_bp) {
-                        bp.RemoveBreakpoint(cur_pc);
-                        UiManager::SetStatus(L("Breakpoint removed", "Breakpoint removido", "Точка останова удалена"));
-                    } else {
-                        bp.AddBreakpoint(cur_pc, "Disasm BP");
-                        UiManager::SetStatus(L("Breakpoint added", "Breakpoint adicionado", "Точка останова добавлена"));
-                    }
-                }
-                ImGui::SameLine();
-                if (patched_instructions.find(cur_pc) != patched_instructions.end()) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 0.40f, 0.85f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.65f, 0.50f, 1.0f));
-                    if (ImGui::SmallButton(L("Restore", "Restaurar", "Вернуть"))) {
-                        auto& orig = patched_instructions[cur_pc];
-                        if (Debugger::MemoryScanner::WriteMemory(cur_pc, orig.data(), orig.size())) {
-                            char msg[80];
-                            std::snprintf(msg, sizeof(msg), "Restored original bytes at 0x%012llx",
-                                          static_cast<unsigned long long>(cur_pc));
-                            patch_status_msg = msg;
-                            UiManager::SetStatus(msg);
-                            patched_instructions.erase(cur_pc);
-                        }
-                    }
-                    ImGui::PopStyleColor(2);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", L("Restore original instruction bytes",
-                                                  "Restaurar bytes originais da instrucao",
-                                                  "Восстановить исходные байты"));
-                    }
-                } else {
-                    if (ImGui::SmallButton("NOP")) {
-                        std::vector<uint8_t> orig(code_chunk + offset, code_chunk + offset + inst_len);
-                        std::vector<uint8_t> nops(inst_len, 0x90);
-                        if (Debugger::MemoryScanner::WriteMemory(cur_pc, nops.data(), inst_len)) {
-                            patched_instructions[cur_pc] = orig;
-                            char msg[80];
-                            std::snprintf(msg, sizeof(msg), "Patched %zu byte(s) with NOP at 0x%012llx",
-                                          inst_len, static_cast<unsigned long long>(cur_pc));
-                            patch_status_msg = msg;
-                            UiManager::SetStatus(msg);
-                        }
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", L("NOP (disable) this instruction",
-                                                  "Substituir instrucao por NOP (desativar)",
-                                                  "Отключить инструкцию (NOP)"));
-                    }
-                }
-                ImGui::PopID();
-
-                offset += inst_len;
-                cur_pc += inst_len;
-                inst_count++;
-            }
-            ImGui::EndTable();
-        }
-    }
+    uintptr_t cur_disasm = ViewDisasm::GetDisasmAddress();
+    ViewDisasm::RenderDisassemblerView(cur_disasm, 240.0f, false);
+    ViewDisasm::SetDisasmAddress(cur_disasm);
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -616,9 +267,7 @@ void TabDebugger::Render() {
     ImGui::SameLine();
     if (ImGui::Button(L("Paste##bp", "Colar##bp", "Вставить##bp"))) {
         const char* clip = SDL_GetClipboardText();
-        if (clip && clip[0]) {
-            std::snprintf(bp_addr_input, sizeof(bp_addr_input), "%s", clip);
-        }
+        if (clip && clip[0]) std::snprintf(bp_addr_input, sizeof(bp_addr_input), "%s", clip);
     }
     ImGui::SameLine();
     if (ImGui::Button(L("Add Breakpoint", "Adicionar Breakpoint", "Добавить"))) {

@@ -16,7 +16,7 @@ struct WatchEntry {
     bool frozen{false};
     double freeze_value{0.0};
     bool is_pointer{false};
-    std::vector<int64_t> offsets; // ex: { 0x08, 0x94 }
+    std::vector<int64_t> offsets; // ex: { 0x10, 0x20 }
 };
 
 class MemoryEditor {
@@ -36,6 +36,8 @@ public:
     void SetLabel(size_t index, const std::string& label);
     void SetType(size_t index, DataType type);
     void SetOffsets(size_t index, const std::vector<int64_t>& offsets);
+    bool GetEntry(size_t index, WatchEntry& out) const;
+    void UpdateEntry(size_t index, const WatchEntry& entry);
 
     /// Safely resolves pointer chain (returns 0 if null or unmapped)
     uintptr_t ResolveAddress(const WatchEntry& entry) const;

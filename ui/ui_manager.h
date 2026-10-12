@@ -9,8 +9,7 @@ enum class TabId {
     None = -1,
     Scanner = 0,
     Watchlist = 1,
-    HexView = 2,
-    Debugger = 3
+    Debugger = 2
 };
 
 class UiManager {
@@ -26,6 +25,11 @@ public:
     static bool IsMemoryWindowOpen();
     static void SetMemoryWindowOpen(bool open);
     static void ToggleMemoryWindow();
+
+    static bool IsMemoryViewerOpen();
+    static void SetMemoryViewerOpen(bool open);
+    static void ToggleMemoryViewer();
+    static void RenderMemoryViewerWindow();
 };
 
 } // namespace UI

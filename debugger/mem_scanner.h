@@ -21,7 +21,8 @@ enum class DataType {
     I32,
     I64,
     Float,
-    Double
+    Double,
+    Pattern
 };
 
 enum class ScanComparison {
@@ -49,12 +50,16 @@ struct MemoryRegion {
     uintptr_t end;
 };
 
+struct PatternToken;
+class PatternScanner;
+
 class MemoryScanner {
 public:
     static MemoryScanner& Get();
     ~MemoryScanner();
 
     void StartFirstScan(DataType type, ScanComparison comp, double value, ScanScope scope);
+    void StartPatternScan(const std::string& pattern_str, ScanScope scope);
     void NextScan(ScanComparison comp, double value);
     void CancelScan();
     void Reset();
@@ -65,6 +70,8 @@ public:
     bool IsScanning() const { return scanning.load(std::memory_order_relaxed); }
     float GetProgress() const { return progress.load(std::memory_order_relaxed); }
     DataType GetCurrentType() const;
+    size_t GetCurrentPatternLength() const;
+    std::string GetCurrentPatternString() const;
 
     static bool ReadMemory(uintptr_t addr, void* dest, size_t size);
     static bool WriteMemory(uintptr_t addr, const void* src, size_t size);
@@ -74,8 +81,11 @@ public:
 
     static size_t GetTypeSize(DataType type);
     static const char* GetTypeName(DataType type);
+    static double DecodeValue(DataType type, const void* ptr);
+    static uint64_t EncodeRaw(DataType type, const void* ptr);
 
 private:
+    friend class PatternScanner;
     MemoryScanner() = default;
 
     void DoFirstScan(DataType type, ScanComparison comp, double value, ScanScope scope);
@@ -91,6 +101,8 @@ private:
 
     DataType current_type{DataType::U32};
     std::vector<ScanMatch> matches;
+    std::vector<PatternToken> current_tokens;
+    std::string current_pattern_str;
 };
 
 } // namespace Debugger

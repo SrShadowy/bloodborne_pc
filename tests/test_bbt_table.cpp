@@ -9,28 +9,25 @@ int main() {
     editor.Clear();
 
     // 1. Setup multi-level pointer in memory:
-    // Target Value: 123456789
-    // Level 1 ptr + 0x94 = Target
-    // Base ptr + 0x08 = Level 1 ptr
     uint32_t target_val = 150;
     uintptr_t target_addr = reinterpret_cast<uintptr_t>(&target_val);
 
-    uintptr_t level1_ptr = target_addr - 0x94;
+    uintptr_t level1_ptr = target_addr - 0x20;
     uintptr_t level1_ptr_addr = reinterpret_cast<uintptr_t>(&level1_ptr);
 
-    uintptr_t base_ptr = level1_ptr_addr - 0x08;
+    uintptr_t base_ptr = level1_ptr_addr - 0x10;
     uintptr_t base_ptr_addr = reinterpret_cast<uintptr_t>(&base_ptr);
 
-    // 2. Add Pointer Watch with offsets { 0x08, 0x94 }
-    editor.AddPointerWatch("Blood Echoes", base_ptr_addr, { 0x08, 0x94 }, Debugger::DataType::U32);
+    // 2. Add Pointer Watch with offsets { 0x10, 0x20 }
+    editor.AddPointerWatch("Player Health", base_ptr_addr, { 0x10, 0x20 }, Debugger::DataType::U32);
     assert(editor.GetCount() == 1);
 
     auto entries = editor.GetEntries();
-    assert(entries[0].label == "Blood Echoes");
+    assert(entries[0].label == "Player Health");
     assert(entries[0].is_pointer == true);
     assert(entries[0].offsets.size() == 2);
-    assert(entries[0].offsets[0] == 0x08);
-    assert(entries[0].offsets[1] == 0x94);
+    assert(entries[0].offsets[0] == 0x10);
+    assert(entries[0].offsets[1] == 0x20);
 
     // 3. Test Resolution
     uintptr_t resolved = editor.ResolveAddress(entries[0]);
@@ -63,16 +60,26 @@ int main() {
     assert(editor.GetCount() == 2);
 
     auto loaded_entries = editor.GetEntries();
-    assert(loaded_entries[0].label == "Blood Echoes");
+    assert(loaded_entries[0].label == "Player Health");
     assert(loaded_entries[0].is_pointer == true);
     assert(loaded_entries[0].offsets.size() == 2);
-    assert(loaded_entries[0].offsets[0] == 0x08);
-    assert(loaded_entries[0].offsets[1] == 0x94);
+    assert(loaded_entries[0].offsets[0] == 0x10);
+    assert(loaded_entries[0].offsets[1] == 0x20);
 
     uintptr_t reload_resolved = editor.ResolveAddress(loaded_entries[0]);
     assert(reload_resolved == target_addr);
 
+    // 7. Test UpdateEntry & GetEntry
+    Debugger::WatchEntry updated_e = loaded_entries[0];
+    updated_e.label = "Updated Echoes";
+    updated_e.type = Debugger::DataType::U64;
+    editor.UpdateEntry(0, updated_e);
+    Debugger::WatchEntry retrieved_e;
+    assert(editor.GetEntry(0, retrieved_e));
+    assert(retrieved_e.label == "Updated Echoes");
+    assert(retrieved_e.type == Debugger::DataType::U64);
+
     unlink(test_path);
-    std::puts("PASS: bbt-table-test passed all multi-level pointer and serialization checks!");
+    std::puts("PASS: bbt-table-test passed all multi-level pointer, serialization and update checks!");
     return 0;
 }

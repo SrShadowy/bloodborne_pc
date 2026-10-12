@@ -201,6 +201,11 @@ target_compile_options(bbt-table-test PRIVATE -UNDEBUG -fPIC)
 target_include_directories(bbt-table-test PRIVATE .. ../debugger)
 target_link_libraries(bbt-table-test PRIVATE bbgpu)
 
+add_executable(assembler-pattern-test EXCLUDE_FROM_ALL ../tests/test_assembler_pattern.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_compile_options(assembler-pattern-test PRIVATE -UNDEBUG -fPIC)
+target_include_directories(assembler-pattern-test PRIVATE .. ../debugger ../ui)
+target_link_libraries(assembler-pattern-test PRIVATE bbgpu)
+
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
 # The test's Vulkan-Hpp inline methods have a different set of platform extensions

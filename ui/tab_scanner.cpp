@@ -3,7 +3,7 @@
 #include "ui_strings.h"
 #include "mem_scanner.h"
 #include "mem_editor.h"
-#include "tab_hexview.h"
+#include "view_memviewer.h"
 #include "breakpoint.h"
 #include "ui_manager.h"
 
@@ -35,10 +35,15 @@ void TabScanner::Render() {
 
         // Left: Inputs
         ImGui::TableSetColumnIndex(0);
-        ImGui::SetNextItemWidth(170.0f);
+        const bool is_pattern = (selected_type == 10);
+        ImGui::SetNextItemWidth(210.0f);
         double val = std::strtod(value_input, nullptr);
-        if (ImGui::InputText(L("Value", "Valor", "Значение"), value_input, sizeof(value_input), ImGuiInputTextFlags_EnterReturnsTrue)) {
-            if (scanner.GetMatchCount() > 0) {
+        const char* val_label = is_pattern ? L("Pattern (Hex / ??)", "Padrao (Hex / ??)", "Сигнатура (Hex / ??)")
+                                           : L("Value", "Valor", "Значение");
+        if (ImGui::InputText(val_label, value_input, sizeof(value_input), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (is_pattern) {
+                scanner.StartPatternScan(value_input, static_cast<Debugger::ScanScope>(selected_scope));
+            } else if (scanner.GetMatchCount() > 0) {
                 scanner.NextScan(static_cast<Debugger::ScanComparison>(selected_comp), val);
             } else {
                 scanner.StartFirstScan(static_cast<Debugger::DataType>(selected_type),
@@ -47,51 +52,35 @@ void TabScanner::Render() {
                                        static_cast<Debugger::ScanScope>(selected_scope));
             }
         }
-        ImGui::SetItemTooltip("%s", L("Press Enter to run Scan", "Pressione Enter para escanear", "Нажмите Enter для поиска"));
+        ImGui::SetItemTooltip("%s", is_pattern ? "e.g. 48 8B 05 ?? ?? ?? ?? 48 85 C0"
+                                               : L("Press Enter to run Scan", "Pressione Enter para escanear", "Нажмите Enter для поиска"));
 
         const char* type_names[] = {
             "1 Byte (u8)", "2 Bytes (u16)", "4 Bytes (u32)", "8 Bytes (u64)",
             "1 Byte (i8)", "2 Bytes (i16)", "4 Bytes (i32)", "8 Bytes (i64)",
-            "Float", "Double"
+            "Float", "Double", "Array of Bytes (AoB)"
         };
         ImGui::SetNextItemWidth(170.0f);
         ImGui::Combo(L("Type", "Tipo", "Тип"), &selected_type, type_names, IM_ARRAYSIZE(type_names));
 
-        const char* scope_names_en[] = {
-            "Executable & Data (<256MB, Fast)",
-            "Guest Memory (PS4 Heap)",
-            "Full Process"
-        };
-        const char* scope_names_pt[] = {
-            "Executavel e .data (<256MB, Rapido)",
-            "Memoria Guest (Heap PS4)",
-            "Processo Completo"
-        };
-        const char* scope_names_ru[] = {
-            "Исполняемый файл и данные (<256 МБ)",
-            "Память PS4 (Heap)",
-            "Весь процесс"
-        };
+        const char* scope_names_en[] = { "Executable & Data (<256MB, Fast)", "Guest Memory (PS4 Heap)", "Full Process" };
+        const char* scope_names_pt[] = { "Executavel e .data (<256MB, Rapido)", "Memoria Guest (Heap PS4)", "Processo Completo" };
+        const char* scope_names_ru[] = { "Исполняемый файл и данные (<256 МБ)", "Память PS4 (Heap)", "Весь процесс" };
         const char** scope_names = GetCurrentLang() == BbSettings::LangPortuguese ? scope_names_pt
-                                 : GetCurrentLang() == BbSettings::LangRussian    ? scope_names_ru
-                                                                                 : scope_names_en;
+                                 : GetCurrentLang() == BbSettings::LangRussian    ? scope_names_ru : scope_names_en;
         ImGui::SetNextItemWidth(230.0f);
         ImGui::Combo(L("Scope", "Regiao", "Область"), &selected_scope, scope_names, 3);
 
-        const char* comp_names_en[] = {
-            "Exact Value", "Changed", "Unchanged", "Increased", "Decreased"
-        };
-        const char* comp_names_pt[] = {
-            "Valor Exato", "Mudou", "Nao Mudou", "Aumentou", "Diminuiu"
-        };
-        const char* comp_names_ru[] = {
-            "Точное значение", "Изменилось", "Не изменилось", "Увеличилось", "Уменьшилось"
-        };
+        const char* comp_names_en[] = { "Exact Value", "Changed", "Unchanged", "Increased", "Decreased" };
+        const char* comp_names_pt[] = { "Valor Exato", "Mudou", "Nao Mudou", "Aumentou", "Diminuiu" };
+        const char* comp_names_ru[] = { "Точное значение", "Изменилось", "Не изменилось", "Увеличилось", "Уменьшилось" };
         const char** comp_names = GetCurrentLang() == BbSettings::LangPortuguese ? comp_names_pt
                                 : GetCurrentLang() == BbSettings::LangRussian    ? comp_names_ru
                                                                                 : comp_names_en;
+        ImGui::BeginDisabled(is_pattern);
         ImGui::SetNextItemWidth(170.0f);
         ImGui::Combo(L("Condition", "Condicao", "Тип поиска"), &selected_comp, comp_names, 5);
+        ImGui::EndDisabled();
 
         // Right: Scan buttons
         ImGui::TableSetColumnIndex(1);
@@ -102,10 +91,14 @@ void TabScanner::Render() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.48f, 0.32f, 0.85f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.62f, 0.40f, 1.0f));
         if (ImGui::Button(L("First Scan", "Primeiro Scan", "Первый поиск"), ImVec2(125, 30))) {
-            scanner.StartFirstScan(static_cast<Debugger::DataType>(selected_type),
-                                   static_cast<Debugger::ScanComparison>(selected_comp),
-                                   val,
-                                   static_cast<Debugger::ScanScope>(selected_scope));
+            if (is_pattern) {
+                scanner.StartPatternScan(value_input, static_cast<Debugger::ScanScope>(selected_scope));
+            } else {
+                scanner.StartFirstScan(static_cast<Debugger::DataType>(selected_type),
+                                       static_cast<Debugger::ScanComparison>(selected_comp),
+                                       val,
+                                       static_cast<Debugger::ScanScope>(selected_scope));
+            }
         }
         ImGui::PopStyleColor(2);
 
@@ -242,6 +235,10 @@ void TabScanner::Render() {
                     std::snprintf(prev_str, sizeof(prev_str), "%.4f", dval);
                     break;
                 }
+                case Debugger::DataType::Pattern: {
+                    std::snprintf(prev_str, sizeof(prev_str), "Pattern");
+                    break;
+                }
                 }
                 ImGui::TableSetColumnIndex(2);
                 ImGui::Text("%s", prev_str);
@@ -255,7 +252,7 @@ void TabScanner::Render() {
                 if (ImGui::SmallButton(L("+ Watch", "+ Watch", "+ Список"))) {
                     char label[32];
                     std::snprintf(label, sizeof(label), "Item %zu", editor.GetCount() + 1);
-                    editor.AddWatch(label, m.address, scan_type);
+                    editor.AddWatch(label, m.address, (scan_type == Debugger::DataType::Pattern) ? Debugger::DataType::U32 : scan_type);
                     UiManager::SetStatus(L("Address added to Watchlist!", "Endereco adicionado a Watchlist!", "Адрес добавлен в таблицу!"));
                 }
                 ImGui::PopStyleColor(2);
@@ -265,12 +262,20 @@ void TabScanner::Render() {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.32f, 0.46f, 0.75f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.44f, 0.64f, 0.95f));
                 if (ImGui::SmallButton("Hex")) {
-                    TabHexView::NavigateTo(m.address);
-                    UiManager::RequestTab(TabId::HexView);
+                    ViewMemViewer::NavigateHex(m.address);
                 }
                 ImGui::PopStyleColor(2);
 
-                // 3. Attach Who Writes?
+                // 3. Jump to Disasm View
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.40f, 0.48f, 0.75f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.52f, 0.62f, 0.95f));
+                if (ImGui::SmallButton("ASM")) {
+                    ViewMemViewer::NavigateDisasm(m.address);
+                }
+                ImGui::PopStyleColor(2);
+
+                // 4. Attach Who Writes?
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.36f, 0.26f, 0.50f, 0.75f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.48f, 0.35f, 0.68f, 0.95f));
