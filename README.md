@@ -134,37 +134,112 @@ Explore, reverse-engineer, and modify Bloodborne's runtime state live without ex
 
 ## ⚙️ System Requirements
 
-- **Operating System:** Linux x86-64.
-- **Graphics Card:** GPU supporting Vulkan 1.3 (tested on AMD Radeon RX 7000 / RDNA 2/3 with Mesa/RADV; NVIDIA supported via classic memory model).
+- **Operating System:** Linux x86-64 (Arch Linux, Ubuntu 24.04+, Fedora 40+, NixOS, Steam Deck, or compatible distributions).
+- **Graphics Card:** GPU supporting **Vulkan 1.3** (tested thoroughly on AMD Radeon RX 6000/7000 / RDNA 2/3 with Mesa RADV; NVIDIA GeForce RTX/GTX supported via classic memory model).
 - **Shader Features for FSR 4 / 4.1.1:** Requires Float16, Int8/Int16, integer dot products, and linear compute derivatives (`VK_VALVE_shader_mixed_float_dot_product` for FSR 4.1.1). Unsupported hardware seamlessly falls back to FSR 3.1 or TAA.
 - **Game Dump:** Decrypted Bloodborne dump folder (`CUSA03173` or regional variants) updated to version **1.09**.
-- **Build Dependencies:** GCC / Clang, CMake, Ninja, Python 3, glslang, SDL3, and Vulkan headers (or `nix-shell` via `shell.nix`).
 
 ---
 
-## 🚀 Building & Running
+## 📦 Installing Prerequisites & Dependencies
 
-### 1. Clone the repository
+Before building, install the required compiler tools, Vulkan headers, SDL3, and multimedia libraries for your Linux distribution:
+
+### Arch Linux / Manjaro / EndeavourOS
 ```bash
-git clone --recursive https://github.com/deadinside28/bloodborne_pc.git bbport
+sudo pacman -S --needed base-devel git cmake ninja pkgconf python \
+    vulkan-headers vulkan-icd-loader sdl3 glslang boost fmt xxhash \
+    zydis xbyak ffmpeg protobuf openssl zlib miniupnpc nlohmann-json \
+    libadwaita python-gobject
+```
+
+### Ubuntu (24.04 LTS+) / Debian (Trixie/Sid) / Linux Mint
+```bash
+sudo apt update && sudo apt install -y build-essential git cmake ninja-build pkg-config \
+    python3 python3-pip libvulkan-dev libsdl3-dev glslang-tools libboost-all-dev \
+    libfmt-dev libxxhash-dev libavcodec-dev libavutil-dev libswresample-dev \
+    libprotobuf-dev protobuf-compiler libssl-dev zlib1g-dev libminiupnpc-dev \
+    nlohmann-json3-dev python3-gi python3-gi-cairo gir1.2-adw-1 gir1.2-gtk-4.0
+```
+> [!NOTE]
+> If `libsdl3-dev` is not available in your Ubuntu/Debian repositories, you can install it via the official SDL GitHub releases or compile SDL3 from source.
+
+### Fedora (40+) / Nobara / Bazzite
+```bash
+sudo dnf install -y gcc-c++ git cmake ninja-build pkgconf-pkg-config python3 \
+    vulkan-headers vulkan-loader-devel SDL3-devel glslang boost-devel fmt-devel \
+    xxhash-devel ffmpeg-free-devel protobuf-devel openssl-devel zlib-devel \
+    miniupnpc-devel json-devel libadwaita-devel python3-gobject
+```
+
+### NixOS / Steam Deck (using Nix)
+No manual dependency installation is needed! The project includes a fully defined [`shell.nix`](shell.nix). Simply enter the environment:
+```bash
+nix-shell --run "bash build.sh"
+```
+
+---
+
+## 🚀 Building & Compiling
+
+### 1. Clone this Repository (with submodules)
+Clone this fork recursively to pull all third-party components (FSR-Vulkan, Dear ImGui, LibAtrac9, sirit, etc.):
+```bash
+git clone --recursive https://github.com/SrShadowy/bloodborne_pc.git bbport
 cd bbport
 ```
 
-### 2. Build the binaries
+> [!TIP]
+> If you already cloned the repository without `--recursive`, initialize and update the submodules with:
+> ```bash
+> git submodule update --init --recursive
+> ```
+
+### 2. Compile the Binaries
+Run the automated build script:
 ```bash
 bash build.sh
 ```
-This compiles `out/bb-probe` (the native loader) and `out/gpu/libbbgpu.so` (the Vulkan translation runtime).
+This builds:
+* `out/gpu/libbbgpu.so`: The Vulkan translation renderer, shader recompiler, FSR pipeline, and in-game overlay.
+* `out/gpu/libbbnet.so`: The optional online module (shadNet client for spectres, bloodstains, player messages, and co-op networking).
+* `out/libatrac9.a`: High-performance native ATRAC9 audio decoder.
+* `out/bb-probe`: The native x86-64 Linux loader and PS4 HLE runtime.
+* `out/bb-gpu-capabilities`: GPU capability probe for automatic resolution and controller detection.
 
-### 3. Launching
-You can run via the GTK4 launcher (recommended):
+### 3. Advanced Compilation Flags & Options
+
+You can customize the compilation by prepending environment variables to `bash build.sh`:
+
+| Environment Variable | Description | Example |
+| :--- | :--- | :--- |
+| `BB_MARCH=native` | Compiles with host CPU optimizations (AVX2, FMA, BMI2) for maximum framerate | `BB_MARCH=native bash build.sh` |
+| `BB_LTO=OFF` | Disables Link-Time Optimization for significantly faster build times | `BB_LTO=OFF bash build.sh` |
+| `BB_PGO=generate` / `use` | Profile-Guided Optimization (generate profiling data during gameplay, then build optimized) | `BB_PGO=use bash build.sh` |
+| `DLSS_SDK_ROOT=<path>` | Enables NVIDIA DLSS bridge using the NVIDIA DLSS SDK | `DLSS_SDK_ROOT=~/DLSS bash build.sh` |
+| `--test` | Builds and runs the automated unit test suite (115+ tests) | `bash build.sh --test` |
+
+---
+
+## 🎮 Launching the Game
+
+### Method A: GTK4 Launcher with Full Gamepad Support (Recommended)
+Launch the modern graphical launcher with Brazilian Portuguese support and complete controller navigation:
 ```bash
 bash launcher/bb-launcher.sh
 ```
-*Or launch directly via terminal:*
+In the launcher, select your decrypted `CUSA03173` directory, customize graphics, configure upscaling (FSR 4 / FSR 3.1 / TAA), and press **Play** (or `Start` / `(Y)` on your gamepad).
+
+### Method B: Direct Terminal Launch
+To launch directly from the terminal without opening the launcher GUI:
 ```bash
-BB_GAME_DIR=/path/to/CUSA03173 bash run.sh
+BB_GAME_DIR="/caminho/para/seu/CUSA03173" bash run.sh
 ```
+
+#### Useful Environment Variables for `run.sh`:
+* `BB_GAME_DIR`: Path to the game folder containing `eboot.bin`.
+* `BB_SAVE_LOG=1`: Saves detailed run logs, frametime graphs, and readback statistics in `logs/`.
+* `BB_DATA_DIR`: Custom directory for storing saves, patches, and configurations (defaults to `.`).
 
 ---
 
