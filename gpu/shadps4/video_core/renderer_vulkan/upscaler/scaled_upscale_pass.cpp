@@ -110,6 +110,9 @@ bool ExecuteScaledUpscale(ScaledUpscaleContext& ctx) {
             }
         }
         if (ok) {
+            const bool was_reset = ctx.reset;
+            ctx.reset = false;
+            ctx.dispatched_last_frame = true;
             const vk::ImageBlit region{
                 .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
                 .srcOffsets = std::array{vk::Offset3D{0, 0, 0}, vk::Offset3D{s32(ow), s32(oh), 1}},
@@ -123,7 +126,7 @@ bool ExecuteScaledUpscale(ScaledUpscaleContext& ctx) {
             if (BbSettings::Get().frame_generation.load()) {
                 ctx.fg_bridge.Prepare(cmdbuf, ctx.ui_pass.GetUiImage(), w, h, ow, oh, depth_image,
                                       depth_view, depth_format, ctx.motion_image, ctx.motion_view,
-                                      ctx.camera_motion, frame_ms, ctx.reset,
+                                      ctx.camera_motion, frame_ms, was_reset,
                                       BbStats::frame_number.load());
             }
         }
@@ -169,6 +172,7 @@ bool ExecuteScaledUpscale(ScaledUpscaleContext& ctx) {
     };
     bool ok = ctx.fsr3_bridge.RecordDispatchAsync(in, ctx.dispatch_failed);
     if (ok) {
+        const bool was_reset = ctx.reset;
         ctx.reset = false;
         ctx.dispatched_last_frame = true;
         ctx.taa_pass.RecordExtraSharpen(ctx.ui_pass.GetUiImage(), ctx.ui_pass.GetUiView(),
@@ -176,7 +180,7 @@ bool ExecuteScaledUpscale(ScaledUpscaleContext& ctx) {
         if (BbSettings::Get().frame_generation.load()) {
             ctx.fg_bridge.Prepare(ctx.scheduler.CommandBuffer(), ctx.ui_pass.GetUiImage(), w, h, ow,
                                   oh, depth_image, depth_view, depth_format, ctx.motion_image,
-                                  ctx.motion_view, ctx.camera_motion, frame_ms, ctx.reset,
+                                  ctx.motion_view, ctx.camera_motion, frame_ms, was_reset,
                                   BbStats::frame_number.load());
         }
     }

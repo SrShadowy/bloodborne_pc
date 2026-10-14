@@ -115,11 +115,9 @@ void OnRenderView(const BbSettings::Values& s, const std::uint64_t* saved) {
     if (r >= reinterpret_cast<std::uint8_t*>(0x100000000ULL)) {
         std::uint64_t caps = 0;
         std::memcpy(&caps, r + 0x48, sizeof(caps));
-        const bool mb = s.effects[2].load(std::memory_order_relaxed);
         const bool ssao = s.effects[3].load(std::memory_order_relaxed);
         const bool aa = s.effects[4].load(std::memory_order_relaxed);
         r[0x2968] = (ssao && (caps & 0x8ULL)) ? 1 : 0;
-        r[0x2969] = (mb && (caps & 0x4ULL)) ? 1 : 0;
         r[0x296a] = (aa && (caps & 0x10ULL)) ? 1 : 0;
     }
 }

@@ -142,6 +142,7 @@ bool ExecuteNativeUpscale(NativeUpscaleContext& ctx) {
     }
 
     if (dispatched) {
+        const bool was_reset = ctx.reset;
         ctx.reset = false;
         ctx.dispatched_last_frame = true;
         if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
@@ -174,7 +175,7 @@ bool ExecuteNativeUpscale(NativeUpscaleContext& ctx) {
         if (BbSettings::Get().frame_generation.load()) {
             ctx.fg_bridge.Prepare(cmdbuf, ctx.output_image, w, h, ow, oh, input_depth,
                                   input_depth_view, depth_format, ctx.motion_image,
-                                  ctx.motion_view, ctx.camera_motion, frame_ms, ctx.reset,
+                                  ctx.motion_view, ctx.camera_motion, frame_ms, was_reset,
                                   BbStats::frame_number.load());
         }
     }

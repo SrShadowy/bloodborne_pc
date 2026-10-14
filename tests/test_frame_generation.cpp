@@ -79,8 +79,8 @@ int main() {
         prep.depth_image = vk::Image(depth_img);
         prep.depth_format = vk::Format::eD32Sfloat;
         prep.motion_image = vk::Image(motion_img);
-        prep.interpolation_source_image = fg.GetSourceImage(frame);
-        prep.interpolation_source_view = fg.GetSourceView(frame);
+        prep.interpolation_source_image = (frame % 2 == 0) ? fg.GetSourceImage(frame) : vk::Image{};
+        prep.interpolation_source_view = (frame % 2 == 0) ? fg.GetSourceView(frame) : vk::ImageView{};
         prep.render_w = W;
         prep.render_h = H;
         prep.frame_time_ms = 16.6f;

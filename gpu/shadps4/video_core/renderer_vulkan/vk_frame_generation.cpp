@@ -177,14 +177,18 @@ bool FrameGenerationManager::RecordPrepare(const PrepareInputs& in) {
     }
 
     const u32 slot = static_cast<u32>(in.frame_id % FG_RING_SIZE);
-    const vk::Image source = in.interpolation_source_image ? in.interpolation_source_image
-                                                           : vk::Image(hudless_source_image[slot]);
     const auto prep = BuildPrepareInfo(in, needs_reset || in.reset);
-    FfxVkPortableImage interp_source = MakeFgImage(
-        source, current_source_format, current_display_w, current_display_h,
-        vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
-        vk::ImageAspectFlagBits::eColor,
-        FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
+    FfxVkPortableImage interp_source{};
+    const FfxVkPortableImage* interp_source_ptr = nullptr;
+    if (in.interpolation_source_image) {
+        interp_source = MakeFgImage(
+            in.interpolation_source_image, current_source_format, current_display_w,
+            current_display_h,
+            vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
+            vk::ImageAspectFlagBits::eColor,
+            FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
+        interp_source_ptr = &interp_source;
+    }
 
     if (create_info) {
         if (const u64 issues = ffxVkPortableValidateFrameGenerationPrepareInfo(create_info.get(), &prep)) {
@@ -196,7 +200,7 @@ bool FrameGenerationManager::RecordPrepare(const PrepareInputs& in) {
         }
     }
 
-    const auto res = ffxVkPortableFrameGenerationContextPrepare(context, &prep, &interp_source);
+    const auto res = ffxVkPortableFrameGenerationContextPrepare(context, &prep, interp_source_ptr);
     if (res != FFX_VK_PORTABLE_OK) {
         std::printf("FrameGen: Prepare dispatch failed (%d)\n", static_cast<int>(res));
         prepared = false;
@@ -215,9 +219,6 @@ bool FrameGenerationManager::RecordDispatch(const DispatchInputs& in) {
     }
 
     DispatchInputs adjusted = in;
-    if (!adjusted.hudless_color_image && hudless_source_image[slot]) {
-        adjusted.hudless_color_image = vk::Image(hudless_source_image[slot]);
-    }
     if (!adjusted.output_image && interpolated_image[slot]) {
         adjusted.output_image = vk::Image(interpolated_image[slot]);
     }

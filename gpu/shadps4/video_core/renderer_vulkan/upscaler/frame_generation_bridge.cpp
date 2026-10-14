@@ -51,76 +51,9 @@ bool FrameGenerationBridge::Prepare(vk::CommandBuffer cmdbuf, vk::Image scene_im
         return false;
     }
 
-    const vk::Image hudless = frame_generation->GetSourceImage(slot);
-    if (!hudless || !scene_image) {
-        is_prepared[slot].store(false, std::memory_order_release);
-        return false;
-    }
-
-    // Prepare hudless_source_image by blitting the upscaled/native scene without UI
-    const std::array pre_blit_barriers{
-        vk::ImageMemoryBarrier2{
-            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-            .srcAccessMask = vk::AccessFlagBits2::eShaderWrite | vk::AccessFlagBits2::eColorAttachmentWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eBlit,
-            .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-            .oldLayout = vk::ImageLayout::eGeneral,
-            .newLayout = vk::ImageLayout::eTransferSrcOptimal,
-            .image = scene_image,
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        },
-        vk::ImageMemoryBarrier2{
-            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-            .srcAccessMask = vk::AccessFlagBits2::eNone,
-            .dstStageMask = vk::PipelineStageFlagBits2::eBlit,
-            .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
-            .oldLayout = vk::ImageLayout::eUndefined,
-            .newLayout = vk::ImageLayout::eTransferDstOptimal,
-            .image = hudless,
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        },
-    };
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .imageMemoryBarrierCount = u32(pre_blit_barriers.size()),
-        .pImageMemoryBarriers = pre_blit_barriers.data(),
-    });
-
-    const vk::ImageBlit blit_region{
-        .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-        .srcOffsets = std::array{vk::Offset3D{0, 0, 0}, vk::Offset3D{s32(out_w), s32(out_h), 1}},
-        .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-        .dstOffsets = std::array{vk::Offset3D{0, 0, 0}, vk::Offset3D{s32(disp_w), s32(disp_h), 1}},
-    };
-    cmdbuf.blitImage(scene_image, vk::ImageLayout::eTransferSrcOptimal,
-                     hudless, vk::ImageLayout::eTransferDstOptimal,
-                     blit_region, vk::Filter::eLinear);
-
-    const std::array post_blit_barriers{
-        vk::ImageMemoryBarrier2{
-            .srcStageMask = vk::PipelineStageFlagBits2::eBlit,
-            .srcAccessMask = vk::AccessFlagBits2::eTransferRead,
-            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-            .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
-            .newLayout = vk::ImageLayout::eGeneral,
-            .image = scene_image,
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        },
-        vk::ImageMemoryBarrier2{
-            .srcStageMask = vk::PipelineStageFlagBits2::eBlit,
-            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderSampledRead,
-            .oldLayout = vk::ImageLayout::eTransferDstOptimal,
-            .newLayout = vk::ImageLayout::eGeneral,
-            .image = hudless,
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        },
-    };
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .imageMemoryBarrierCount = u32(post_blit_barriers.size()),
-        .pImageMemoryBarriers = post_blit_barriers.data(),
-    });
+    (void)scene_image;
+    (void)out_w;
+    (void)out_h;
 
     FrameGenerationManager::PrepareInputs prep{};
     prep.cmdbuf = cmdbuf;
@@ -129,8 +62,8 @@ bool FrameGenerationBridge::Prepare(vk::CommandBuffer cmdbuf, vk::Image scene_im
     prep.depth_format = depth_format;
     prep.motion_image = motion_image;
     prep.motion_view = motion_view;
-    prep.interpolation_source_image = hudless;
-    prep.interpolation_source_view = frame_generation->GetSourceView(slot);
+    prep.interpolation_source_image = vk::Image{};
+    prep.interpolation_source_view = vk::ImageView{};
     prep.render_w = render_w;
     prep.render_h = render_h;
     camera_motion.GetJitter(prep.jitter_x, prep.jitter_y);
@@ -161,25 +94,41 @@ bool FrameGenerationBridge::RecordDispatch(vk::CommandBuffer cmdbuf, vk::Image c
     const auto all = vk::PipelineStageFlagBits2::eAllCommands;
     const vk::Image output = frame_generation->GetInterpolatedImage(slot);
 
-    const vk::ImageMemoryBarrier2 pre_barrier{
-        .srcStageMask = all,
-        .srcAccessMask = vk::AccessFlagBits2::eNone,
-        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-        .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .oldLayout = vk::ImageLayout::eUndefined,
-        .newLayout = vk::ImageLayout::eGeneral,
-        .image = output,
-        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    const std::array pre_barriers{
+        vk::ImageMemoryBarrier2{
+            .srcStageMask = all,
+            .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite |
+                             vk::AccessFlagBits2::eShaderWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader |
+                            vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead |
+                             vk::AccessFlagBits2::eShaderSampledRead |
+                             vk::AccessFlagBits2::eTransferRead,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = current_color,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        },
+        vk::ImageMemoryBarrier2{
+            .srcStageMask = all,
+            .srcAccessMask = vk::AccessFlagBits2::eNone,
+            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = output,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        },
     };
     cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &pre_barrier,
+        .imageMemoryBarrierCount = u32(pre_barriers.size()),
+        .pImageMemoryBarriers = pre_barriers.data(),
     });
 
     FrameGenerationManager::DispatchInputs disp{};
     disp.cmdbuf = cmdbuf;
     disp.current_color_image = current_color;
-    disp.hudless_color_image = frame_generation->GetSourceImage(slot);
+    disp.hudless_color_image = vk::Image{};
     disp.output_image = output;
     disp.display_w = display_w;
     disp.display_h = display_h;
@@ -193,19 +142,35 @@ bool FrameGenerationBridge::RecordDispatch(vk::CommandBuffer cmdbuf, vk::Image c
     const bool ok = frame_generation->RecordDispatch(disp);
     is_prepared[slot].store(false, std::memory_order_release);
 
-    const vk::ImageMemoryBarrier2 post_barrier{
-        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask = all,
-        .dstAccessMask = vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eShaderRead,
-        .oldLayout = vk::ImageLayout::eGeneral,
-        .newLayout = vk::ImageLayout::eGeneral,
-        .image = output,
-        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    const std::array post_barriers{
+        vk::ImageMemoryBarrier2{
+            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader |
+                            vk::PipelineStageFlagBits2::eTransfer,
+            .srcAccessMask = vk::AccessFlagBits2::eShaderRead |
+                             vk::AccessFlagBits2::eTransferRead,
+            .dstStageMask = all,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferRead |
+                             vk::AccessFlagBits2::eShaderRead,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = current_color,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        },
+        vk::ImageMemoryBarrier2{
+            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+            .dstStageMask = all,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferRead |
+                             vk::AccessFlagBits2::eShaderRead,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = output,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        },
     };
     cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &post_barrier,
+        .imageMemoryBarrierCount = u32(post_barriers.size()),
+        .pImageMemoryBarriers = post_barriers.data(),
     });
 
     return ok;
