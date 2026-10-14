@@ -1,6 +1,12 @@
 #include "bbport_write_log.h"
+#include "bbport_camera.h"
+#include "bbport_engine_fixes.h"
+#include "bbport_engine_graphics.h"
+#include "bbport_frame_rate.h"
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
+#include "bbport_menu_pointer.h"
+#include "bbport_mouse_camera.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
@@ -342,6 +348,12 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     g_guest_image_size = size;
     BbGnmHooks::PatchImage(image, size);
     BbGameMenu::PatchImage(image, size);
+    BbCamera::PatchImage(image, size);
+    BbEngineGraphics::PatchImage(image, size);
+    BbEngineFixes::PatchImage(image, size);
+    BbFrameRate::PatchImage(image, size);
+    BbMouseCamera::PatchImage(image, size);
+    BbMenuPointer::Install(reinterpret_cast<uintptr_t>(image), size);
 }
 
 extern "C" uintptr_t bbgpu_get_guest_image_base(void) {
@@ -451,6 +463,30 @@ extern "C" int bbgpu_get_mouse_invert_y(void) {
 
 extern "C" int bbgpu_get_mouse_invert_x(void) {
     return BbSettings::Get().mouse_invert_x.load() ? 1 : 0;
+}
+
+extern "C" int bbgpu_mouse_camera_active(void) {
+    return BbMouseCamera::IsActive() ? 1 : 0;
+}
+
+extern "C" void bbgpu_mouse_camera_set_using_mouse(int using_mouse) {
+    BbMouseCamera::SetUsingMouse(using_mouse != 0);
+}
+
+extern "C" int bbgpu_mouse_camera_take_target_switch(uint8_t* out_rx, uint8_t* out_ry) {
+    return BbMouseCamera::TakeTargetSwitchStep(out_rx, out_ry) ? 1 : 0;
+}
+
+extern "C" int bbgpu_menu_pointer_in_menu(void) {
+    return BbMenuPointer::InMenu() ? 1 : 0;
+}
+
+extern "C" uint32_t bbgpu_menu_confirm_button(void) {
+    return BbMenuPointer::ConfirmButton();
+}
+
+extern "C" uint32_t bbgpu_menu_pointer_step_pad(uint32_t current_buttons, uint8_t lx, uint8_t ly) {
+    return BbMenuPointer::StepPad(current_buttons, lx, ly);
 }
 
 extern "C" int bbgpu_text_input_begin(const char* initial, const char* prompt) {

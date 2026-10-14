@@ -341,6 +341,12 @@ enum { PAD_LEFT_TRIGGER=SDL_GAMEPAD_BUTTON_COUNT, PAD_RIGHT_TRIGGER }; /* trigge
 __attribute__((weak)) float bbgpu_get_mouse_sensitivity(void);
 __attribute__((weak)) int bbgpu_get_mouse_invert_y(void);
 __attribute__((weak)) int bbgpu_get_mouse_invert_x(void);
+__attribute__((weak)) int bbgpu_mouse_camera_active(void);
+__attribute__((weak)) void bbgpu_mouse_camera_set_using_mouse(int using_mouse);
+__attribute__((weak)) int bbgpu_mouse_camera_take_target_switch(uint8_t *out_rx, uint8_t *out_ry);
+__attribute__((weak)) int bbgpu_menu_pointer_in_menu(void);
+__attribute__((weak)) uint32_t bbgpu_menu_confirm_button(void);
+__attribute__((weak)) uint32_t bbgpu_menu_pointer_step_pad(uint32_t current_buttons, uint8_t lx, uint8_t ly);
 typedef struct { int key_count, pad_count; int keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
 static Binding bindings[IN_COUNT];
 static int bindings_ready;
@@ -350,7 +356,7 @@ static void bind_defaults(void) {
         {IN_CROSS,SDL_SCANCODE_SPACE}, {IN_CIRCLE,SDL_SCANCODE_LSHIFT}, {IN_SQUARE,SDL_SCANCODE_E},
         {IN_TRIANGLE,SDL_SCANCODE_Q}, {IN_L1,SDL_SCANCODE_1}, {IN_R1,SDL_SCANCODE_3},
         {IN_L2,SDL_SCANCODE_R}, {IN_R2,SDL_SCANCODE_F}, {IN_L3,SDL_SCANCODE_Z}, {IN_R3,SDL_SCANCODE_C},
-        {IN_OPTIONS,SDL_SCANCODE_RETURN}, {IN_TOUCHPAD,SDL_SCANCODE_TAB},
+        {IN_OPTIONS,SDL_SCANCODE_ESCAPE}, {IN_TOUCHPAD,SDL_SCANCODE_TAB},
         {IN_TOUCHPAD_RIGHT,SDL_SCANCODE_BACKSPACE},
         {IN_UP,SDL_SCANCODE_I}, {IN_DOWN,SDL_SCANCODE_K}, {IN_LEFT,SDL_SCANCODE_J}, {IN_RIGHT,SDL_SCANCODE_L},
         {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
@@ -522,6 +528,23 @@ static void apply_mouse_look(PadData *d, double dx, double dy, uint64_t now, int
     float dt=look_last_us && now>look_last_us ? (float)(now-look_last_us) : 0.0f;
     look_last_us=now;
     if (!captured) { look_x=look_y=0; return; }
+    if (bbgpu_mouse_camera_set_using_mouse) {
+        if (dx != 0.0 || dy != 0.0 || mouse_buttons != 0) {
+            bbgpu_mouse_camera_set_using_mouse(1);
+        } else if (d->right_x != 128 || d->right_y != 128) {
+            bbgpu_mouse_camera_set_using_mouse(0);
+        }
+    }
+    if (bbgpu_mouse_camera_active && bbgpu_mouse_camera_active()) {
+        look_x = look_y = 0;
+        uint8_t sw_rx = 128, sw_ry = 128;
+        if (bbgpu_mouse_camera_take_target_switch &&
+            bbgpu_mouse_camera_take_target_switch(&sw_rx, &sw_ry)) {
+            d->right_x = sw_rx;
+            d->right_y = sw_ry;
+        }
+        return;
+    }
     if (dt>LOOK_TAU_US) dt=LOOK_TAU_US;
     static int deadzone=-1;
     if (deadzone<0) {
@@ -630,6 +653,14 @@ static void sample_host(PadData *d) {
         update_synthetic_touch(d, req_touch_left, req_touch_right);
     }
     apply_keyboard(d,k); /* the bound mouse buttons too */
+    if (bbgpu_menu_pointer_in_menu && bbgpu_menu_pointer_in_menu()) {
+        if (k && (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER])) {
+            d->buttons |= bbgpu_menu_confirm_button ? bbgpu_menu_confirm_button() : BTN_CROSS;
+        }
+    }
+    if (bbgpu_menu_pointer_step_pad) {
+        d->buttons |= bbgpu_menu_pointer_step_pad(d->buttons, d->left_x, d->left_y);
+    }
     apply_mouse_look(d,mouse_dx,mouse_dy,d->timestamp,captured);
 }
 

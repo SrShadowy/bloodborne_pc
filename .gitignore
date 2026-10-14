@@ -36,3 +36,4 @@ patches.json
 # AMD FidelityFX DLLs (FSR 4.1.1 is built from the user's own): never in the repository
 *.dll
 MyGUIDELINES.md
+docs/FRAME_RATE_AND_SHADERS_ANALYSIS.md

@@ -69,7 +69,7 @@ struct Values {
     std::atomic<float> sharpness{0.3f};
     std::atomic<bool> jitter{true};
     std::atomic<bool> reactive{false};
-    std::atomic<bool> object_motion{true};
+    std::atomic<bool> object_motion{false};
     std::atomic<float> reactive_scale{1.0f};
     std::atomic<float> reactive_threshold{0.2f};
     std::atomic<float> reactive_max{0.9f};
@@ -103,7 +103,21 @@ struct Values {
     std::atomic<bool> mouse_invert_y{false};
     std::atomic<bool> mouse_invert_x{false};
     std::atomic<bool> mouse_capture{true};
+    std::atomic<bool> raw_mouse_camera{true};
+    std::atomic<bool> mouse_hold_auto_rotate{true};
     std::atomic<int> fps_limit{0}; ///< Target frame rate limit (0 = uncapped)
+
+    /// Live post-processing, lighting, and camera parameters (from bbhost).
+    std::atomic<float> bloom_scale{1.0f};
+    std::atomic<float> color_saturation{1.0f};
+    std::atomic<bool> vignette{true};
+    std::atomic<float> ao_strength{1.0f};
+    std::atomic<float> shadow_distance{1.0f};
+    std::atomic<float> fog_opacity{1.0f};
+    std::atomic<float> fov_scale{1.0f};
+    std::atomic<float> cam_distance{1.0f};
+    std::atomic<float> cam_height{1.0f};
+    std::atomic<bool> light_grid_opt{false};
 
     /// DLSS (gpu/dlss_bridge, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};

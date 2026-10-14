@@ -13,11 +13,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 EBOOT_BASE=0x400000
-# BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
-# Above 60 FPS the sprint fix always goes with the frame rate patch: without it sprinting drops to
-# half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
-FPS_PRESETS={'30':['30 FPS++'],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
-             'uncap':['Uncap FPS++','Sprint Fix (High FPS)']}
+# BB_FPS presets: BbFrameRate::PatchImage (gpu/shim/bbport_frame_rate.cpp) installs the
+# curated frame-rate patches, dynamic delta-time scaling, and SprjFlipper::Update hook directly
+# on the clean eboot image, avoiding destructive writes in the legacy XML FPS++ patches.
+FPS_PRESETS={'30':[],'60':[],'90':[],'uncap':[]}
 # Upscaler presets (bbport.ini "preset", the in-game menu): output / render size ratio. The game
 # then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
 OUTPUT_SIZE=(1920,1080)

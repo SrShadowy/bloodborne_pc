@@ -60,6 +60,7 @@ private:
     void UpdateCursor();
     u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
     bool cursor_hidden{};
+    bool was_in_game_menu{};
     void CaptureMouse(bool capture);
     std::mutex mouse_mutex;
     double mouse_dx{}, mouse_dy{};

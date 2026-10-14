@@ -192,7 +192,9 @@ target_include_directories(ui-composition-test PRIVATE ..)
 add_executable(cp-decoder-test EXCLUDE_FROM_ALL ../tests/test_cp_decoder.cpp cp/cp_decoder.cpp)
 target_compile_options(cp-decoder-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(cp-decoder-test PRIVATE cp)
-add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
+add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp
+    shim/bbport_settings.cpp
+    shim/bbport_strings.cpp)
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
 

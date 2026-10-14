@@ -881,7 +881,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         auto& vblank_status = main_port.vblank_status;
         const auto now = std::chrono::steady_clock::now();
         const bool flip_slot = !frame_limit || now >= next_flip;
-        if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
+        if (flip_slot && (immediate_flips || vblank_status.count % (main_port.flip_rate + 1) == 0)) {
             const auto request = receive_request();
             if (request && frame_limit) {
                 next_flip = std::max(next_flip + frame_period, now - frame_period);
@@ -924,7 +924,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             main_port.vblank_cv.notify_all();
         }
 
-        if (!immediate_flips || main_port.flip_rate != 0) {
+        if (!immediate_flips) {
             timer.End();
             continue;
         }

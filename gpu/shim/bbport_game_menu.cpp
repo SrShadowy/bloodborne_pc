@@ -284,16 +284,16 @@ void DefineTexts() {
         "Taxa de quadros no canto superior direito",
         "Частота кадров в правом верхнем углу", toggle);
 
-    // Page 1: Effects & Detail (settings applied after restart)
+    // Page 1: Effects & Detail (live via BbEngineGraphics, except dynamic shadows / SSR)
     page("Effects", "Efeitos", "Эффекты",
-         "The game's effects and detail (bbport; after a restart)",
-         "Efeitos gráficos e detalhes do jogo (bbport; após reiniciar)",
-         "Эффекты игры и детализация (bbport; после перезапуска)");
+         "The game's effects and detail (bbport)",
+         "Efeitos gráficos e detalhes do jogo (bbport)",
+         "Эффекты игры и детализация (bbport)");
 
     row(ModelLod, "Model detail", "Detalhes de modelos", "Детализация",
-        "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest",
-        "Após reiniciar: 0-1 máxima, 2-4 padrão do jogo, 5-7 menor, 8-10 mínima",
-        "После перезапуска: 0-1 максимальная, 2-4 как в игре, 5-7 ниже, 8-10 минимальная",
+        "Model detail distance: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest",
+        "Distância de detalhe dos modelos: 0-1 máxima, 2-4 padrão do jogo, 5-7 menor, 8-10 mínima",
+        "Дальность детализации: 0-1 максимальная, 2-4 как в игре, 5-7 ниже, 8-10 минимальная",
         {AddText("Highest", "Máxima", "Максимальная"),
          AddText("Game default", "Padrão do jogo", "Как в игре"),
          AddText("Lower", "Menor", "Ниже"),
@@ -302,31 +302,31 @@ void DefineTexts() {
 
     struct Short {
         const char *key, *en, *pt, *ru, *help_en, *help_pt, *help_ru;
-        bool graphics = true;
+        bool live = true;
     };
     static const Short shorts[] = {
         {"effect_chromatic_aberration", "Chromatic aberration", "Aberração cromática", "Хром. аберрация",
-         "Colour fringes at the frame edges", "Franjas de cores nas bordas do quadro", "Цветные каймы по краям кадра"},
+         "Colour fringes at the frame edges", "Franjas de cores nas bordas do quadro", "Цветные каймы по краям кадра", true},
         {"effect_dof", "Depth of field", "Profundidade de campo", "Глубина резкости",
-         "Blur of distant and near objects (DoF)", "Desfoque de objetos distantes e próximos (DoF)", "Размытие дальних и близких объектов (DoF)"},
+         "Blur of distant and near objects (DoF)", "Desfoque de objetos distantes e próximos (DoF)", "Размытие дальних и близких объектов (DoF)", true},
         {"effect_motion_blur", "Motion blur", "Desfoque de movimento", "Размытие в движении",
-         "Blur when the camera turns", "Desfoque ao girar a câmera", "Размытие при повороте камеры"},
+         "Blur when the camera turns", "Desfoque ao girar a câmera", "Размытие при повороте камеры", true},
         {"effect_ssao", "Ambient occlusion", "Oclusão de ambiente", "Затенение SSAO",
-         "Shading in corners and contacts (SSAO)", "Sombreamento em cantos e contatos (SSAO)", "Затенение в углах и местах касания (SSAO)"},
+         "Shading in corners and contacts (SSAO)", "Sombreamento em cantos e contatos (SSAO)", "Затенение в углах и местах касания (SSAO)", true},
         {"effect_dynamic_shadows", "Dynamic shadows", "Sombras dinâmicas", "Динамические тени",
-         "Shadows from dynamic lights", "Sombras de fontes de luz dinâmicas", "Тени от динамических источников света"},
+         "Shadows from dynamic lights", "Sombras de fontes de luz dinâmicas", "Тени от динамических источников света", false},
         {"effect_ssr", "SSR reflections", "Reflexos SSR", "Отражения SSR",
-         "Screen-space reflections (not in the original)", "Reflexos em espaço de tela (não existia no original)", "Экранные отражения (не было в оригинале)"},
+         "Screen-space reflections (not in the original)", "Reflexos em espaço de tela (não existia no original)", "Экранные отражения (не было в оригинале)", false},
     };
     for (const auto& s : shorts) {
-        if (!s.graphics || pages.back().rows.size() == RowsPerPage) {
+        if (pages.back().rows.size() == RowsPerPage) {
             continue; // the overlay menu and the launcher have it
         }
         for (int e = 0; e < BbSettings::EffectCount; ++e) {
             if (std::strcmp(s.key, BbSettings::Effects[e].key) == 0) {
-                const std::string help_en = std::string(s.help_en) + " (after a restart)";
-                const std::string help_pt = std::string(s.help_pt) + " (após reiniciar)";
-                const std::string help_ru = std::string(s.help_ru) + " (после перезапуска)";
+                const std::string help_en = std::string(s.help_en) + (s.live ? "" : " (after a restart)");
+                const std::string help_pt = std::string(s.help_pt) + (s.live ? "" : " (após reiniciar)");
+                const std::string help_ru = std::string(s.help_ru) + (s.live ? "" : " (после перезапуска)");
                 row(Field(FirstEffect + e), s.en, s.pt, s.ru, help_en.c_str(), help_pt.c_str(), help_ru.c_str(), toggle);
                 break;
             }

@@ -320,9 +320,9 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     },
     // SectionGameEffects
     {
-        "Game Effects (Restart Required)",
-        "Efeitos do Jogo (Reinício Necessário)",
-        "Эффекты игры (после перезапуска)"
+        "Game Effects",
+        "Efeitos do Jogo",
+        "Эффекты игры"
     },
     // LodCombo
     {
@@ -356,9 +356,9 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     },
     // HintGameEffects
     {
-        "Effects are enabled or disabled via game patches at startup (patches/Bloodborne.xml). Motion blur and dynamic shadows noticeably increase GPU load.",
-        "Efeitos são ativados/desativados via patches na inicialização (patches/Bloodborne.xml). Desfoque de movimento e sombras dinâmicas pesam na GPU.",
-        "Эффекты включаются и выключаются патчами игры при запуске (patches/Bloodborne.xml). Размытие в движении и тени от динамических источников заметно нагружают GPU."
+        "Model LOD, Chromatic Aberration, Depth of Field, SSAO and Native AA apply immediately in real time. Other startup patches apply after restart.",
+        "LOD dos Modelos, Aberração Cromática, Profundidade de Campo, SSAO e AA Nativo aplicam-se imediatamente em tempo real. Outros patches exigem reinício.",
+        "Детализация моделей (LOD), хроматическая аберрация, глубина резкости (DoF), SSAO и сглаживание применяются сразу в реальном времени."
     },
     // HintSpecialControls
     {
@@ -515,6 +515,162 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
         "Frame Generation is not supported on this GPU or swapchain configuration.",
         "Frame Generation não é suportado nesta GPU ou configuração de swapchain.",
         "Генерация кадров не поддерживается этой видеокартой или конфигурацией swapchain."
+    },
+    // SectionPostProcess
+    {
+        "Post-Processing & Lighting (Live)",
+        "Pós-Processamento e Iluminação (Tempo Real)",
+        "Постобработка и освещение (на лету)"
+    },
+    // BloomIntensity
+    {
+        "Bloom / Glare Intensity",
+        "Intensidade de Bloom / Brilho",
+        "Интенсивность свечения (Bloom)"
+    },
+    // HintBloom
+    {
+        "Scales YEBIS glare luminance in real time. Setting to 0.0 skips the glare passes completely for higher GPU performance.",
+        "Ajusta a luminância do brilho YEBIS em tempo real. Definir como 0.0 pula completamente os passes de glare, economizando GPU.",
+        "Масштабирует яркость свечения YEBIS в реальном времени. Значение 0.0 полностью пропускает проходы свечения, ускоряя GPU."
+    },
+    // ColorSaturation
+    {
+        "Color Saturation",
+        "Saturação de Cor",
+        "Насыщенность цвета"
+    },
+    // HintSaturation
+    {
+        "Scales the tone-mapper's color saturation in real time (0.0 = grayscale, 1.0 = game default).",
+        "Ajusta a saturação de cores do tone-mapper em tempo real (0.0 = preto e branco, 1.0 = padrão do jogo).",
+        "Масштабирует насыщенность цвета тональной компрессии в реальном времени (0.0 = Ч/Б, 1.0 = по умолчанию)."
+    },
+    // VignetteEnable
+    {
+        "Screen Edge Vignette",
+        "Vinheta nas Bordas da Tela",
+        "Виньетирование по краям экрана"
+    },
+    // HintVignette
+    {
+        "Toggles the area's YEBIS screen-edge darkening in real time.",
+        "Ativa ou desativa o escurecimento nas bordas da tela (YEBIS Vignette) em tempo real.",
+        "Включает или выключает затемнение по краям экрана (YEBIS Vignette) в реальном времени."
+    },
+    // SsaoStrength
+    {
+        "SSAO Occlusion Strength",
+        "Intensidade da Oclusão SSAO",
+        "Сила затенения SSAO"
+    },
+    // HintSsaoStrength
+    {
+        "Scales ambient occlusion contrast in recesses (1.0 = game default, 2.0 = twice as deep).",
+        "Ajusta a profundidade da oclusão ambiental nos cantos e frestas (1.0 = padrão do jogo, 2.0 = dobro de contraste).",
+        "Масштабирует глубину затенения SSAO в углублениях (1.0 = по умолчанию, 2.0 = вдвое глубже)."
+    },
+    // ShadowDistance
+    {
+        "Shadow Cascade Distance",
+        "Distância das Cascatas de Sombra",
+        "Дальность каскадов теней"
+    },
+    // HintShadowDistance
+    {
+        "Scales directional shadow cascade splits and fade distance in real time (1.0 = game default).",
+        "Escala o alcance das cascatas de sombras direcionais em tempo real (1.0 = padrão do jogo).",
+        "Масштабирует дальность каскадов направленных теней в реальном времени (1.0 = по умолчанию)."
+    },
+    // FogOpacity
+    {
+        "Atmospheric Fog Opacity",
+        "Opacidade da Neblina Atmosférica",
+        "Плотность атмосферного тумана"
+    },
+    // HintFogOpacity
+    {
+        "Scales distant street haze and height fog opacity in real time (0.0 = clear distant view, 1.0 = game default).",
+        "Ajusta a densidade da neblina distante e de altura em tempo real (0.0 = horizonte limpo, 1.0 = padrão do jogo).",
+        "Масштабирует плотность дальнего и высотного тумана в реальном времени (0.0 = чистый горизонт, 1.0 = по умолчанию)."
+    },
+    // SectionCamera
+    {
+        "Camera & Field of View (Live)",
+        "Câmera e Campo de Visão (Tempo Real)",
+        "Камера и угол обзора (на лету)"
+    },
+    // CameraFov
+    {
+        "Field of View (FOV Scale)",
+        "Campo de Visão (Escala de FOV)",
+        "Угол обзора (масштаб FOV)"
+    },
+    // HintCameraFov
+    {
+        "Uncaps the 48-degree limit and scales LockCamParam vertical FOV in real time (1.0 = 43° default).",
+        "Desbloqueia o limite de 48° e escala o FOV vertical da câmera em tempo real (1.0 = 43° padrão).",
+        "Снимает ограничение в 48° и масштабирует вертикальный угол обзора камеры в реальном времени (1.0 = 43°)."
+    },
+    // CameraDistance
+    {
+        "Camera Distance",
+        "Distância da Câmera",
+        "Дистанция камеры"
+    },
+    // HintCameraDistance
+    {
+        "Scales follow camera target distance from the character in real time (1.0 = 4 m default).",
+        "Ajusta a distância da câmera em relação ao personagem em tempo real (1.0 = 4 m padrão).",
+        "Масштабирует дистанцию камеры от персонажа в реальном времени (1.0 = 4 м по умолчанию)."
+    },
+    // CameraHeight
+    {
+        "Camera Height",
+        "Altura da Câmera",
+        "Высота камеры"
+    },
+    // HintCameraHeight
+    {
+        "Scales follow camera vertical pivot offset above the character in real time (1.0 = default).",
+        "Ajusta a altura do ponto de foco da câmera sobre o personagem em tempo real (1.0 = padrão).",
+        "Масштабирует высоту точки фокуса камеры над персонажем в реальном времени (1.0 = по умолчанию)."
+    },
+    // LightGridOpt
+    {
+        "4x4 Quarter-Window Light Grid",
+        "Grade de Luzes Dinâmica 4x4",
+        "Сетка освещения 4x4 (оптимизация)"
+    },
+    // HintLightGridOpt
+    {
+        "Replaces 3x3 jobs of 128x128 tiles with 1 job of quarter-window 4x4 tiles, eliminating ~80k redundant light draw calls per 300 frames.",
+        "Substitui 3x3 jobs de tiles 128x128 por 1 job de grade 4x4 proporcional à janela, eliminando ~80 mil draw calls redundantes de luzes.",
+        "Заменяет 3x3 задач с тайлами 128x128 на 1 задачу с сеткой 4x4 по размеру окна, убирая ~80 тыс. лишних вызовов отрисовки света."
+    },
+    // RawMouseCamera
+    {
+        "Raw 1:1 Mouse Camera (DS3 Mode)",
+        "Câmera Mouse Raw 1:1 (Modo DS3)",
+        "Прямой ввод мыши 1:1 (режим DS3)"
+    },
+    // HintRawMouseCamera
+    {
+        "Turns the camera directly by raw mouse counts without stick deadzone or speed cap, and switches lock-on targets with a mouse flick.",
+        "Gira a câmera diretamente pelos counts brutos do mouse sem zona morta ou limite de analógico, e troca o alvo travado (Lock-On) com flick do mouse.",
+        "Поворачивает камеру напрямую по счёту мыши без мёртвой зоны и потолка скорости стика; рывок мыши переключает цель захвата."
+    },
+    // MouseHoldAutoRotate
+    {
+        "Suppress Camera Auto-Rotation on Mouse",
+        "Segurar Auto-Rotação da Câmera no Mouse",
+        "Отключать автоповорот камеры для мыши"
+    },
+    // HintMouseHoldAutoRotate
+    {
+        "Prevents the camera from rotating on its own when walking sideways with keyboard & mouse; restores auto-rotation automatically when a gamepad stick is used.",
+        "Impede que a câmera gire sozinha ao andar de lado com teclado e mouse; restaura a auto-rotação automaticamente ao usar o controle.",
+        "Не даёт камере поворачиваться самой при движении боком на клавиатуре и мыши; автоматически возвращает автоповорот при касании стика геймпада."
     }
 };
 

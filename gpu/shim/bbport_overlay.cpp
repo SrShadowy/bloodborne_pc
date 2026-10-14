@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include "bbport_overlay_sections.h"
 #include "bbport_settings.h"
 #include "bbport_strings.h"
 #include "ui_manager.h"
@@ -481,11 +482,11 @@ void RenderEffectsSection(BbSettings::Values& s, int lang) {
     Hint(S(HintSpecialControls));
 
     bool restart = s.object_motion != s.startup_object_motion ||
-                   s.model_lod != s.startup_model_lod ||
                    s.live_resolution != s.startup_live_resolution ||
                    (s.startup_draw_pipe == BbSettings::DrawPipeOff && s.draw_pipe != BbSettings::DrawPipeOff) ||
                    BbSettings::ResolutionNeedsRestart();
-    for (int e = 0; e < BbSettings::EffectCount; ++e) {
+    // Effects 0..4 (CA, DoF, Motion Blur, SSAO, AA) and Model LOD apply live; 5..9 require restart.
+    for (int e = 5; e < BbSettings::EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
     }
     if (restart) {
@@ -500,6 +501,7 @@ void RenderEffectsSection(BbSettings::Values& s, int lang) {
 void RenderPerformanceSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionMisc));
     Checkbox(S(ShowFpsCorner), s.show_fps);
+    BbOverlaySections::RenderLightGridCheckbox(s, lang, dirty);
     const char* pipe_modes[] = {
         S(DrawPipeModeOff),
         S(DrawPipeModeOn),
@@ -516,9 +518,10 @@ void RenderPerformanceSection(BbSettings::Values& s, int lang) {
     }
 }
 
-void RenderControlsSection(BbSettings::Values& s) {
+void RenderControlsSection(BbSettings::Values& s, int lang) {
     ImGui::Spacing();
     ImGui::SeparatorText(UI::L("Mouse & Controls", "Mouse e Controles", "Мышь и управление"));
+    BbOverlaySections::RenderRawMouseCameraControls(s, lang, dirty);
     Slider(UI::L("Mouse Sensitivity", "Sensibilidade do Mouse", "Чувствительность мыши"), s.mouse_sensitivity, 0.1f, 5.0f);
     Checkbox(UI::L("Invert Mouse Y", "Inverter Eixo Y do Mouse", "Инвертировать мышь по Y"), s.mouse_invert_y);
     Checkbox(UI::L("Invert Mouse X", "Inverter Eixo X do Mouse", "Инвертировать мышь по X"), s.mouse_invert_x);
@@ -955,8 +958,10 @@ void RenderGraphicsSettings() {
     RenderFrameGenSection(s, lang);
     RenderResolutionSection(s, lang);
     RenderEffectsSection(s, lang);
+    BbOverlaySections::RenderPostProcessingAndLightingSection(s, lang, dirty);
+    BbOverlaySections::RenderCameraSection(s, lang, dirty);
     RenderPerformanceSection(s, lang);
-    RenderControlsSection(s);
+    RenderControlsSection(s, lang);
     RenderMemoryToolsSection();
 }
 

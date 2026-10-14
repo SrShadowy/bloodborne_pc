@@ -104,6 +104,30 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mouse_invert_x = i != 0;
     } else if (key == "mouse_capture") {
         v.mouse_capture = i != 0;
+    } else if (key == "raw_mouse_camera") {
+        v.raw_mouse_camera = i != 0;
+    } else if (key == "mouse_hold_auto_rotate") {
+        v.mouse_hold_auto_rotate = i != 0;
+    } else if (key == "bloom_scale") {
+        v.bloom_scale = Clamp(f, 0.0f, 2.0f);
+    } else if (key == "color_saturation") {
+        v.color_saturation = Clamp(f, 0.0f, 2.0f);
+    } else if (key == "vignette") {
+        v.vignette = i != 0;
+    } else if (key == "ao_strength") {
+        v.ao_strength = Clamp(f, 0.0f, 2.0f);
+    } else if (key == "shadow_distance") {
+        v.shadow_distance = Clamp(f, 0.25f, 4.0f);
+    } else if (key == "fog_opacity") {
+        v.fog_opacity = Clamp(f, 0.0f, 2.0f);
+    } else if (key == "fov_scale") {
+        v.fov_scale = Clamp(f, 0.5f, 2.0f);
+    } else if (key == "cam_distance") {
+        v.cam_distance = Clamp(f, 0.5f, 2.0f);
+    } else if (key == "cam_height") {
+        v.cam_height = Clamp(f, 0.0f, 2.0f);
+    } else if (key == "light_grid_opt") {
+        v.light_grid_opt = i != 0;
     } else if (key == "fps_limit") {
         v.fps_limit = std::max(0, i);
     } else {
@@ -294,6 +318,18 @@ void Save() {
     put("mouse_invert_y", flag(v.mouse_invert_y.load()));
     put("mouse_invert_x", flag(v.mouse_invert_x.load()));
     put("mouse_capture", flag(v.mouse_capture.load()));
+    put("raw_mouse_camera", flag(v.raw_mouse_camera.load()));
+    put("mouse_hold_auto_rotate", flag(v.mouse_hold_auto_rotate.load()));
+    put("bloom_scale", fixed(v.bloom_scale.load(), 2));
+    put("color_saturation", fixed(v.color_saturation.load(), 2));
+    put("vignette", flag(v.vignette.load()));
+    put("ao_strength", fixed(v.ao_strength.load(), 2));
+    put("shadow_distance", fixed(v.shadow_distance.load(), 2));
+    put("fog_opacity", fixed(v.fog_opacity.load(), 2));
+    put("fov_scale", fixed(v.fov_scale.load(), 2));
+    put("cam_distance", fixed(v.cam_distance.load(), 2));
+    put("cam_height", fixed(v.cam_height.load(), 2));
+    put("light_grid_opt", flag(v.light_grid_opt.load()));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
     }

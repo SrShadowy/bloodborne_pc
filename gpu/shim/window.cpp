@@ -6,6 +6,8 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "sdl_window.h"
+#include "bbport_menu_pointer.h"
+#include "bbport_mouse_camera.h"
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 
@@ -245,15 +247,32 @@ bool WindowSDL::PollEvents() {
     if (!text_active) {
         BbOverlay::UpdateTextInput(window);
     }
+    auto update_stage_pos = [&](float wx, float wy) {
+        int lw = 0, lh = 0;
+        SDL_GetWindowSize(window, &lw, &lh);
+        if (lw > 0 && lh > 0) {
+            const float s = std::min(static_cast<float>(lw) / 1920.0f, static_cast<float>(lh) / 1080.0f);
+            const float sx = (wx - (static_cast<float>(lw) - 1920.0f * s) * 0.5f) / s;
+            const float sy = (wy - (static_cast<float>(lh) - 1080.0f * s) * 0.5f) / s;
+            BbMenuPointer::SetMouseStagePos(sx, sy, true);
+        }
+    };
+    const bool in_game_menu = BbMenuPointer::InMenu();
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_MOUSE_MOTION) {
             last_mouse_motion_ms = SDL_GetTicks();
             if (mouse_captured.load(std::memory_order_relaxed)) {
+                BbMouseCamera::FeedRelativeMotion(event.motion.xrel, event.motion.yrel);
                 std::scoped_lock lock{mouse_mutex};
                 mouse_dx += event.motion.xrel;
                 mouse_dy += event.motion.yrel;
+            } else {
+                update_stage_pos(event.motion.x, event.motion.y);
             }
+        }
+        if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE) {
+            BbMenuPointer::SetMouseStagePos(0.0f, 0.0f, false);
         }
         if (text_active && (event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_KEY_DOWN)) {
             std::scoped_lock lock{text_mutex};
@@ -274,11 +293,25 @@ bool WindowSDL::PollEvents() {
         if (BbOverlay::HandleEvent(event)) {
             continue;
         }
+        if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+            in_game_menu && !BbOverlay::MenuOpen()) {
+            update_stage_pos(event.button.x, event.button.y);
+            const bool down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                BbMenuPointer::NotifyLeftClick(down);
+            } else if (down && event.button.button == SDL_BUTTON_RIGHT) {
+                BbMenuPointer::NotifyRightClick();
+            }
+            continue;
+        }
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
+            BbMenuPointer::NotifyLeftClick(false);
+        }
         // Mouse look: a click in the game takes the mouse (that click is not passed on as a
         // button: runtime_pad.c reads the buttons only while it is held); F1 and leaving the
         // window let it go.
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !mouse_captured.load(std::memory_order_relaxed) &&
-            mouse_look.load(std::memory_order_relaxed) && !BbOverlay::MenuOpen()) {
+            mouse_look.load(std::memory_order_relaxed) && !BbOverlay::MenuOpen() && !in_game_menu) {
             CaptureMouse(true);
             continue;
         }
@@ -287,10 +320,14 @@ bool WindowSDL::PollEvents() {
             CaptureMouse(false);
             continue;
         }
-        if (event.type == SDL_EVENT_MOUSE_WHEEL && mouse_captured.load(std::memory_order_relaxed)) {
+        if (event.type == SDL_EVENT_MOUSE_WHEEL) {
             const float notches = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
-            std::scoped_lock lock{mouse_mutex};
-            (notches > 0 ? wheel_up : wheel_down) += notches != 0 ? 1 : 0;
+            if (in_game_menu && !mouse_captured.load(std::memory_order_relaxed) && !BbOverlay::MenuOpen()) {
+                BbMenuPointer::NotifyWheel(notches);
+            } else if (mouse_captured.load(std::memory_order_relaxed)) {
+                std::scoped_lock lock{mouse_mutex};
+                (notches > 0 ? wheel_up : wheel_down) += notches != 0 ? 1 : 0;
+            }
         }
         if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
             CaptureMouse(false);
@@ -312,17 +349,23 @@ bool WindowSDL::PollEvents() {
             break;
         }
     }
-    // The menu, the name dialog and mouse_look=0 want the cursor.
+    // The menu, the name dialog, in-game Scaleform menus and mouse_look=0 want the cursor.
     if (mouse_captured.load(std::memory_order_relaxed) &&
-        (BbOverlay::MenuOpen() || text_active || !mouse_look.load(std::memory_order_relaxed))) {
+        (BbOverlay::MenuOpen() || text_active || in_game_menu || !mouse_look.load(std::memory_order_relaxed))) {
         CaptureMouse(false);
+    } else if (was_in_game_menu && !in_game_menu && !mouse_captured.load(std::memory_order_relaxed) &&
+               mouse_look.load(std::memory_order_relaxed) && BbSettings::Get().mouse_capture &&
+               !BbOverlay::MenuOpen() && !text_active &&
+               (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS)) {
+        CaptureMouse(true);
     }
+    was_in_game_menu = in_game_menu;
     UpdateCursor();
     return is_open;
 }
 
 void WindowSDL::UpdateCursor() {
-    const bool in_menu = BbOverlay::CapturesInput() || text_active;
+    const bool in_menu = BbOverlay::CapturesInput() || text_active || BbMenuPointer::InMenu();
     const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     const bool hide = !in_menu && (fullscreen || SDL_GetTicks() - last_mouse_motion_ms > 3000);
     if (hide != cursor_hidden) {

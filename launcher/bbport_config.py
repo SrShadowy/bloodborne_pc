@@ -176,7 +176,7 @@ CONTROLS = [
     ("r2", "R2", "F", "righttrigger", None),
     ("l3", "L3", "Z", "leftstick", None),
     ("r3", "R3", "C", "rightstick", "middle"),
-    ("options", "Options", "Return", "start", None),
+    ("options", "Options", "Escape", "start", None),
     ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad", None),
     ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", "", None),
     ("up", "Крестовина вверх", "I", "dpup", None),
@@ -303,10 +303,7 @@ def game_environment(s):
     if s["hdr"]:
         env["BB_HDR"] = "1"
     env["BB_FPS"] = s["fps_mode"]
-    if s["fps_mode"] == "30":
-        env["BB_FPS_LIMIT"] = str(s["fps_limit"]) if s.get("fps_limit", 0) > 0 else "30"
-    else:
-        env["BB_FPS_LIMIT"] = str(s.get("fps_limit", 0))
+    env["BB_FPS_LIMIT"] = str(s.get("fps_limit", 0))
     if s["draw_pipe"]:
         env["BB_DRAW_PIPE"] = s["draw_pipe"]
     if s.get("vk_record_threads") and s["vk_record_threads"] != "auto":

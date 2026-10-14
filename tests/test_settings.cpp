@@ -45,8 +45,32 @@ int main() {
 
     s.menu_x = -1.0f;
     s.menu_y = -1.0f;
+    s.raw_mouse_camera = false;
+    s.mouse_hold_auto_rotate = false;
+    s.bloom_scale = 1.35f;
+    s.color_saturation = 1.15f;
+    s.vignette = false;
+    s.ao_strength = 1.50f;
+    s.shadow_distance = 2.00f;
+    s.fog_opacity = 0.75f;
+    s.fov_scale = 1.20f;
+    s.cam_distance = 1.40f;
+    s.cam_height = 1.10f;
+    s.light_grid_opt = false;
+    BbSettings::Save();
+
+    s.raw_mouse_camera = true;
+    s.mouse_hold_auto_rotate = true;
+    s.bloom_scale = 1.0f;
+    s.vignette = true;
+    s.fov_scale = 1.0f;
+    s.light_grid_opt = true;
     BbSettings::Load();
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
+    assert(!s.raw_mouse_camera && !s.mouse_hold_auto_rotate && !s.light_grid_opt && !s.vignette);
+    assert(s.bloom_scale == 1.35f && s.color_saturation == 1.15f);
+    assert(s.ao_strength == 1.50f && s.shadow_distance == 2.00f && s.fog_opacity == 0.75f);
+    assert(s.fov_scale == 1.20f && s.cam_distance == 1.40f && s.cam_height == 1.10f);
     unlink(path);
-    std::puts("PASS: settings save keeps other keys, menu position");
+    std::puts("PASS: settings save keeps other keys, menu position, and live graphics/camera/mouse settings");
 }

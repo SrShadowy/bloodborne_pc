@@ -42,6 +42,12 @@ void bbgpu_get_mouse_motion(float *dx, float *dy, int *wheel);
 float bbgpu_get_mouse_sensitivity(void);
 int bbgpu_get_mouse_invert_y(void);
 int bbgpu_get_mouse_invert_x(void);
+int bbgpu_mouse_camera_active(void);
+void bbgpu_mouse_camera_set_using_mouse(int using_mouse);
+int bbgpu_mouse_camera_take_target_switch(uint8_t *out_rx, uint8_t *out_ry);
+int bbgpu_menu_pointer_in_menu(void);
+uint32_t bbgpu_menu_confirm_button(void);
+uint32_t bbgpu_menu_pointer_step_pad(uint32_t current_buttons, uint8_t lx, uint8_t ly);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
 void bbgpu_patch_image(unsigned char *image, uint64_t size);
 uintptr_t bbgpu_get_guest_image_base(void);
