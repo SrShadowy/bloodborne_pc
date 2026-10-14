@@ -25,7 +25,8 @@ static uint64_t pool_size_bytes(void) {
     if (!size) {
         const char *env = getenv("BB_DMEM_MB");
         uint64_t mb = env ? strtoull(env, NULL, 10) : 0;
-        if (mb < 5056 || mb > 16384) mb = 5056;
+        if (mb == 0) mb = 8192;
+        else if (mb < 5056 || mb > 16384) mb = 5056;
         size = mb * 1024 * 1024;
     }
     return size;
