@@ -267,6 +267,18 @@ if (BB_NET)
     if (Protobuf_FOUND AND nlohmann_json_FOUND AND OpenSSL_FOUND AND ZLIB_FOUND AND
         MINIUPNPC_INCLUDE AND MINIUPNPC_LIBRARY)
         add_subdirectory(bbnet)
+        # bbhost transport test (tests/test_bbhost_http.cpp): an in-process httplib server
+        # plays the Hunter's Dream on 127.0.0.1 — no network, no Vulkan, no game.
+        # Build it explicitly: ninja -C out/gpu bbhost-http-test && out/gpu/bbhost-http-test
+        add_executable(bbhost-http-test EXCLUDE_FROM_ALL ../tests/test_bbhost_http.cpp
+            bbnet/bbhost/http_json.cpp)
+        target_compile_options(bbhost-http-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+        target_include_directories(bbhost-http-test PRIVATE ..)
+        target_include_directories(bbhost-http-test SYSTEM PRIVATE third_party/httplib)
+        target_compile_definitions(bbhost-http-test PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
+            CPPHTTPLIB_ZLIB_SUPPORT)
+        target_link_libraries(bbhost-http-test PRIVATE nlohmann_json::nlohmann_json
+            OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
         message(STATUS "Online module: on (libbbnet.so)")
     else()
         message(STATUS "Online module: off (protobuf, nlohmann_json, OpenSSL, zlib or miniupnpc missing)")

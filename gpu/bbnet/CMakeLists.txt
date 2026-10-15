@@ -14,7 +14,7 @@ add_custom_command(
             "--cpp_out=${SHADNET_PROTO_OUT}" "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto")
 file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS shadps4/core/libraries/network/*.cpp
-    shadps4/core/libraries/np/*.cpp shadps4/shadnet/*.cpp)
+    shadps4/core/libraries/np/*.cpp shadps4/shadnet/*.cpp bbhost/*.cpp)
 # Trophies and the system dialogs stay in the C runtime; their shadPS4 versions need the
 # emulator's UI layers.
 list(FILTER BBNET_SOURCES EXCLUDE REGEX
