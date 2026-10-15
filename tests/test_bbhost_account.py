@@ -219,6 +219,25 @@ class TestFailures(ServerCase):
             bbhost.device_start("http://127.0.0.1:1")
 
 
+class TestAccountCheck(ServerCase):
+    def test_the_token_goes_on_the_wire_and_a_pass_reads_as_ok(self):
+        self.server.replies = [(200, {"ResKind": 0, "Code": "WC-1"})]
+        self.assertTrue(bbhost.account_check(self.base, "tok-1"))
+        request = self.server.requests[0]
+        self.assertEqual(request["path"], "/auth/web_code")
+        self.assertEqual(request["body"], {"Token": "tok-1"})
+
+    def test_a_refused_token_is_the_servers_own_reason(self):
+        self.server.replies = [(401, {"ResKind": 1, "Message": "token expired"})]
+        with self.assertRaisesRegex(bbhost.BbhostError, "token expired"):
+            bbhost.account_check(self.base, "tok-old")
+
+    def test_no_token_never_reaches_the_network(self):
+        with self.assertRaisesRegex(bbhost.BbhostError, "link an account"):
+            bbhost.account_check(self.base, "")
+        self.assertEqual(self.server.requests, [])
+
+
 class TestAccountFile(unittest.TestCase):
     def test_save_and_load_roundtrip(self):
         with tempfile.TemporaryDirectory() as directory:

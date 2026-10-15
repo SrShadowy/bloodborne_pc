@@ -26,6 +26,7 @@ from gi.repository import Adw, GLib  # noqa: E402
 
 import bbport_bbhost as bbhost  # noqa: E402
 import bbport_config  # noqa: E402
+import bbport_shadnet  # noqa: E402
 from bbport_online import OnlineMixin  # noqa: E402
 import bbport_bbhost_ui  # noqa: E402
 from bbport_bbhost_ui import BbhostAccountMixin  # noqa: E402
@@ -112,6 +113,7 @@ class OnlineUiCase(unittest.TestCase):
 class TestBackendCombo(OnlineUiCase):
     def test_the_bbhost_group_follows_the_combo(self):
         self.assertTrue(contains(self.window.page, self.window.bbhost_group))  # actually on the page
+        self.assertTrue(contains(self.window.page, self.window.shadnet_login_row))
         self.assertTrue(self.window.bbhost_group.get_visible())
         self.assertFalse(self.window.bbhost_local.get_expanded())  # local account tucked away
         self.window.backend_row.set_selected(0)  # shadnet
@@ -215,6 +217,82 @@ class TestCreateAndRecover(OnlineUiCase):
         self.window.bbhost_name_row.set_text("Hunter")
         self.window.on_bbhost_recover(self.window.bbhost_recover_button)
         self.assertEqual(len(self.window.alerts), 3)  # still no code in the row
+
+
+class TestSigninChecks(OnlineUiCase):
+    """The launcher answers "is this account right" itself, one button each."""
+
+    def test_the_shadnet_check_reports_a_pass(self):
+        with mock.patch.object(bbport_shadnet, "check_login",
+                               return_value=(True, "NoError (0)")) as check:
+            self.window.npid_row.set_text("SrShadowy")
+            self.window.password_row.set_text("hunter2")
+            self.window.shadnet_login_button.emit("clicked")
+            pump()
+        self.assertEqual(check.call_args.args[1:], ("SrShadowy", "hunter2"))
+        self.assertEqual(self.window.shadnet_login_row.get_subtitle(),
+                         "Пароль принят: сервер принял вход")
+        self.assertEqual(self.window.shadnet_login_icon.get_icon_name(), "emblem-ok-symbolic")
+        self.assertNotIn("error", self.window.shadnet_login_row.get_css_classes())
+        self.assertTrue(self.window.shadnet_login_button.get_sensitive())
+
+    def test_a_refused_password_is_named_with_the_error_class(self):
+        with mock.patch.object(bbport_shadnet, "check_login",
+                               return_value=(False, "LoginInvalidPassword (8)")):
+            self.window.npid_row.set_text("SrShadowy")
+            self.window.password_row.set_text("wrong")
+            self.window.shadnet_login_button.emit("clicked")
+            pump()
+        self.assertEqual(self.window.shadnet_login_row.get_subtitle(),
+                         "Сервер отклонил: LoginInvalidPassword (8)")
+        self.assertIn("error", self.window.shadnet_login_row.get_css_classes())
+        self.assertEqual(self.window.shadnet_login_icon.get_icon_name(), "dialog-warning-symbolic")
+
+    def test_empty_credentials_never_reach_the_network(self):
+        with mock.patch.object(bbport_shadnet, "check_login") as check:
+            self.window.npid_row.set_text("")
+            self.window.password_row.set_text("")
+            self.window.shadnet_login_button.emit("clicked")
+            pump()
+        check.assert_not_called()
+        self.assertEqual(self.window.shadnet_login_row.get_subtitle(),
+                         "Введите Online ID и пароль")
+
+    def test_a_transport_error_reads_as_an_error(self):
+        with mock.patch.object(bbport_shadnet, "check_login",
+                               side_effect=bbport_shadnet.ShadnetError("network: saindo")):
+            self.window.npid_row.set_text("x")
+            self.window.password_row.set_text("y")
+            self.window.shadnet_login_button.emit("clicked")
+            pump()
+        self.assertEqual(self.window.shadnet_login_row.get_subtitle(), "Ошибка: network: saindo")
+        self.assertTrue(self.window.shadnet_login_button.get_sensitive())
+
+    def test_the_dream_check_needs_a_linked_account(self):
+        with mock.patch.object(bbhost, "account_check") as check:
+            self.window.bbhost_verify_button.emit("clicked")
+            pump()
+        check.assert_not_called()
+        self.assertEqual(self.window.bbhost_verify_row.get_subtitle(), "Аккаунт не привязан")
+
+    def test_a_linked_token_is_checked_and_greeted(self):
+        bbhost.save_account(self.window.account_file, "SrDream", "tok")
+        with mock.patch.object(bbhost, "account_check") as check:
+            self.window.bbhost_verify_button.emit("clicked")
+            pump()
+        check.assert_called_once_with("", "tok")
+        self.assertEqual(self.window.bbhost_verify_row.get_subtitle(), "Токен принят: SrDream")
+        self.assertNotIn("error", self.window.bbhost_verify_row.get_css_classes())
+        self.assertTrue(self.window.bbhost_verify_button.get_sensitive())
+
+    def test_a_refused_token_carries_the_server_reason(self):
+        bbhost.save_account(self.window.account_file, "SrDream", "tok")
+        with mock.patch.object(bbhost, "account_check",
+                               side_effect=bbhost.BbhostError("token expired")):
+            self.window.bbhost_verify_button.emit("clicked")
+            pump()
+        self.assertEqual(self.window.bbhost_verify_row.get_subtitle(), "Ошибка: token expired")
+        self.assertIn("error", self.window.bbhost_verify_row.get_css_classes())
 
 
 if __name__ == "__main__":

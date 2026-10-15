@@ -144,6 +144,18 @@ def account_recover(server, name, code):
                          {"Name": name, "RecoveryCode": code}))
 
 
+def account_check(server, token):
+    """Does the server still accept this PC's token? The lightest call that
+    carries it (web_code, as the reference client signs in with): the envelope
+    answers — ResKind 0 means the token passes, anything else is the server's
+    own reason (expired, replaced) with no change to the account. The issued
+    code itself is not kept: it exists for the website, not here."""
+    if not token:
+        raise BbhostError("no token: link an account first")
+    _call(server_base(server), "/auth/web_code", {"Token": token})
+    return True
+
+
 def _sign_in(reply):
     """A signed-in reply: the token and the account's name, both there or the
     reply is broken."""

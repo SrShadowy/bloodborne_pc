@@ -256,13 +256,14 @@ O plano segue os padrões do projeto. Implicações concretas:
       código morto + binário extra. O lado C++ recebe na **Fase 2** apenas o estado
       do token (`BB_HOST_TOKEN`/`BB_HOST_ONLINE_ID` → `X-BB-Token` nas chamadas de
       sessão), sem reimplementar os endpoints.
-- [x] Launcher (página *Online*, agora em `launcher/bbport_online.py` / `OnlineMixin`):
-      combo "Сервис онлайн" (shadnet|bbhost); quando bbhost: grupo "Учётная запись The
-      Hunter's Dream" com "Ввязать" (mostra `XXXX-XXXX`, abre o browser, poll com
-      spinner e botão Cancelar), "Создать", "Восстановить", exibe o OnlineId vinculado
-      e salva o token. Servidor próprio num EntryRow (vazio = thehuntersdream.com:18671,
-      esquema validado ao digitar). shadNet segue visível e ativo nos dois modos até a
-      Fase 2.
+- [x] Launcher (página *Online*): `launcher/bbport_online.py` (`OnlineMixin`) e a
+      seção de conta em `launcher/bbport_bbhost_ui.py` (`BbhostAccountMixin`, split
+      por limite de linhas): combo "Сервис онлайн" (shadnet|bbhost); quando bbhost:
+      grupo "Учётная запись The Hunter's Dream" com "Ввязать" (mostra `XXXX-XXXX`,
+      abre o browser, poll com spinner e botão Cancelar), "Создать", "Восстановить",
+      exibe o OnlineId vinculado e salva o token. Servidor próprio num EntryRow
+      (vazio = thehuntersdream.com:18671, esquema validado ao digitar). shadNet
+      segue visível e ativo nos dois modos até a Fase 2.
 - [x] `bbport_config.py`: `online_backend` (default `shadnet`), `online_bbhost_server`;
       ao lançar com backend bbhost exportar `BB_ONLINE_BACKEND`, `BB_HOST_TOKEN`,
       `BB_HOST_ONLINE_ID`, `BB_HOST_SERVER=thehuntersdream.com`, `BB_HOST_SCHEME=https`
@@ -271,7 +272,19 @@ O plano segue os padrões do projeto. Implicações concretas:
       `launcher/locales/*.json` não tem consumo no launcher atual — não tocado).
 - [x] Teste: `tests/test_bbhost_account.py` (unittest + servidor HTTP local em
       127.0.0.1: wire, lentidão, cancelamento, expiração, recusas, account.json,
-      export de env). `python3 tests/test_bbhost_account.py` → 29/29.
+      export de env, verificação de token) → 32/32.
+- [x] **Organização dos dois servers + verificação de entrada pelo launcher**
+      (rodada posterior): a página Online vira dois blocos claros — "The Hunter's
+      Dream: сообщения, пятна крови и призраки" (endereço do jogo) e "shadNet:
+      колокола, призывы и аккаунт" (NPID, senha, servidor e WebAPI juntos) — e cada
+      um ganha "Проверить вход". `launcher/bbport_shadnet.py` refaz o Login do jogo
+      (header de 15 B, payload u32-LE + LoginRequest, ErrorType do Reply; só
+      stdlib) contra o servidor shadNet configurado; `bbport_bbhost.account_check`
+      chama `/auth/web_code` com o token salvo (ResKind 0 = ainda aceito; nenhuma
+      mudança na conta). Testes: `tests/test_shadnet_login.py` (servidor fake em
+      127.0.0.1: 14 casos de wire), `TestAccountCheck` (3) e
+      `tests/test_bbhost_online_ui.py` (7 de veredito: ícone, classe error,
+      credencial vazia sem rede) — suíte 180/180.
 - **Estado honesto:** o seletor, o vínculo de conta e a exportação de env funcionam
   ponta a ponta; **o jogo ainda usa shadNet para a sessão** (nada lê
   `BB_ONLINE_BACKEND`/`BB_HOST_*` até a Fase 2 — coop não muda de comportamento).

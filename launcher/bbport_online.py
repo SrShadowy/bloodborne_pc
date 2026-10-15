@@ -8,6 +8,7 @@ in both modes until the session switch lands in Fase 2.
 
 import threading
 
+import bbport_shadnet
 import online
 
 from bbport_config import online_module
@@ -52,32 +53,32 @@ class OnlineMixin:
         self.backend_row.connect("notify::selected", self.on_backend_changed)
         self.on_backend_changed()
 
-        game = Adw.PreferencesGroup(title=tr("Игровой сервер (сообщения, пятна крови, призраки)"))
+        game = Adw.PreferencesGroup(title=tr("The Hunter's Dream: сообщения, пятна крови и призраки"))
         self.community_row = Adw.EntryRow(title=tr("Игровой сервер"), text=s["online_community"])
         game.add(self.community_row)
         page.add(game)
 
-        coop = Adw.PreferencesGroup(
-            title=tr("Сервер кооператива (колокола и призывы)"),
-            description=tr("srv.shadps4.net:31313 — публичный сервер shadPS4. Для частного сервера "
-                           "укажите host:port от его владельца. WebAPI: оставьте пустым, тогда "
-                           "берётся адрес сервера с портом 31315"))
-        self.server_row = Adw.EntryRow(title=tr("Адрес сервера"), text=s["online_server"])
-        self.webapi_row = Adw.EntryRow(title=tr("Адрес WebAPI"), text=s["online_webapi"])
-        coop.add(self.server_row)
-        coop.add(self.webapi_row)
-        page.add(coop)
-
-        account = Adw.PreferencesGroup(
-            title=tr("Учётная запись shadNet"),
-            description=tr("Имя учётной записи shadNet, не email. Зарегистрируйтесь на "
-                           "shadnet.shadps4.net или спросите владельца частного сервера. Пароль "
-                           "хранится на этом компьютере вместе с настройками лаунчера"))
+        shadnet = Adw.PreferencesGroup(
+            title=tr("shadNet: колокола, призывы и аккаунт"),
+            description=tr("Публичный сервер shadPS4: через него идут колокола и призывы. Имя "
+                           "учётной записи — не email: регистрация на shadnet.shadps4.net или "
+                           "у владельца частного сервера (его host:port — в строке адреса). "
+                           "WebAPI: пусто = адрес сервера с портом 31315. Пароль хранится "
+                           "вместе с настройками лаунчера"))
         self.npid_row = Adw.EntryRow(title=tr("Online ID (NPID)"), text=s["online_npid"])
         self.password_row = Adw.PasswordEntryRow(title=tr("Пароль"), text=s["online_password"])
-        account.add(self.npid_row)
-        account.add(self.password_row)
-        page.add(account)
+        self.server_row = Adw.EntryRow(title=tr("Адрес сервера"), text=s["online_server"])
+        self.webapi_row = Adw.EntryRow(title=tr("Адрес WebAPI"), text=s["online_webapi"])
+        login = Adw.ActionRow(title=tr("Вход в shadNet (NPID и пароль)"))
+        self.shadnet_login_icon = Gtk.Image(icon_name="dialog-information-symbolic")
+        login.add_prefix(self.shadnet_login_icon)
+        self.shadnet_login_button = Gtk.Button(label=tr("Проверить вход"), valign=Gtk.Align.CENTER)
+        self.shadnet_login_button.connect("clicked", self.on_shadnet_login)
+        login.add_suffix(self.shadnet_login_button)
+        self.shadnet_login_row = login
+        for row in (self.npid_row, self.password_row, self.server_row, self.webapi_row, login):
+            shadnet.add(row)
+        page.add(shadnet)
 
         connection = Adw.PreferencesGroup(
             title=tr("Соединение"),
@@ -136,3 +137,43 @@ class OnlineMixin:
                            (("game", community), ("shadnet", server), ("webapi", webapi))]
             GLib.idle_add(show, results)
         threading.Thread(target=work, daemon=True).start()
+
+    def on_shadnet_login(self, _button):
+        """One Login to the configured shadNet server: the verdict the game's
+        log would only show once, after a launch."""
+        server = self.server_row.get_text().strip() or online.SHADNET_SERVER
+        npid = self.npid_row.get_text().strip()
+        password = self.password_row.get_text()
+        if not npid or not password:
+            self.set_login_result(tr("Введите Online ID и пароль"),
+                                  "dialog-warning-symbolic", False)
+            return
+        self.shadnet_login_button.set_sensitive(False)
+        self.set_login_result(tr("Проверка…"), "dialog-information-symbolic", True)
+
+        def done(text, ok):
+            self.shadnet_login_button.set_sensitive(True)
+            self.set_login_result(text, "emblem-ok-symbolic" if ok else "dialog-warning-symbolic",
+                                  ok)
+            return False
+
+        def work():
+            try:
+                ok, verdict = bbport_shadnet.check_login(server, npid, password)
+            except bbport_shadnet.ShadnetError as error:
+                GLib.idle_add(done, tr("Ошибка: {}").format(error), False)
+                return
+            message = (tr("Пароль принят: сервер принял вход") if ok
+                       else tr("Сервер отклонил: {}").format(verdict))
+            GLib.idle_add(done, message, ok)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def set_login_result(self, text, icon, ok):
+        """The sign-in check's verdict row: the words, the picture, the class."""
+        self.shadnet_login_row.set_subtitle(text)
+        self.shadnet_login_icon.set_from_icon_name(icon)
+        if ok:
+            self.shadnet_login_row.remove_css_class("error")
+        else:
+            self.shadnet_login_row.add_css_class("error")

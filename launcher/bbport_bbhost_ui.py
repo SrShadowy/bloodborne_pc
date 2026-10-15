@@ -42,6 +42,13 @@ class BbhostAccountMixin:
         self.bbhost_link_button.connect("clicked", self.on_bbhost_link)
         self.bbhost_status.add_suffix(self.bbhost_link_button)
         group.add(self.bbhost_status)
+        self.bbhost_verify_row = Adw.ActionRow(title=tr("Вход в The Hunter's Dream (токен)"))
+        self.bbhost_verify_icon = Gtk.Image(icon_name="dialog-information-symbolic")
+        self.bbhost_verify_row.add_prefix(self.bbhost_verify_icon)
+        self.bbhost_verify_button = Gtk.Button(label=tr("Проверить вход"), valign=Gtk.Align.CENTER)
+        self.bbhost_verify_button.connect("clicked", self.on_bbhost_verify)
+        self.bbhost_verify_row.add_suffix(self.bbhost_verify_button)
+        group.add(self.bbhost_verify_row)
         self.bbhost_server_row = Adw.EntryRow(title=tr("Сервер аккаунтов"),
                                               text=s["online_bbhost_server"])
         self.bbhost_server_row.connect("changed", self.on_bbhost_server_changed)
@@ -85,13 +92,52 @@ class BbhostAccountMixin:
 
     def update_bbhost_status(self):
         """Who is linked, and the button the flow starts from ("change account"
-        once there is one to replace)."""
+        once there is one to replace). A new sign-in makes the old check's
+        verdict stale, so the verify row goes back to neutral."""
         online_id, _token = bbhost.load_account(ACCOUNT_FILE)
         self.bbhost_status.set_title(
             tr("Привязано: {}").format(online_id) if online_id else tr("Аккаунт не привязан"))
         self.bbhost_status_icon.set_from_icon_name(
             "emblem-ok-symbolic" if online_id else "avatar-default-symbolic")
         self.bbhost_link_button.set_label(tr("Сменить аккаунт") if online_id else tr("Ввязать"))
+        self.set_verify_result("", "dialog-information-symbolic", True)
+
+    def set_verify_result(self, text, icon, ok):
+        """The check's verdict row: the words, the picture and the error class."""
+        self.bbhost_verify_row.set_subtitle(text)
+        self.bbhost_verify_icon.set_from_icon_name(icon)
+        if ok:
+            self.bbhost_verify_row.remove_css_class("error")
+        else:
+            self.bbhost_verify_row.add_css_class("error")
+
+    def on_bbhost_verify(self, _button):
+        """Ask the account server whether this PC's token still signs in — the
+        only place the answer exists: the game has no password to re-check."""
+        online_id, token = bbhost.load_account(ACCOUNT_FILE)
+        if not token:
+            self.set_verify_result(tr("Аккаунт не привязан"),
+                                   "avatar-default-symbolic", False)
+            return
+        server = self.bbhost_server_row.get_text()
+        self.bbhost_verify_button.set_sensitive(False)
+        self.set_verify_result(tr("Проверка…"), "dialog-information-symbolic", True)
+
+        def done(text, ok):
+            self.bbhost_verify_button.set_sensitive(True)
+            self.set_verify_result(
+                text, "emblem-ok-symbolic" if ok else "dialog-warning-symbolic", ok)
+            return False
+
+        def work():
+            try:
+                bbhost.account_check(server, token)
+            except bbhost.BbhostError as error:
+                GLib.idle_add(done, tr("Ошибка: {}").format(error), False)
+                return
+            GLib.idle_add(done, tr("Токен принят: {}").format(online_id), True)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def set_account_buttons(self, link, sign):
         """One account call at a time; while it waits, the link button cancels."""
