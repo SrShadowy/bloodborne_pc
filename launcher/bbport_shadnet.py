@@ -119,6 +119,11 @@ def check_login(server, npid, password, timeout=TIMEOUT):
                     if not payload:
                         raise ShadnetError("empty login reply")
                     code = payload[0]
+                    if code == 0:
+                        try:
+                            sock.sendall(frame(REQUEST, 1, 1))
+                        except OSError:
+                            pass
                     return code == 0, f"{ERRORS.get(code, 'error')} ({code})"
             raise ShadnetError("no login reply")
     except socket.timeout as error:

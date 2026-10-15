@@ -144,8 +144,8 @@ int ResolveWantedFps(std::uint8_t* image) {
 void ApplyStaticTables(std::uint8_t* image, int mode, int fps) {
     auto va = [&](std::uint32_t bn) -> std::uint8_t* { return image + (bn - kGuestBase); };
     for (const Constant& c : kConstants) {
-        std::uint32_t now = (mode == 30) ? c.was : c.now;
-        if (const Rated* r = FindRated(c.at); r && mode != 60 && mode != 30) {
+        std::uint32_t now = c.now;
+        if (const Rated* r = FindRated(c.at); r && mode != 60) {
             now = FloatToBits(RatedValue(r->kind, BitsToFloat(c.was), fps));
         }
         std::memcpy(va(c.at), &now, 4);
@@ -158,21 +158,17 @@ void ApplyStaticTables(std::uint8_t* image, int mode, int fps) {
     for (const Bytes& b : kBytes) {
         std::memcpy(va(b.at), b.now, b.n);
     }
-    auto apply_sites = [&](const auto& sites, bool skip_cam30) {
+    auto apply_sites = [&](const auto& sites) {
         for (const Site& s : sites) {
-            if (skip_cam30 && (s.at == 0x0183dc97 || s.at == 0x0183dcfe ||
-                               s.at == 0x0183ff29 || s.at == 0x01840799)) {
-                continue;
-            }
             const auto bytes = HexToBytes(s.now);
             std::memcpy(va(s.at), bytes.data(), bytes.size());
         }
     };
-    apply_sites(kSixtySites, mode == 30);
+    apply_sites(kSixtySites);
     const std::uint32_t step_bits = FloatToBits(1.0f / static_cast<float>(fps));
     std::memcpy(va(0x0575a908), &step_bits, 4);
-    apply_sites(kFrameTimeSites, false);
-    if (mode != 60 && mode != 30) apply_sites(kClothSites, false);
+    apply_sites(kFrameTimeSites);
+    if (mode != 60) apply_sites(kClothSites);
 }
 
 void InstallDynamicSlots(std::uint8_t* image, std::uint8_t* data_page, int mode, int fps) {
@@ -196,7 +192,7 @@ void InstallDynamicSlots(std::uint8_t* image, std::uint8_t* data_page, int mode,
         std::memcpy(step_site, step_load, sizeof(step_load));
     }
 
-    if (mode != 60 && mode != 30) {
+    if (mode != 60) {
         st.cloth_scalars = reinterpret_cast<float*>(data_page + data_off);
         data_off += 16;
         st.cloth_dt = 1.0f / static_cast<float>(fps);

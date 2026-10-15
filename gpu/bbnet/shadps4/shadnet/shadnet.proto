@@ -29,6 +29,10 @@ message SetAppearOfflineRequest {
     bool appear_offline = 1;
 }
 
+message SetClientVersionRequest {
+    string version = 1;
+}
+
 message ServerFeaturesReply {
     bool matching2_enabled = 1;
 }
