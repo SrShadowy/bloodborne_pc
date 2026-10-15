@@ -11,7 +11,6 @@ text is the key).
 
 import os
 import subprocess
-import threading
 import sys
 from pathlib import Path
 from bbport_assets import fsr411_problem
@@ -27,7 +26,6 @@ PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the packag
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 sys.path.insert(0, str(PORT_DIR / 'tools'))
 import game_check  # noqa: E402
-import online  # noqa: E402  (the online module: addresses and the connection test)
 import fsr4_wizard  # noqa: E402
 from bbport_config import (
     PORT_DIR, PACKAGED, DATA_DIR, CONFIG_FILE,
@@ -48,6 +46,8 @@ from bbport_ui_helpers import (
 from bbport_cache import CacheMixin
 from bbport_controls import ControlsMixin
 from bbport_mods import ModsMixin
+from bbport_online import OnlineMixin
+from bbport_bbhost_ui import BbhostAccountMixin
 from bbport_dlss import DlssMixin
 from bbport_log import LogMixin
 from bbport_game_runner import GameRunnerMixin
@@ -58,6 +58,8 @@ class LauncherWindow(
     Adw.ApplicationWindow,
     ControlsMixin,
     ModsMixin,
+    OnlineMixin,
+    BbhostAccountMixin,
     CacheMixin,
     DlssMixin,
     GameRunnerMixin,
@@ -774,6 +776,8 @@ class LauncherWindow(
         s["online_npid"] = self.npid_row.get_text().strip()
         s["online_password"] = self.password_row.get_text()
         s["online_upnp"] = self.upnp_row.get_active()
+        s["online_backend"] = combo_value(self.backend_row)
+        s["online_bbhost_server"] = self.bbhost_server_row.get_text().strip()
         self.save_mod_profile()
         self.save_patch_profile()
         save_settings(s)
@@ -808,101 +812,6 @@ class LauncherWindow(
 
     def environment(self):
         return game_environment(self.settings)
-
-    # --- Online page ---------------------------------------------------------------------
-
-    def build_online_page(self):
-        s = self.settings
-        page = Adw.PreferencesPage()
-        play = Adw.PreferencesGroup(description=tr(
-            "Сообщения, пятна крови и призраки приходят с The Hunter's Dream; колокола и призывы "
-            "идут через сервер shadNet. Игра по сети совместима с версией для Windows: нужны версия "
-            "игры 1.09 и тот же сервер"))
-        self.online_row = Adw.SwitchRow(title=tr("Играть онлайн"),
-                                        subtitle=tr("Выключено: игра остаётся офлайн, как раньше"),
-                                        active=s["online"])
-        play.add(self.online_row)
-        if not online_module():
-            self.online_row.set_sensitive(False)
-            self.online_row.set_subtitle(tr("Эта сборка без модуля онлайна (libbbnet.so): игра только офлайн"))
-        page.add(play)
-
-        game = Adw.PreferencesGroup(title=tr("Игровой сервер (сообщения, пятна крови, призраки)"))
-        self.community_row = Adw.EntryRow(title=tr("Игровой сервер"), text=s["online_community"])
-        game.add(self.community_row)
-        page.add(game)
-
-        coop = Adw.PreferencesGroup(
-            title=tr("Сервер кооператива (колокола и призывы)"),
-            description=tr("srv.shadps4.net:31313 — публичный сервер shadPS4. Для частного сервера "
-                           "укажите host:port от его владельца. WebAPI: оставьте пустым, тогда "
-                           "берётся адрес сервера с портом 31315"))
-        self.server_row = Adw.EntryRow(title=tr("Адрес сервера"), text=s["online_server"])
-        self.webapi_row = Adw.EntryRow(title=tr("Адрес WebAPI"), text=s["online_webapi"])
-        coop.add(self.server_row)
-        coop.add(self.webapi_row)
-        page.add(coop)
-
-        account = Adw.PreferencesGroup(
-            title=tr("Учётная запись"),
-            description=tr("Имя учётной записи shadNet, не email. Зарегистрируйтесь на "
-                           "shadnet.shadps4.net или спросите владельца частного сервера. Пароль "
-                           "хранится на этом компьютере вместе с настройками лаунчера"))
-        self.npid_row = Adw.EntryRow(title=tr("Online ID (NPID)"), text=s["online_npid"])
-        self.password_row = Adw.PasswordEntryRow(title=tr("Пароль"), text=s["online_password"])
-        account.add(self.npid_row)
-        account.add(self.password_row)
-        page.add(account)
-
-        connection = Adw.PreferencesGroup(
-            title=tr("Соединение"),
-            description=tr("У всех в сессии должны быть одна версия игры (1.09) и один сервер. "
-                           "Читы меняют игру и для других игроков: выключайте их при совместной игре"))
-        self.upnp_row = Adw.SwitchRow(title=tr("UPnP (открыть порт на роутере автоматически)"),
-                                      subtitle=tr("Выключите при Tailscale или другом VPN"),
-                                      active=s["online_upnp"])
-        connection.add(self.upnp_row)
-        test = Adw.ActionRow(title=tr("Проверить соединение"))
-        self.test_button = Gtk.Button(label=tr("Проверить"), valign=Gtk.Align.CENTER)
-        self.test_button.connect("clicked", self.on_test_connection)
-        test.add_suffix(self.test_button)
-        connection.add(test)
-        self.test_rows = []
-        self.connection_group = connection
-        page.add(connection)
-        return page
-
-    def online_addresses(self):
-        server = self.server_row.get_text().strip() or online.SHADNET_SERVER
-        community = online.community_address(self.community_row.get_text())
-        webapi = online.webapi_setting(self.webapi_row.get_text(), server, community)
-        return server, webapi, community
-
-    def on_test_connection(self, _button):
-        server, webapi, community = self.online_addresses()
-        names = {"game": tr("Игровой сервер"), "shadnet": tr("Сервер shadNet"), "webapi": "WebAPI"}
-        for row in self.test_rows:
-            self.connection_group.remove(row)
-        self.test_rows = []
-        self.test_button.set_sensitive(False)
-        self.test_button.set_label(tr("Проверка…"))
-
-        def show(results):
-            for name, address, ok, detail in results:
-                row = Adw.ActionRow(title=GLib.markup_escape_text(f"{names[name]}: {address}"),
-                                    subtitle=GLib.markup_escape_text(
-                                        tr("доступен") if ok else f'{tr("недоступен")} ({detail})'))
-                row.add_prefix(Gtk.Image(icon_name="object-select-symbolic" if ok else "dialog-warning-symbolic"))
-                self.connection_group.add(row)
-                self.test_rows.append(row)
-            self.test_button.set_sensitive(True)
-            self.test_button.set_label(tr("Проверить"))
-            return False
-
-        def work():
-            results = online.check(server, webapi, community)
-            GLib.idle_add(show, results)
-        threading.Thread(target=work, daemon=True).start()
 
     # --- FSR 4.1.1 from the user's DLL -----------------------------------------------------
 

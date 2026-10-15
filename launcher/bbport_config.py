@@ -17,11 +17,14 @@ sys.path.insert(0, str(PORT_DIR / "scripts"))
 sys.path.insert(0, str(PORT_DIR / "tools"))
 import online
 
+import bbport_bbhost as bbhost  # the Hunter's Dream account client (protocol only)
+
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
 DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
+ACCOUNT_FILE = CONFIG_DIR / "account.json"  # the Hunter's Dream sign-in (bbport_bbhost)
 MAX_LOG_LINES = 5000
 
 # The memory model (run.sh: BB_PC_MODEL): "auto" leaves it to the GPU (the new one on AMD, the
@@ -140,6 +143,10 @@ DEFAULTS = {
     "online_npid": "",
     "online_password": "",
     "online_upnp": True,
+    # Online service (Online page): shadNet keeps working as before; bbhost is
+    # The Hunter's Dream account (bbport_bbhost), its co-op backend comes later.
+    "online_backend": "shadnet",
+    "online_bbhost_server": bbhost.DEFAULT_SERVER,
 }
 
 # bbport.ini keys the launcher edits; the rest of the file is kept.
@@ -341,6 +348,23 @@ def game_environment(s):
         env["BB_SHADNET_PASSWORD"] = s["online_password"]
         env["BB_UPNP"] = "1" if s["online_upnp"] else "0"
         env["BB_COMMUNITY_SERVER"] = community
+        # The selected service (plan ONLINE_BBHOST_PLAN §3, §9): shadNet unless the
+        # settings say bbhost; an unknown value is shadNet, the compatible default.
+        backend = "bbhost" if s.get("online_backend") == "bbhost" else "shadnet"
+        env["BB_ONLINE_BACKEND"] = backend
+        if backend == "bbhost":
+            # The account service's origin; a bad custom address falls back to the
+            # public server (the Online page shows the error in the row itself).
+            try:
+                base = bbhost.server_base(s.get("online_bbhost_server"))
+            except bbhost.BbhostError:
+                base = bbhost.server_base("")
+            scheme, _sep, host = base.partition("://")
+            env["BB_HOST_SCHEME"] = scheme
+            env["BB_HOST_SERVER"] = host
+            online_id, token = bbhost.load_account(ACCOUNT_FILE)
+            env["BB_HOST_ONLINE_ID"] = online_id
+            env["BB_HOST_TOKEN"] = token
     for item in s["extra_env"].split():
         if "=" in item:
             key, value = item.split("=", 1)
