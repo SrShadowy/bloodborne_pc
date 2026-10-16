@@ -77,6 +77,8 @@ public:
     };
     bool TakeOutput(VAddr display, Output& out);
 
+    void ResetFailure() { failed = false; }
+
 private:
     bool EnsureContext(u32 render_width, u32 render_height, u32 width, u32 height, vk::Format format);
     void Destroy();
@@ -101,6 +103,8 @@ private:
     VideoCore::HostImage depth_copy;
     VideoCore::HostImage hudless;     ///< the frame without its UI (CaptureHudless)
     bool hudless_ready = false;       ///< taken for the captured scene
+    vk::Format hudless_format{};
+    u32 hudless_w = 0, hudless_h = 0;
     vk::Format depth_copy_format{};
     u32 depth_copy_w = 0, depth_copy_h = 0;
 

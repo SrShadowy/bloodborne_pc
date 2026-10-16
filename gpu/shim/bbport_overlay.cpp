@@ -585,7 +585,18 @@ void RenderReactivitySection(BbSettings::Values& s, int lang) {
 
 void RenderFrameGenSection(BbSettings::Values& s, int lang) {
     ImGui::SeparatorText(S(SectionFrameGeneration));
-    Checkbox(S(FrameGenerationEnable), s.frame_generation);
+    bool fg = s.frame_generation.load();
+    if (ImGui::Checkbox(S(FrameGenerationEnable), &fg)) {
+        Store(s.frame_generation, fg, true);
+        if (fg) {
+            if (s.upscaler == BbSettings::UpscalerOff) {
+                Store(s.upscaler, int(BbSettings::UpscalerFsr3), true);
+            }
+            if (!s.object_motion) {
+                Store(s.object_motion, true, true);
+            }
+        }
+    }
     Hint(S(HintFrameGeneration));
     if (const char* fg_prob = s.frame_generation_problem.load()) {
         ImGui::PushTextWrapPos();
@@ -687,8 +698,7 @@ void RenderEffectsSection(BbSettings::Values& s, int lang) {
     Hint(S(HintGameEffects));
     Hint(S(HintSpecialControls));
 
-    bool restart = s.object_motion != s.startup_object_motion ||
-                   s.live_resolution != s.startup_live_resolution ||
+    bool restart = s.live_resolution != s.startup_live_resolution ||
                    (s.startup_draw_pipe == BbSettings::DrawPipeOff && s.draw_pipe != BbSettings::DrawPipeOff) ||
                    BbSettings::ResolutionNeedsRestart();
     // Effects 0..4 (CA, DoF, Motion Blur, SSAO, AA) and Model LOD apply live; 5..9 require restart.

@@ -97,7 +97,8 @@ void main() {
         float depth_threshold = max(2e-7, (proj.z - depth) * 0.01);
         if (object_motion.b > 0.99 && abs(object_motion.a - depth) < depth_threshold &&
             !any(isnan(object_motion.rg)) &&
-            !any(isinf(object_motion.rg))) {
+            !any(isinf(object_motion.rg)) &&
+            dot(object_motion.rg, object_motion.rg) < (size.x * size.x * 0.25)) {
             result = object_motion.rg;
         }
     }

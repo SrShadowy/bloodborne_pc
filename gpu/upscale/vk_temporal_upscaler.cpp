@@ -404,8 +404,14 @@ bool TemporalUpscaler::OnFrameStart() {
         applied_aspect = aspect;
         BbGuestHooks::SetDisplayAspect(aspect);
     }
+    const bool fg_wanted = frame_generation && frame_generation->Wanted();
+    const bool fg_changed = fg_wanted != last_frame_gen;
+    last_frame_gen = fg_wanted;
+    if (fg_changed && fg_wanted && frame_generation) {
+        frame_generation->ResetFailure();
+    }
     const bool changed = output_changed || applied_preset != preset || active != last_active ||
-                         jitter_on != last_jitter || applied_upscaler != upscaler;
+                         jitter_on != last_jitter || applied_upscaler != upscaler || fg_changed;
     if (applied_upscaler != upscaler || (output_changed && BbSettings::IsFsr4(upscaler))) {
         // A failed provider keeps a fatal flag internally; a user retry gets a fresh context, and
         // so does another output (one it could not do, 7680x2160, must not keep it off at 2560x1080).
@@ -1488,7 +1494,9 @@ float TemporalUpscaler::SceneMipBias() const {
 }
 
 bool TemporalUpscaler::Scaled() const {
-    return scaled_session || target_width != 1920 || target_height != 1080;
+    return scaled_session || target_width != 1920 || target_height != 1080 ||
+           scene_targets.Reduced() ||
+           (frame_generation && frame_generation->Wanted());
 }
 
 void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {

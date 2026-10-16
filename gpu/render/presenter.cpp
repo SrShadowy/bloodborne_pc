@@ -561,7 +561,7 @@ void Presenter::RecordPresent(vk::CommandBuffer cmdbuf, const Frame* frame, vk::
     };
     cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &after_transfer});
     if (overlay) {
-        BbOverlay::Render(cmdbuf, swapchain.ImageView(), extent);
+        BbOverlay::Render(cmdbuf, swapchain.ImageView(), extent, source != VK_NULL_HANDLE);
         const vk::ImageMemoryBarrier2 to_present{
             .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,

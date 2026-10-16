@@ -104,6 +104,8 @@ void FrameGeneration::Destroy() {
         ffxVkPortableFrameGenerationContextDestroy(context);
         context = nullptr;
     }
+    hudless_ready = false;
+    hudless_w = hudless_h = 0;
 }
 
 bool FrameGeneration::EnsureContext(u32 render_width, u32 render_height, u32 width, u32 height,
@@ -231,6 +233,9 @@ void FrameGeneration::CaptureScene(const Scene& in) {
         }};
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 2, .pImageMemoryBarriers = after.data()});
     });
+
+    // Capture the clean scene output before any UI / subtitles are drawn over it.
+    CaptureHudless(in.color);
 }
 
 
@@ -238,13 +243,14 @@ void FrameGeneration::CaptureHudless(vk::Image color) {
     if (!scene_captured || color != scene.color || hudless_ready) {
         return;
     }
-    if (!hudless) {
+    if (!hudless || hudless_w != scene.width || hudless_h != scene.height ||
+        hudless_format != scene.color_format) {
         scheduler.Finish();
         hudless = VideoCore::HostImage(instance.GetDevice(), instance.GetAllocator());
         hudless.Create(vk::ImageCreateInfo{
             .imageType = vk::ImageType::e2D,
-            .format = context_format,
-            .extent = {context_w, context_h, 1},
+            .format = scene.color_format,
+            .extent = {scene.width, scene.height, 1},
             .mipLevels = 1,
             .arrayLayers = 1,
             .samples = vk::SampleCountFlagBits::e1,
@@ -252,6 +258,9 @@ void FrameGeneration::CaptureHudless(vk::Image color) {
             .usage = ColorUsage,
             .initialLayout = vk::ImageLayout::eUndefined,
         });
+        hudless_w = scene.width;
+        hudless_h = scene.height;
+        hudless_format = scene.color_format;
     }
     hudless_ready = true;
     scheduler.EndRendering();

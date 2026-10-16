@@ -287,6 +287,7 @@ private:
     bool resources_taa = false;
     std::unique_ptr<Fsr4Upscaler> fsr4;
     std::unique_ptr<class FrameGeneration> frame_generation;
+    bool last_frame_gen = false;
     bool hudless_taken = false; ///< this frame's UI-less image went to frame generation
     /// Inputs of this frame's scaled run, for frame generation (CaptureFrameGenScene).
     void CaptureFrameGenScene(vk::Image depth_image, vk::Format depth_format, u32 w, u32 h, u32 ow,

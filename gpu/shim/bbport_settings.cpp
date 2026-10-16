@@ -328,9 +328,6 @@ void Load() {
         {"BB_DRAW_PIPE", "draw_pipe"},              {"BB_FRAME_GEN", "frame_generation"},
         {"BB_FPS_LIMIT", "fps_limit"},
     };
-    // Frame generation is hidden in the menu until its artifacts are fixed: only BB_FRAME_GEN turns
-    // it on, a saved setting does not.
-    v.frame_generation = false;
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
             Set(v, key, value);
