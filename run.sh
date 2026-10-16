@@ -50,9 +50,13 @@ if [[ ${BB_SAVE_LOG:-} == 1 ]]; then
     export BB_FRAME_STATS=1 BB_FRAME_LOG=${BB_FRAME_LOG:-$logs/$stamp.frames.csv}
     export BB_READBACK_LOG=${BB_READBACK_LOG:-$logs/$stamp.readbacks.csv}
     echo "Log: $logs/$stamp.log"
-    exec 3>"$logs/$stamp.log"
+    # A descriptor bash picks (10 and up), not 3: the AppImage's runtime keeps its mount for as
+    # long as the program holds an inherited pipe (the first free descriptor, 3); with --play
+    # this script replaced the launcher, and closing that pipe unmounted the store under it
+    # ("python3: Software caused connection abort").
+    exec {log_fd}>"$logs/$stamp.log"
     # Bash builtins only (the AppImage's PATH has no tee).
-    exec > >(while IFS= read -r line || [[ -n $line ]]; do printf '%s\n' "$line"; printf '%s\n' "$line" >&3; done) 2>&1
+    exec > >(while IFS= read -r line || [[ -n $line ]]; do printf '%s\n' "$line"; printf '%s\n' "$line" >&$log_fd; done) 2>&1
 fi
 if [[ -z ${PYTHON:-} ]]; then
     PYTHON=$(command -v python3 || true)
@@ -84,8 +88,10 @@ if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
     unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
 fi
 # BB_RENDER_RES=WxH explicitly sets the game's render resolution (a patch at start).
-# Frame rate: BB_FPS=uncap (default; delta-time patch, vblank 480 Hz, frames shown at once),
-# 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
+# Frame rate: BB_FPS=uncap (default; hooks in the game's code, gpu/shim/bbport_frame_rate.cpp:
+# each frame's real time; vblank 480 Hz, frames shown at once; BB_FRAME_HOOKS=0: the patches),
+# 60/90 (the same hooks, at most 60/90 frames a second) or 30 (the game's own). BB_PATCHES adds
+# patch names ("a;b"). fork: launcher-saved fps_mode/fps_limit are picked up when BB_FPS unset.
 if [[ -z ${BB_FPS:-} && -f ~/.config/bbport-launcher/settings.json ]]; then
     saved_fps=$("$PYTHON" -c "import json; print(json.load(open('$HOME/.config/bbport-launcher/settings.json')).get('fps_mode', ''))" 2>/dev/null || true)
     [[ -n $saved_fps ]] && BB_FPS=$saved_fps
@@ -142,13 +148,14 @@ fi
 # (BB_GUEST_IN_PLACE below implies it: it commits all allocated memory up front and rules out BB_UFFD).
 export BB_PREUPLOAD=${BB_PREUPLOAD:-1}
 # Memory model and translation. BB_PC_MODEL=1 (the launcher's "Memory model": "Auto" gives it to
-# AMD GPUs, the 0.3 model to the others; BB_PC_MODEL=1/0 by hand) selects how a PC release would
+# every GPU; BB_PC_MODEL=1/0 by hand) selects how a PC release would
 # work: the GPU uses the game's memory where it is (GPU-visible system memory) and keeps the data
 # it reads often in VRAM, the command processor's work is translated rather than emulated
-# (BB_GUEST_IN_PLACE=1 and what depends on it). AMD keeps the game's memory in a sparse arena;
-# other GPUs get the layer's memory module, which binds it in place and keeps VRAM copies without
-# sparse binding (NVIDIA's sparse binding stalls the GPU for seconds); BB_LAYER_MEMORY=1/0 by hand.
-# 0 (the default off AMD): the model of 0.3 (VRAM copies of the game's memory, write tracking),
+# (BB_GUEST_IN_PLACE=1 and what depends on it). Every GPU gets the layer's memory module, which
+# binds the game's memory in place and keeps VRAM copies without sparse binding (NVIDIA's sparse
+# binding stalls the GPU for seconds; on AMD it is faster than the sparse arena too);
+# BB_LAYER_MEMORY=0: AMD's sparse arena, as before 0.52.
+# 0: the model of 0.3 (VRAM copies of the game's memory, write tracking),
 # with the fixes made since. BB_GUEST_IN_PLACE set by hand overrides it.
 # BB_AS_0_3=1 (the launcher's developer switch "Synchronisation as in 0.3"): what changed since the
 # 0.3 release is reverted for comparisons: the 0.3 memory model, WRITE_DATA/DMA waiting for every
@@ -158,16 +165,12 @@ gpu_vendor= gpu_name=
 if [[ -z ${BB_PC_MODEL:-} || ( ${BB_AUTO_NOHIZ:-1} != 0 && -z ${RADV_DEBUG:-} ) ]]; then
     IFS=$'\t' read -r gpu_vendor gpu_name < <("$caps" --device 2> /dev/null) || true
 fi
-# Memory model left to the port: the new one on AMD (0x1002), the 0.3 one elsewhere (NVIDIA's
-# path through the memory module is still being measured with testers).
+# Memory model left to the port: the new one on every GPU (0.6). It goes through the layer's memory
+# module: no sparse binding of the game's memory, so nothing NVIDIA-specific stalls; a driver that
+# fails the startup checks (BbGuestMemory::Usable) still falls back to VRAM copies by itself.
 if [[ -z ${BB_PC_MODEL:-} ]]; then
-    if [[ $gpu_vendor == 0x1002 ]]; then
-        export BB_PC_MODEL=1
-        echo "Memory model: new (AMD GPU${gpu_name:+, $gpu_name}; BB_PC_MODEL=0: the 0.3 model)"
-    else
-        export BB_PC_MODEL=0
-        echo "Memory model: the 0.3 one (${gpu_name:-GPU unknown}; BB_PC_MODEL=1: the new one)"
-    fi
+    export BB_PC_MODEL=1
+    echo "Memory model: new (${gpu_name:-GPU unknown}; BB_PC_MODEL=0: the 0.3 model)"
 fi
 # GCN 3-5 under RADV (Polaris, Vega and their APUs): with HiZ, depth compression showed black
 # halos and missing geometry (issues #54, #99); RADV_DEBUG=nohiz fixed it at some cost. Set
@@ -216,7 +219,9 @@ export BB_GPU_WRITE_TWINS=${BB_GPU_WRITE_TWINS:-1} BB_GPU_WRITE_TWINS_MAX=${BB_G
 export BB_READBACK_LINEAR=${BB_READBACK_LINEAR:-0}
 # Persistent shader cache sizing
 export MESA_SHADER_CACHE_MAX_SIZE=${MESA_SHADER_CACHE_MAX_SIZE:-4G}
-export BB_VBLANK_HZ=${BB_VBLANK_HZ:-480}
+if [[ -z ${BB_VBLANK_HZ:-} ]]; then
+    case $fps in uncap) export BB_VBLANK_HZ=1000 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
+fi
 # FSR 4: faster post passes next to the downloaded ones (incremental; tools/fsr4_optimize.sh).
 if [[ -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then
     bash tools/fsr4_optimize.sh || echo 'FSR 4: optimized post passes not built' >&2
@@ -230,7 +235,7 @@ fi
 # Online play (BB_ONLINE=1, launcher: Online; the online module gpu/bbnet): the game's own server
 # goes to the community server, summon signs to the shadNet WebAPI (scripts/online.py).
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
-    export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-srv.shadps4.net:31313}
+    export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-play.seamlesshunt.com:31313}
     # HTTPS needs CA certificates: OpenSSL from Nix looks only in its own store path (the
     # packaged wrapper brings a bundle; from source the system's is taken).
     if [[ ! -r ${SSL_CERT_FILE:-} ]]; then
@@ -239,6 +244,30 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
         done
     fi
     [[ -n ${BB_SHADNET_WEBAPI:-} ]] || export BB_SHADNET_WEBAPI=http://${BB_SHADNET_SERVER%:*}:31315
+    # BBSC: its game server on this PC when the server's own does not answer (online.py
+    # bbsc-local). It lives as long as the game: a watcher stops it when this process (exec'd into
+    # the game below) is gone. Messages and bloodstains are then this PC's only.
+    if [[ ${BB_BBSC:-0} == 1 && -f scripts/bbsc_gameserver/bbsc_gameserver.py ]]; then
+        bbsc_shadnet=$("$PYTHON" scripts/online.py bbsc-local) || bbsc_shadnet=
+        if [[ -n $bbsc_shadnet ]]; then
+            bbsc_dir=${BB_USER_DIR:-$data/user}/bbsc
+            mkdir -p "$bbsc_dir/logs"
+            game_pid=$$
+            if ! (exec 3<>/dev/tcp/127.0.0.1/20443) 2>/dev/null; then
+                ( "$PYTHON" scripts/bbsc_gameserver/bbsc_gameserver.py --shadnet "$bbsc_shadnet" \
+                      --host 127.0.0.1 --port 20443 --relay-port 0 --no-bbhost --no-playlog \
+                      --data "$bbsc_dir/online-data.json" --log-dir "$bbsc_dir/logs" \
+                      > "$bbsc_dir/logs/gameserver-console.log" 2>&1 &
+                  server_pid=$!
+                  while kill -0 "$game_pid" 2>/dev/null && kill -0 "$server_pid" 2>/dev/null; do sleep 2; done
+                  kill "$server_pid" 2>/dev/null ) &
+                echo "Co-op: BBSC game server on 127.0.0.1:20443 (summons -> $bbsc_shadnet:31315)"
+            else
+                echo "Co-op: a game server answers on 127.0.0.1:20443 already: used"
+            fi
+            export BB_COMMUNITY_SERVER=http://127.0.0.1
+        fi
+    fi
     SHADPS4_HTTP_HOST_OVERRIDES_JSON=$("$PYTHON" scripts/online.py overrides --user "${BB_USER_DIR:-$data/user}") || true
     export SHADPS4_HTTP_HOST_OVERRIDES_JSON
 fi

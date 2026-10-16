@@ -47,7 +47,12 @@ def combo_row(title, subtitle, choices, current):
 
 def combo_value(row):
     """Extracts the underlying value from an Adw.ComboRow created with combo_row."""
-    return row.values[row.get_selected()]
+    if not hasattr(row, "values") or not row.values:
+        return ""
+    idx = row.get_selected()
+    if 0 <= idx < len(row.values):
+        return row.values[idx]
+    return row.values[0] if row.values else ""
 
 
 class FolderList:

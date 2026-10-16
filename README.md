@@ -40,21 +40,117 @@ Experience Bloodborne with dramatically elevated smoothness via integrated **FSR
 
 - Interpolates intermediate frames using native motion vectors, scene depth, and reactivity masks.
 - Easily reach 60 to 120+ FPS on compatible hardware for fluid combat.
+- **Native execution.** The eboot is converted offline into a flat memory image; PS4 libc and
+  libSceFios2 are linked into it as native code. No CPU emulation and no per-instruction
+  translation: the game code runs at full speed.
+- **Two memory models** (launcher → *Mode → Memory and translation model*; *Auto*, the default,
+  is the new one on every GPU):
+  - **The new memory and translation model — the default on every GPU (0.6).** The game's memory lives
+    in system RAM and the GPU reads it where it is, as a PC game's buffers; data it reads often
+    is kept in VRAM and given back when unused (textures after 20 s, buffers after 60 s). The
+    layer's memory module tracks CPU writes to mirrored blocks to keep those copies coherent;
+    it does not copy the whole GPU-visible memory. The PS4 command processor's work
+    is translated into Vulkan commands rather than emulated on the CPU: memory writes
+    (`WRITE_DATA`, DMA) are done by the GPU in command-stream order, and fences are written by the
+    GPU itself at the end of the pipeline, at the same point of the stream as the PS4's command
+    processor writes them. On every GPU the game's memory goes through the layer's memory module:
+    bound in place, VRAM copies as separate buffers, no sparse binding (NVIDIA's sparse binding
+    froze the GPU for seconds; on AMD the module is faster than the former sparse arena too);
+    `BB_LAYER_MEMORY=0` gives AMD's sparse arena. Tested thoroughly on an RX 7800 XT; on NVIDIA
+    by testers. A driver that fails the startup checks falls back to VRAM copies by itself.
+    Without the launcher: `BB_PC_MODEL=1/0` (unset: the new one, as *Auto*).
+  - **The old memory model, as in 0.3** (*Old*). VRAM copies of the game's memory, writes
+    tracked through page protection, with every fix made since 0.3.
 
+  [Changes in 0.6-pre1](docs/CHANGES_0.6-pre1.md), [0.51](docs/CHANGES_0.51.md),
+  [0.5](docs/CHANGES_0.5.md).
+
+  Unused textures are freed in both modes, so VRAM no longer grows with every area visited.
+- **Unlocked frame rate.** Hooks in the game's code make the simulation use the real frame time
+  (the community patches in `patches/Bloodborne.xml` remain for comparison, `BB_FRAME_HOOKS=0`);
+  ~90 FPS at 4K with FSR 4 Balanced on an RX 7800 XT, ~150 FPS at 1440p with FSR 4 Quality.
+  Also 30/60/90 FPS modes.
+- **Any aspect ratio, live.** 4:3, 16:10, 16:9, 21:9 and 32:9 with the HUD at the screen's edges,
+  through hooks (the game's code is not patched).
+- **Keyboard and mouse.** Mouse look turns the game's camera directly; a mouse pointer in the
+  game's menus; a layout close to Dark Souls III's; button prompts show the bound key, or the
+  buttons of the gamepad in use (Xbox and others), PlayStation icons only with a PlayStation pad.
+- **Online play and seamless co-op.** Messages, bloodstains, bells and summons through a shadNet
+  server; seamless co-op (BBSC). Seamless Hunt's servers by default (`play.seamlesshunt.com`,
+  an account from seamlesshunt.com).
+- **Temporal upscaling built for this game.** Bloodborne has no velocity buffer, so bbport
+  computes motion vectors itself: camera motion from depth and the scene matrices, and object
+  motion (characters, cloth, weapons) from the vertex positions of the previous frame. The
+  scene is jittered sub-pixel (Halton) and rendered at a reduced resolution; the upscaler fills
+  the output (720p for the Steam Deck, 1080p, 1440p or 2160p) and the UI is drawn natively at the output resolution.
+  - **FSR 3.1** (FireBurn/FSR-Vulkan).
+  - **FSR 4 (INT8, model v07)** on GPUs exposing the required Vulkan shader features —
+    RDNA2/3 included (see Requirements).
+  - **FSR 4.1.1**: AMD's 4.1.1 DLL is recorded once under vkd3d-proton and its passes are
+    replayed natively on Vulkan; the output is **bit-exact** with the DLL. Two variants, as in
+    the DLL: INT8 on any GPU with the required shader features, and FP8 matrices on RDNA4 (RX
+    9000; picked automatically). The assets are built on your machine from one DLL of your own
+    (4.1.x): the launcher's *FSR 4.1.1 from your own AMD DLL → Choose DLL…* button (2–5 minutes,
+    twice that on RDNA4; needs a recent Proton), or `tools/fsr4cap`.
+  - Faster than AMD's own shaders on RDNA3: the final passes of FSR 4 and 4.1.1 were rewritten
+    to store through workgroup memory (3.5× and 2.3× faster, bit-exact); FSR 4 costs ~4 ms at
+    4K on an RX 7800 XT instead of ~6 ms.
+- **Multi-threaded GPU command processing.** The PS4 command stream is decoded on one thread
+  and draws are bound and recorded on another (two-stage pipeline), with a Vulkan recording
+  thread and helper threads for memory copies. Early on the single GPU thread capped the game
+  at ~26 FPS; now it runs at 90–150 FPS depending on resolution and scene.
+- **Settings inside the game's own menu:** *System → Display / Effects* (after *Screen/Sound*),
+  built and drawn by the game itself — output resolution, upscaler, preset, sharpness, FPS
+  counter, model detail and the game's effects, in the game's language.
+- **Overlay menu** (Insert or L3+R3), styled like the game's dialogs: everything above plus the
+  advanced settings, with gamepad, keyboard and mouse.
+- **GTK4 launcher** and an **AppImage** for the Steam Deck.
 ---
 
 ### 3. Redesigned In-Game Overlay Menu (Insert / L3+R3)
 The in-game configuration overlay has been overhauled for better organization, clarity, and instant control over rendering technologies.
 
 ![Redesigned Overlay Menu](prints/redesing_menu.png)
+| | shadPS4 | bbport |
+|---|---|---|
+| Scope | General PS4 emulator, many games | One game: Bloodborne v1.09 |
+| Loading | Its own ELF loader and kernel emulation at run time | The eboot is converted offline (`scripts/`) into an image with PS4 libc/Fios2 linked in; a C loader maps it and jumps into the game (loader and runtime: ~5k lines) |
+| Memory | The GPU's view of PS4 memory is kept in VRAM copies, synchronized through page-protection write tracking | By default the new memory and translation model: the game's memory in system RAM, used by the GPU in place, frequently read data in VRAM, freed when unused (the 0.3 model as an option) |
+| Command processor | Emulated: memory writes, DMA and fences are done by the CPU while decoding | Translated into Vulkan commands that the GPU runs in stream order, fences written after the work has really finished (the old model emulates, as shadPS4) |
+| System libraries | Broad HLE of the PS4 OS | A small runtime (`src/runtime_*.c`) that implements exactly what Bloodborne calls: memory, threads, sync, files, audio (incl. ATRAC9), pad, saves, AppContent |
+| GPU | shadPS4 video core and shader recompiler | Its own command processor, renderer, caches and shader translator (they started from shadPS4's, `gpu/VENDOR.txt`): two-stage draw pipeline, render-state and texture-set memoization, render-scale proxies, motion vectors, FSR 3.1/4/4.1.1, DLSS, frame capture and GPU profiler |
+| GPU thread | One thread processes the whole command stream (the bottleneck in Bloodborne) | Decode and draw recording run on separate threads; the work scales with the hardware threads (Steam Deck included) |
+| Upscaling | — | Temporal (FSR 3.1, FSR 4, FSR 4.1.1) with the game's own motion vectors and jitter |
+| Game patches | Patch files applied by the emulator | The same community patches, compiled at start (`scripts/patches.py`); render resolution, effects and FPS from the launcher |
 
+Without shadPS4 there would be no bbport: its renderer and shader recompiler were the starting
+point of the graphics side.
 - **Multilingual UI**: Seamless switching between **English**, **Português (Brasil)**, and **Русский**.
 - **Real-Time Upscaler Tweaks**: Instant toggles for FSR 4, FSR 4.1.1, FSR 3.1, and TAA.
 - **Reactivity Masks & Motion Vectors**: Fine-tune reactivity scale, threshold, max values, and character motion vectors with live visual debug modes.
 - **Live Output Resolution & Visual Effects**: Adjust display resolution, RCAS sharpness slider, subpixel jitter, Chromatic Aberration, and Depth of Field (DoF).
 
 ---
-
+- **CPU.** The PS4 CPU is x86-64, so the game's code runs directly on the PC's CPU, with no
+  emulation and no instruction translation.
+- **System libraries.** As Wine replaces the Windows API, the bbport runtime (`src/runtime_*.c`)
+  implements exactly the PS4 OS functions Bloodborne calls: memory, threads, files, audio, pad,
+  saves.
+- **Memory.** As in a PC game (the default model): the game's data in system RAM, VRAM used the
+  way a PC game uses it.
+- **Graphics.** The PS4 GPU's command stream (PM4) is a recording of the game's graphics API
+  calls: it is written by 99 functions of the statically linked libGnm, so decoding the stream
+  and translating the calls themselves come to the same thing. GCN shaders are translated to
+  SPIR-V. In the new mode the command processor's work (memory writes, DMA, fences) is
+  translated into Vulkan commands as well; fences are written by the GPU itself. Resource
+  descriptors (textures, buffers) are read by the translator on the CPU, as DXVK reads resource
+  bindings: a PS4 texture has to be converted from the PS4 tiling into a Vulkan image before the
+  draw runs, so the CPU must know its descriptor beforehand — translation, not emulation. The
+  descriptor tables (the constant engine's dumps) are read only by the translator, so the CPU
+  performs them. The game's occlusion queries (~60 a frame) are
+  Vulkan occlusion queries; predication, `COPY_DATA` and `COND_EXEC` are translated too (check:
+  `BB_PM4_SELFTEST=1`). Details:
+  [docs/EMULATION_REMOVAL_PLAN.ru.md](docs/EMULATION_REMOVAL_PLAN.ru.md), "Шаг 4" (Russian).
 ### 4. Background Shader Compilation HUD Indicator
 No more wondering why a micro-stutter occurred! A sleek, non-intrusive status spinner and progress bar appear on the HUD whenever background asynchronous shaders are compiling.
 
@@ -208,7 +304,16 @@ This builds:
 * `out/bb-gpu-capabilities`: GPU capability probe for automatic resolution and controller detection.
 
 ### 3. Advanced Compilation Flags & Options
-
+| Path | Contents |
+|---|---|
+| `src/` | Loader (`probe.c`) and the HLE runtime |
+| `scripts/` | Offline preparation of the game image, module linking, patch compiler |
+| `gpu/` | Renderer library, the port's own (`gpu/VENDOR.txt`): command processor, shader translator, renderer, caches, ImGui menu, FSR 4.1.1 runtime (`gpu/upscale/fsr411`); the online module (`gpu/bbnet`) |
+| `launcher/`, `packaging/` | GTK4 launcher; Nix package and AppImage |
+| `patches/` | Community patches for Bloodborne |
+| `tools/` | Developer tools: scripted runs, A/B toggles, FSR benchmark helpers, FSR 4 shader rewrites, `fsr4cap` (FSR 4.1.1 recording/extraction) |
+| `tests/` | Loader, runtime, patch and renderer tests |
+| `docs/` | Design notes and measurements ([upscaler](docs/upscaler.md), [parallel GPU](docs/parallel_gpu.md), [motion vectors](docs/motion_vectors.md), [roadmap](docs/ROADMAP.md)) |
 You can customize the compilation by prepending environment variables to `bash build.sh`:
 
 | Environment Variable | Description | Example |
@@ -220,7 +325,21 @@ You can customize the compilation by prepending environment variables to `bash b
 | `--test` | Builds and runs the automated unit test suite (115+ tests) | `bash build.sh --test` |
 
 ---
-
+- The old memory model removed, once the new one (the default on every GPU since 0.6) is
+  confirmed on NVIDIA and Intel.
+- Textures as objects created at load time (less guessing by address, uploads outside the
+  frame).
+- Shaders translated ahead of time, at install, not during play.
+- More CPU parallelism in GPU command processing (split the draw-recording stage further),
+  scaling to all hardware threads — most important for the Steam Deck.
+- Async compute for the upscaler (the frame is GPU-bound at 4K).
+- XeSS (super resolution) and XeFG frame generation through a Wine helper sharing Vulkan
+  memory (a memory-bridge prototype is in `tools/bridge_helper`); inputs exposed so that OptiScaler-style mapping works.
+- Frame generation (FSR 3.1 FG: in the code, hidden until its artifacts with upscaling are
+  fixed), reactive and transparency masks for particles and fog.
+- Fix the races in AMD's FSR 4.1.1 shaders at output widths that are not multiples of 64
+  (e.g. 1600×900), as already done for the left-edge race in FSR 4 v07 at 1080p.
+- Steam Deck validation of the AppImage; HDR output.
 ## 🎮 Launching the Game
 
 ### Method A: GTK4 Launcher with Full Gamepad Support (Recommended)
@@ -331,3 +450,17 @@ BB_GAME_DIR="/caminho/para/seu/CUSA03173" bash run.sh
 ### Packaging, Monitoring & System Tools
 - **[MangoHud](https://github.com/flightlessmango/MangoHud)**: Performance monitoring, FPS, and frametime tracking overlay.
 - **Nix / NixOS & AppImageKit**: Reproducible development environment (`shell.nix`) and standalone portable package creation for Linux desktops and the Steam Deck.
+bbport is licensed under the **GNU GPL v2 or later** ([LICENSE](LICENSE)) — it contains code
+from shadPS4 (GPL-2.0-or-later). Third-party components keep their licenses:
+[shadPS4](https://github.com/shadps4-emu/shadPS4) (GPL-2.0+: the renderer and shader translator were derived from it and rewritten; the online module keeps its network and NP code),
+[sirit](https://github.com/shadps4-emu/sirit), [half](https://half.sourceforge.net/),
+[FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn (MIT; FSR 3.1 on Vulkan and the
+FSR 4 v07 provider), AMD FidelityFX SDK (MIT), [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9)
+(MIT), [Dear ImGui](https://github.com/ocornut/imgui) (MIT), DejaVu fonts, BBSC seamless co-op
+(GPL-2.0+, in the online module),
+[dxil-spirv](https://github.com/HansKristian-Work/dxil-spirv) (MIT, used to build the
+FSR 4.1.1 assets). Game patches by Kyo, Lance McDonald, auser1337, illusion, emoose and other
+community members (`patches/Bloodborne.xml`). The DLSS bridge (`gpu/dlss_bridge`, MIT) and
+loader come from [Supermedo's Windows port](https://github.com/Supermedo/bloodborne_pc), adapted
+from [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR).
+AMD's FSR 4 DLLs and model data and NVIDIA's DLSS SDK and libraries are not distributed here.

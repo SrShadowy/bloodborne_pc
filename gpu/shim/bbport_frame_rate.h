@@ -1,11 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: the game's frame rate set free by hooks in its code (BB_FPS=uncap, the default), not by
+// patches: its frame pacer no longer waits for a 30 FPS frame, its step gets the frame's real time,
+// and what it ties to a frame (a 30 FPS frame's time, a per-frame step, smoothing and damping) reads
+// values the hooks recompute from that time every frame (bbport_frame_rate.cpp).
 #pragma once
 
 #include <cstdint>
 
 namespace BbFrameRate {
-
-// Applies bbhost's high-FPS animation, cloth, physics, AI, and dynamic per-frame dt
-// patches to the guest eboot image at startup when running above 30 FPS (60/90/Uncap).
+/// Installs the hooks (at load, before the game runs: bbgpu_patch_image).
 void PatchImage(unsigned char* image, std::uint64_t size);
-
+/// Whether the hooks run the game's frame rate: the video out then shows a frame as soon as the
+/// game submits it (the game's own flip rate asks for 30 FPS).
+bool Unlocked();
 } // namespace BbFrameRate

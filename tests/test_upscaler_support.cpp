@@ -46,7 +46,7 @@ int main() {
                 assert(s.fsr4_supported == fsr4);
                 assert(s.fsr411_supported == (fsr4 && fsr411));
                 assert(bool(s.fsr4_problem.load()) == unsupported);
-                assert(s.preset == Performance && s.output_res == 4);
+                assert(s.preset == Performance && CurrentOutput() == (OutputSize{2560, 1440}));
                 // Startup patch settings still describe the already applied guest patches.
                 assert(s.startup_upscaler == requested);
                 ConfigureUpscalerSupport(fsr4, fsr411);
@@ -60,6 +60,7 @@ int main() {
     s.preset = Performance;
     assert(RenderPreset() == Performance && !ResolutionNeedsRestart());
     setenv("BB_RENDER_RES", "1706x960", 1);
+    s.startup_output = CurrentOutput(); // Load with BB_OUTPUT_RES
     assert(RenderPreset() == Quality && ResolutionNeedsRestart());
     s.preset = Quality;
     assert(!ResolutionNeedsRestart());
@@ -70,13 +71,28 @@ int main() {
     s.upscaler = UpscalerTaa;          // TAA needs native guest targets
     assert(ResolutionNeedsRestart());
     s.upscaler = UpscalerFsr4;
-    const int output = s.startup_output_res;
-    s.output_res = (output + 1) % OutputCount;
+    s.output_res = PackSize({3840, 2160});
     assert(ResolutionNeedsRestart());
-    s.output_res = output;
+    s.output_res = PackSize(s.startup_output);
+    assert(!ResolutionNeedsRestart());
+    s.aspect = Aspect21x9; // the same height in another aspect ratio: 3440x1440
+    assert(CurrentOutput() == (OutputSize{3440, 1440}) && ResolutionNeedsRestart());
+    s.aspect = AspectAuto;
     setenv("BB_RENDER_RES", "", 1);
     assert(!FixedRenderSession() && !ResolutionNeedsRestart());
     unsetenv("BB_RENDER_RES");
+    // Auto: the monitor's group with its own size among them; the chosen height is kept.
+    s.output_res = PackSize({1920, 1080});
+    SetMonitor(2560, 1080);
+    assert(ResolvedAspect(AspectAuto) == Aspect21x9 && CurrentOutput() == (OutputSize{2560, 1080}));
+    SetMonitor(1366, 768);
+    assert(ResolvedAspect(AspectAuto) == Aspect16x9 && Outputs(AspectAuto).IndexOf({1366, 768}) == 4);
+    assert(CurrentOutput() == (OutputSize{1920, 1080}));
+    assert(NearestOutput(Aspect32x9, {1920, 1080}) == (OutputSize{3840, 1080}));
+    assert(NearestOutput(Aspect16x10, {1280, 720}) == (OutputSize{1280, 800}));
+    assert(NearestOutput(Aspect4x3, {2560, 1080}) == (OutputSize{1440, 1080}));
+    SetMonitor(1024, 768);
+    assert(ResolvedAspect(AspectAuto) == Aspect4x3);
     std::remove(path);
     std::puts("Upscaler support: saved choices and FSR 3.1 fallback PASS");
 }

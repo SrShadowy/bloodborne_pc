@@ -40,6 +40,15 @@ int runtime_net_symbol(const char *symbol) {
     return match;
 }
 
+static void *module_handle;
+
+/* The game's image is ready (probe.c): the module's hooks in it go in now. */
+void runtime_net_image_ready(uintptr_t base, uint64_t size) {
+    if (!module_handle) return;
+    const BbNetImageReadyFn ready=(BbNetImageReadyFn)dlsym(module_handle,"bbnet_image_ready");
+    if (ready) ready(base,size);
+}
+
 /* The module: BB_NET_MODULE, else gpu/libbbnet.so beside bb-probe (where libbbgpu.so is). */
 static BbNetResolveFn module_resolve(void) {
     static int tried;
@@ -65,6 +74,7 @@ static BbNetResolveFn module_resolve(void) {
         printf("Online: the online module is not available (%s): offline play\n",dlerror());
         return NULL;
     }
+    module_handle=module;
     const BbNetInitFn init=(BbNetInitFn)dlsym(module,"bbnet_init");
     const BbNetResolveFn found=(BbNetResolveFn)dlsym(module,"bbnet_resolve");
     const BbNetHost host={

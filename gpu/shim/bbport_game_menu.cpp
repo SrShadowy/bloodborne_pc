@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "common/types.h"
 #include "bbport_game_menu.h"
 
+#include <new>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <algorithm>
@@ -35,16 +37,44 @@ constexpr u64 ListRow = 0x1b78ab0;   ///< (page, texts, int* value, value list, 
 constexpr u64 PairPush = 0x1b2c200;  ///< (two-value list, {u8 value, text})
 constexpr u64 PairRow = 0x1b2a100;   ///< (page, texts, u8* value, two-value list, u8* default): left/right
 constexpr u64 SliderRow = 0x1b2ac00; ///< (page, texts, u8* value 0..10, u8* default)
+/// (page, texts, int* value, value list, int* default): the value's text in the row, left/right
+/// step through the list (the game's own multi-value rows, 0x1b20f74).
+constexpr u64 SelectRow = 0x1b29370;
+/// A SelectRow row (0xcf0 bytes, vtable 0x5339e90): `int* value` at +0x3c8, its values (0x48 bytes
+/// each: u32 value, text) from +0x3d8 (8-aligned), their count at +0xce0, the list widget showing
+/// them at +0x100.
+constexpr std::size_t RowValue = 0x3c8, RowValues = 0x3d8, RowCount = 0xce0, RowList = 0x100;
+/// (row, input, ..., xmm0 frame time): a SelectRow's input, each of the open page's rows every
+/// frame (the game's menu thread).
+constexpr u64 RowInput = 0x1b26b00;
+/// (row + RowList): the row's list widget draws its values' texts (looked up again).
+constexpr u64 ListDraw = 0x1ad06e0;
+/// (row): the row shows its value's text (looked up again).
+constexpr u64 RowShowValue = 0x1b2b7c0;
+/// (row + RowList, count): the list widget's number of values.
+constexpr u64 ListSetCount = 0x1acf2c0;
+/// (row + RowList, index): the list widget moves to a value; (row + RowList): shows where it is.
+constexpr u64 ListSelect = 0x1acf6b0, ListShow = 0x1acfb20;
+/// The row's copy of its default value (the page's "Default").
+constexpr std::size_t RowDefault = 0x3d4;
 constexpr u64 FactoryVtable = 0x533d120; ///< a System item's {vtable, page factory fn}
 constexpr u64 ContentVtable = 0x5343880; ///< an options page's {vtable, content fn}
-constexpr u64 ControlsLayout = 0x4934065; ///< "ControllSetting": six plain rows, the layout used
+/// The option page layout (optionsetting.gfx) the port's pages use, by name: its title's text
+/// id and its rows. ControllSetting stacked its six rows upwards, and a row's pop-up list showed
+/// the rows below through it: the runtime gives the game a copy with them stacked downwards, as
+/// the game's own pop-up rows have them (src/runtime_file.c, menu_layout_file).
+struct Layout {
+    u64 name;
+    u32 title, subtitle; ///< StaticText ids in the layout (0: none)
+    std::size_t rows;
+};
+constexpr Layout ControlsLayout{0x4934065, 113020, 0, 6}; // "ControllSetting"
 constexpr u32 TextName = 0xc8, TextHelp = 0xc9; // SP_menu text / SP_one-line help
 constexpr u32 ScreenSoundItem = 110001;         // "Screen/Sound" in the System menu: ours follow it
-constexpr u32 ControlsTitle = 113020;           // the ControllSetting layout's title ("Controls")
-constexpr std::size_t RowsPerPage = 6;          // ControllSetting's rows
 
 const u8 MsgLookupPrologue[] = {0x89, 0xf0, 0x48, 0x8b, 0x77, 0x08, 0x48, 0x8b, 0x34, 0xc6};
 const u8 AddPageItemPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
+const u8 RowInputPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
 
 u64 image_base = 0;
 template <typename F>
@@ -87,32 +117,75 @@ u32 AddText(const char* english, const char* portuguese, const char* russian) {
     texts.push_back({Utf16(english), Utf16(portuguese), Utf16(russian)});
     return IdBase + u32(texts.size() - 1);
 }
-/// The game's own language decides (Cyrillic -> Russian, Portuguese diacritics / setting -> Portuguese, else English)
+/// The game's own language decides (Cyrillic -> Russian, Portuguese diacritics -> Portuguese, else
+/// English); the port's menu language until the game has looked that text up.
 enum class GameLanguage { Unknown, English, Portuguese, Russian };
 std::atomic<GameLanguage> game_language{GameLanguage::Unknown};
 
-const char16_t* TextOf(u32 id) {
-    const Text& t = texts[id - IdBase];
-    GameLanguage game = game_language.load();
-    if (game == GameLanguage::Unknown) {
-        const int s_lang = BbSettings::Get().menu_language.load();
-        if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
-            game = GameLanguage::Russian;
-        } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
-            game = GameLanguage::Portuguese;
-        } else {
-            game = GameLanguage::English;
-        }
+/// The language the port's texts are shown in right now.
+GameLanguage TextLanguage() {
+    const GameLanguage game = game_language.load();
+    if (game != GameLanguage::Unknown) {
+        return game;
     }
-    if (game == GameLanguage::Russian) return t.russian.c_str();
-    if (game == GameLanguage::Portuguese) return t.portuguese.c_str();
-    return t.english.c_str();
+    const int s_lang = BbSettings::Get().menu_language.load();
+    if (s_lang == BbSettings::LangPortuguese) {
+        return GameLanguage::Portuguese;
+    }
+    if (s_lang == BbSettings::LangRussian) {
+        return GameLanguage::Russian;
+    }
+    return GameLanguage::English;
+}
+
+// Texts that change while the game runs (the chosen aspect ratio's resolutions, "Auto (21:9)"):
+// fixed buffers rewritten in place, so a text the game holds stays valid.
+constexpr u32 DynamicBase = IdBase + 0x8000;
+constexpr std::size_t DynamicLength = 40;
+struct DynamicText {
+    char16_t english[DynamicLength]{}, portuguese[DynamicLength]{}, russian[DynamicLength]{};
+};
+constexpr u32 OutputSlots = 12; ///< BbSettings::OutputList
+std::array<DynamicText, 1 + OutputSlots> dynamic_texts{};
+constexpr u32 AutoText = DynamicBase;         ///< "Auto (21:9)"
+constexpr u32 OutputTexts = DynamicBase + 1;  ///< the resolutions (OutputSlots)
+
+void Store16(char16_t (&out)[DynamicLength], const char* utf8) {
+    const std::u16string text = Utf16(utf8);
+    const std::size_t n = std::min(text.size(), DynamicLength - 1);
+    for (std::size_t i = 0; i < n; ++i) {
+        __atomic_store_n(&out[i], text[i], __ATOMIC_RELAXED);
+    }
+    __atomic_store_n(&out[n], char16_t(0), __ATOMIC_RELAXED);
+}
+void SetDynamic(u32 id, const char* english, const char* portuguese, const char* russian) {
+    DynamicText& t = dynamic_texts[id - DynamicBase];
+    Store16(t.english, english);
+    Store16(t.portuguese, portuguese);
+    Store16(t.russian, russian);
+}
+
+bool OurText(u32 id) {
+    return (id >= IdBase && id < IdBase + texts.size()) ||
+           (id >= DynamicBase && id < DynamicBase + dynamic_texts.size());
+}
+const char16_t* TextOf(u32 id) {
+    const GameLanguage lang = TextLanguage();
+    if (id >= DynamicBase) {
+        const DynamicText& t = dynamic_texts[id - DynamicBase];
+        return lang == GameLanguage::Russian   ? t.russian
+               : lang == GameLanguage::Portuguese ? t.portuguese
+                                                  : t.english;
+    }
+    const Text& t = texts[id - IdBase];
+    return lang == GameLanguage::Russian   ? t.russian.c_str()
+           : lang == GameLanguage::Portuguese ? t.portuguese.c_str()
+                                              : t.english.c_str();
 }
 
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
-    OutputRes, Upscaler, Preset, Sharpness, ShowFps, FrameGen,
-    ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
+    Aspect, OutputRes, Upscaler, Preset, Sharpness, ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
 u8 bytes[FieldCount];    // the same for toggle and slider rows (they bind bytes)
@@ -124,31 +197,47 @@ std::atomic<bool> values_valid{false};
 constexpr float SharpnessStep = 0.2f; // the game's slider: 0..10 -> 0.0 .. 2.0
 constexpr int SharpnessSteps = 11;
 constexpr int LodValues[] = {-2, 0, 1, 2};
-/// Rows with a few ordered choices on the game's 0..10 slider (the quality preset, the output
-/// resolution): a pop-up list let the rows below it show through, so only the last row of a page
-/// is a list. The game keeps its own copy of a slider's value while the page is open, so every
-/// position stands for a choice (ranges, as the row's help says), and a choice is shown at
-/// ChoicePosition.
-int steps_count[FieldCount]; ///< choices of a slider-with-choices row, else 0
+/// The resolution row's values: the outputs of the aspect ratio it shows (value i: entry i). Set
+/// when the page is built and when another aspect ratio is chosen on it (RefreshOutputRow, the
+/// game's menu thread; Poll reads it once the rows have rested).
+BbSettings::OutputList menu_outputs;
+int output_row_aspect = -1; ///< the aspect ratio the resolution row shows
 
-int ChoiceFromPosition(u8 position, int count) {
-    return std::clamp((int(position) * (count - 1) + 5) / 10, 0, count - 1);
+BbSettings::OutputSize MenuOutput(int aspect, int index) {
+    if (menu_outputs.count == 0) return BbSettings::NearestOutput(aspect, BbSettings::OutputDefault);
+    return BbSettings::NearestOutput(aspect, menu_outputs.sizes[std::clamp(index, 0, menu_outputs.count - 1)]);
 }
 
-u8 ChoicePosition(int choice, int count) {
-    return u8((std::clamp(choice, 0, count - 1) * 10 * 2 + (count - 1)) / (2 * (count - 1)));
+/// The resolution row's value of `output` (0 if none).
+int MenuOutputIndex(int aspect, BbSettings::OutputSize output) {
+    for (int i = 0; i < menu_outputs.count; ++i) {
+        if (MenuOutput(aspect, i) == output) return i;
+    }
+    return 0;
+}
+
+/// The resolution row's texts for `aspect`, "Auto (..)" for the monitor's aspect ratio.
+void RefreshOutputs(int aspect) {
+    const std::string group = BbSettings::AspectKey(BbSettings::ResolvedAspect(BbSettings::AspectAuto));
+    SetDynamic(AutoText, ("Auto (" + group + ")").c_str(), ("Auto (" + group + ")").c_str(),
+               ("Авто (" + group + ")").c_str());
+    for (int i = 0; i < int(OutputSlots); ++i) {
+        const auto o = MenuOutput(aspect, i);
+        const std::string text = std::to_string(o.width) + " x " + std::to_string(o.height);
+        SetDynamic(OutputTexts + u32(i), text.c_str(), text.c_str(), text.c_str());
+    }
 }
 
 /// The rows' values of settings `s`.
 void Fill(const BbSettings::Values& s, int* values) {
-    values[OutputRes] = s.output_res;
+    values[Aspect] = s.aspect;
+    values[OutputRes] = MenuOutputIndex(s.aspect, BbSettings::NearestOutput(
+                                                      s.aspect, BbSettings::UnpackSize(s.output_res)));
     values[Upscaler] = s.upscaler;
     values[Preset] = s.preset;
     // One slider for both: 0 is sharpening off.
     values[Sharpness] =
         s.sharpen ? std::clamp(int(std::lround(s.sharpness / SharpnessStep)), 1, SharpnessSteps - 1) : 0;
-    values[ShowFps] = s.show_fps;
-    values[FrameGen] = s.frame_generation.load() ? 1 : 0;
     values[ModelLod] = 1;
     for (int i = 0; i < 4; ++i) {
         if (LodValues[i] == s.model_lod) values[ModelLod] = i;
@@ -159,16 +248,23 @@ void Fill(const BbSettings::Values& s, int* values) {
 }
 
 void LoadValues() {
+    const int aspect = BbSettings::Get().aspect;
+    menu_outputs = BbSettings::Outputs(aspect);
+    RefreshOutputs(aspect);
     Fill(BbSettings::Get(), values);
+    output_row_aspect = values[Aspect];
     for (int f = 0; f < FieldCount; ++f) {
-        bytes[f] = steps_count[f] ? ChoicePosition(values[f], steps_count[f]) : u8(values[f]);
+        bytes[f] = u8(values[f]);
     }
+    // "Default" on the page: the game's resolution in this list.
+    default_values[OutputRes] =
+        MenuOutputIndex(aspect, BbSettings::NearestOutput(aspect, BbSettings::OutputDefault));
     std::memcpy(applied, values, sizeof(values));
     values_valid = true;
 }
 
 // ---- Pages and rows ----
-enum class Kind { List, Toggle, Slider, Steps };
+enum class Kind { List, Toggle, Slider, Select };
 struct Row {
     Field field;
     u32 name, help;
@@ -177,160 +273,146 @@ struct Row {
 };
 struct Page {
     u32 name, help;
-    std::vector<Row> rows; ///< at most RowsPerPage (the layout's)
+    const Layout* layout;
+    std::vector<Row> rows; ///< at most the layout's
 };
 std::vector<Page> pages;
-
-u32 upscaler_help_id = 0;
-u32 preset_help_id = 0;
-u32 output_res_help_id = 0;
-
-/// Upscalers this GPU and build can run (known once the device exists, before any menu).
-bool UpscalerAvailable(int i) {
-    const auto& s = BbSettings::Get();
-    return i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
-           : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
-           : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
-                                             : true;
-}
 
 void DefineTexts() {
     const u32 off = AddText("Off", "Desligado", "Выкл");
     const u32 on = AddText("On", "Ligado", "Вкл");
     const std::vector<u32> toggle = {off, on};
-    const auto page = [](const char* en, const char* pt, const char* ru,
-                         const char* help_en, const char* help_pt, const char* help_ru) {
+    const auto page = [](const char* en, const char* pt, const char* ru, const char* help_en,
+                         const char* help_pt, const char* help_ru, const Layout& layout) {
         const u32 name = AddText(en, pt, ru);
-        pages.push_back({name, AddText(help_en, help_pt, help_ru), {}});
+        pages.push_back({name, AddText(help_en, help_pt, help_ru), &layout, {}});
     };
-    const auto row = [&](Field f, const char* en, const char* pt, const char* ru,
-                         const char* help_en, const char* help_pt, const char* help_ru,
-                         std::vector<u32> choices, Kind kind = Kind::List) {
+    const auto row = [](Field f, const char* en, const char* pt, const char* ru, const char* help_en,
+                        const char* help_pt, const char* help_ru, std::vector<u32> choices,
+                        Kind kind = Kind::List) {
         if (kind == Kind::List && choices.size() == 2) {
             kind = Kind::Toggle; // left/right in place, as the game's own on/off rows
         }
-        const u32 name_id = AddText(en, pt, ru);
-        const u32 help_id = AddText(help_en, help_pt, help_ru);
-        if (f == Upscaler) upscaler_help_id = help_id;
-        else if (f == Preset) preset_help_id = help_id;
-        else if (f == OutputRes) output_res_help_id = help_id;
-        pages.back().rows.push_back({f, name_id, help_id, std::move(choices), kind});
+        pages.back().rows.push_back(
+            {f, AddText(en, pt, ru), AddText(help_en, help_pt, help_ru), std::move(choices), kind});
     };
 
-    // Page 0: Display (live settings)
+    // Two pages of the ControllSetting layout's six rows (the game's other layouts are fixed
+    // forms): the picture, then the game's effects. Choices are the game's pop-up rows
+    // (SelectRow). The other patches (intros, the free camera, the debug menu), the game's own AA
+    // and the FPS counter are in the overlay menu and the launcher.
     page("Display", "Tela", "Изображение",
-         "Resolution, upscaler, frame generation, sharpness and FPS (bbport)",
-         "Resolução, upscaler, geração de quadros, nitidez e FPS (bbport)",
-         "Разрешение, апскейлер, генерация кадров, резкость и FPS (bbport)");
-
-    std::vector<u32> upscaler_choices = {
-        off,
-        AddText("FSR 3.1", "FSR 3.1", "FSR 3.1"),
-        AddText("FSR 4", "FSR 4", "FSR 4"),
-        AddText("FSR 4.1.1", "FSR 4.1.1", "FSR 4.1.1"),
-        AddText("TAA", "TAA", "TAA")
-    };
-    if (UpscalerAvailable(BbSettings::UpscalerDlss)) {
-        upscaler_choices.push_back(AddText("DLSS", "DLSS", "DLSS"));
+         "Aspect ratio, resolution, upscaler and detail (bbport)",
+         "Relação de aspecto, resolução, upscaler e detalhes (bbport)",
+         "Соотношение сторон, разрешение, апскейлер и детализация (bbport)", ControlsLayout);
+    row(Aspect, "Aspect ratio", "Relação de aspecto", "Соотношение сторон",
+        "Of the final frame: wider sees more to the sides, the UI keeps to the screen edges",
+        "Do quadro final: mais largo mostra mais nas laterais, a interface fica nas bordas",
+        "Готового кадра: шире - больше видно по бокам, интерфейс у краёв экрана",
+        [] {
+            std::vector<u32> aspects = {AutoText};
+            for (int a = BbSettings::AspectAuto + 1; a < BbSettings::AspectCount; ++a) {
+                aspects.push_back(AddText(BbSettings::AspectKey(a), BbSettings::AspectKey(a),
+                                          BbSettings::AspectKey(a)));
+            }
+            return aspects;
+        }(),
+        Kind::Select);
+    {
+        std::vector<u32> outputs;
+        for (u32 i = 0; i < OutputSlots; ++i) outputs.push_back(OutputTexts + i);
+        row(OutputRes, "Resolution", "Resolução", "Разрешение",
+            "Size of the final frame and the UI", "Tamanho do quadro final e da interface",
+            "Размер готового кадра и интерфейса", std::move(outputs), Kind::Select);
     }
-    const bool has_dlss = upscaler_choices.size() > 5;
-    const char* upscaler_help_en = has_dlss ? "Upscaler: 0-1 Off, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS"
-                                            : "Upscaler: 0-1 Off, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA";
-    const char* upscaler_help_pt = has_dlss ? "Upscaler: 0-1 Desligado, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS"
-                                            : "Upscaler: 0-1 Desligado, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA";
-    const char* upscaler_help_ru = has_dlss ? "Апскейлер: 0-1 Выкл, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS"
-                                            : "Апскейлер: 0-1 Выкл, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA";
-
-    // Sliders and toggles: all rows use native horizontal slider or toggle widgets (no drop-down popups),
-    // eliminating any overlap with the layout's Defaults button below row 5.
-    row(Upscaler, "Upscaler", "Upscaler", "Апскейлер",
-        upscaler_help_en, upscaler_help_pt, upscaler_help_ru, std::move(upscaler_choices), Kind::Steps);
-
+    row(Upscaler, "Upscaler", "Upscaler", "Апскейлер", "Temporal upscaler and anti-aliasing",
+        "Upscaler temporal e anti-aliasing", "Временной апскейлер и сглаживание",
+        {off, AddText("FSR 3.1", "FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4", "FSR 4"),
+         AddText("FSR 4.1.1", "FSR 4.1.1", "FSR 4.1.1"), AddText("TAA", "TAA", "TAA"),
+         AddText("DLSS", "DLSS", "DLSS")},
+        Kind::Select);
     row(Preset, "Quality preset", "Predefinição de qualidade", "Пресет",
-        "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
-        "Resolução interna: 0-1 Native AA, 2-3 Qualidade, 4-6 Equilibrado, 7-8 Desempenho, 9-10 Ultra",
-        "Разрешение сцены: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
-        {AddText("Native AA", "Native AA", "Native AA"),
-         AddText("Quality", "Qualidade", "Quality"),
+        "Scene resolution relative to the output",
+        "Resolução da cena em relação à saída", "Разрешение сцены относительно вывода",
+        {AddText("Native AA", "Native AA", "Native AA"), AddText("Quality", "Qualidade", "Quality"),
          AddText("Balanced", "Equilibrado", "Balanced"),
          AddText("Performance", "Desempenho", "Performance"),
          AddText("Ultra Performance", "Ultra Desempenho", "Ultra Performance")},
-        Kind::Steps);
-
-    std::vector<u32> outres_choices;
-    for (int i = 0; i < BbSettings::OutputCount; ++i) {
-        char buf[32];
-        std::snprintf(buf, sizeof(buf), "%d x %d", BbSettings::OutputWidths[i], BbSettings::OutputHeights[i]);
-        outres_choices.push_back(AddText(buf, buf, buf));
-    }
-    row(OutputRes, "Output resolution", "Resolução de saída", "Разрешение вывода",
-        "Final frame resolution (also configurable in launcher)",
-        "Resolução do quadro final (configurável também no launcher)",
-        "Разрешение готового кадра (также настраивается в лаунчере)",
-        std::move(outres_choices), Kind::Steps);
-
-    row(Sharpness, "Sharpness", "Nitidez", "Резкость",
-        "RCAS after the upscaler: 0 off, 10 strongest",
-        "Filtro RCAS após upscaler: 0 desligado, 10 máximo",
+        Kind::Select);
+    row(Sharpness, "Sharpness", "Nitidez", "Резкость", "RCAS after the upscaler: 0 off, 10 strongest",
+        "RCAS após o upscaler: 0 desligado, 10 mais forte",
         "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
-
-    row(FrameGen, "Frame generation", "Geração de quadros", "Генерация кадров",
-        "FSR 3 Frame Generation: inserts interpolated frames (best with 60+ FPS & 120Hz+)",
-        "FSR 3 Frame Generation: gera quadros intermediários (ideal com 60+ FPS e 120Hz+)",
-        "FSR 3 Frame Generation: генерация промежуточных кадров (лучше с 60+ FPS и 120Hz+)", toggle);
-
-    row(ShowFps, "FPS counter", "Contador de FPS", "Счётчик FPS",
-        "Frame rate in the top right corner",
-        "Taxa de quadros no canto superior direito",
-        "Частота кадров в правом верхнем углу", toggle);
-
-    // Page 1: Effects & Detail (live via BbEngineGraphics, except dynamic shadows / SSR)
-    page("Effects", "Efeitos", "Эффекты",
-         "The game's effects and detail (bbport)",
-         "Efeitos gráficos e detalhes do jogo (bbport)",
-         "Эффекты игры и детализация (bbport)");
-
     row(ModelLod, "Model detail", "Detalhes de modelos", "Детализация",
-        "Model detail distance: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest",
-        "Distância de detalhe dos modelos: 0-1 máxima, 2-4 padrão do jogo, 5-7 menor, 8-10 mínima",
-        "Дальность детализации: 0-1 максимальная, 2-4 как в игре, 5-7 ниже, 8-10 минимальная",
+        "Level of detail of models (after a restart)",
+        "Distância de detalhe dos modelos (após reiniciar)",
+        "Детализация моделей (после перезапуска)",
         {AddText("Highest", "Máxima", "Максимальная"),
          AddText("Game default", "Padrão do jogo", "Как в игре"),
-         AddText("Lower", "Menor", "Ниже"),
-         AddText("Lowest", "Mínima", "Минимальная")},
-        Kind::Steps);
+         AddText("Lower", "Menor", "Ниже"), AddText("Lowest", "Mínima", "Минимальная")},
+        Kind::Select);
 
+    page("Effects", "Efeitos", "Эффекты", "The game's effects (bbport; after a restart)",
+         "Os efeitos do jogo (bbport; após reiniciar)", "Эффекты игры (bbport; после перезапуска)",
+         ControlsLayout);
+
+    // Short names for the game's narrow name column (BbSettings::Effects order); the help line
+    // has the details.
     struct Short {
         const char *key, *en, *pt, *ru, *help_en, *help_pt, *help_ru;
-        bool live = true;
+        bool graphics = true;
     };
     static const Short shorts[] = {
-        {"effect_chromatic_aberration", "Chromatic aberration", "Aberração cromática", "Хром. аберрация",
-         "Colour fringes at the frame edges", "Franjas de cores nas bordas do quadro", "Цветные каймы по краям кадра", true},
+        {"effect_chromatic_aberration", "Chromatic aberration", "Aberração cromática",
+         "Хром. аберрация", "Colour fringes at the frame edges",
+         "Franjas de cores nas bordas do quadro", "Цветные каймы по краям кадра"},
         {"effect_dof", "Depth of field", "Profundidade de campo", "Глубина резкости",
-         "Blur of distant and near objects (DoF)", "Desfoque de objetos distantes e próximos (DoF)", "Размытие дальних и близких объектов (DoF)", true},
+         "Blur of distant and near objects (DoF)",
+         "Desfoque de objetos distantes e próximos (DoF)",
+         "Размытие дальних и близких объектов (DoF)"},
         {"effect_motion_blur", "Motion blur", "Desfoque de movimento", "Размытие в движении",
-         "Blur when the camera turns", "Desfoque ao girar a câmera", "Размытие при повороте камеры", true},
+         "Blur when the camera turns", "Desfoque ao girar a câmerа",
+         "Размытие при повороте камеры"},
         {"effect_ssao", "Ambient occlusion", "Oclusão de ambiente", "Затенение SSAO",
-         "Shading in corners and contacts (SSAO)", "Sombreamento em cantos e contatos (SSAO)", "Затенение в углах и местах касания (SSAO)", true},
+         "Shading in corners and contacts (SSAO)", "Sombreamento em cantos e contatos (SSAO)",
+         "Затенение в углах и местах касания (SSAO)"},
+        {"effect_game_aa", "Game's own AA", "Anti-aliasing do jogo", "Сглаживание игры",
+         "The game's own anti-aliasing", "O próprio anti-aliasing do jogo",
+         "Собственное сглаживание игры", false},
         {"effect_dynamic_shadows", "Dynamic shadows", "Sombras dinâmicas", "Динамические тени",
-         "Shadows from dynamic lights", "Sombras de fontes de luz dinâmicas", "Тени от динамических источников света", false},
+         "Shadows from dynamic lights", "Sombras de fontes de luz dinâmicas",
+         "Тени от динамических источников света"},
         {"effect_ssr", "SSR reflections", "Reflexos SSR", "Отражения SSR",
-         "Screen-space reflections (not in the original)", "Reflexos em espaço de tela (não existia no original)", "Экранные отражения (не было в оригинале)", false},
+         "Screen-space reflections (not in the original)",
+         "Reflexos em espaço de tela (não existia no original)",
+         "Экранные отражения (не было в оригинале)"},
+        {"skip_intro", "Skip intros", "Pular intros", "Пропуск заставок",
+         "Skip the startup logos and intro", "Pula os logotipos e a introdução",
+         "Пропуск логотипов и заставки при запуске", false},
+        {"debug_camera", "Free camera", "Câmera livre", "Свободная камера",
+         "Toggled with Cross + L3", "Ativada com Cross + L3", "Включается Cross + L3", false},
+        {"debug_menu", "Debug menu", "Menu de depuração", "Debug menu",
+         "The game's debug menu (requires font files)",
+         "O menu de depuração do jogo (precisa dos arquivos de fonte)",
+         "Отладочное меню игры (нужны файлы шрифтов)", false},
     };
-    for (const auto& s : shorts) {
-        if (pages.back().rows.size() == RowsPerPage) {
+    for (int e = 0; e < BbSettings::EffectCount; ++e) {
+        const auto& effect = BbSettings::Effects[e];
+        const Short* name = nullptr;
+        for (const Short& s : shorts) {
+            if (std::strcmp(s.key, effect.key) == 0) name = &s;
+        }
+        if ((name && !name->graphics) || pages.back().rows.size() == pages.back().layout->rows) {
             continue; // the overlay menu and the launcher have it
         }
-        for (int e = 0; e < BbSettings::EffectCount; ++e) {
-            if (std::strcmp(s.key, BbSettings::Effects[e].key) == 0) {
-                const std::string help_en = std::string(s.help_en) + (s.live ? "" : " (after a restart)");
-                const std::string help_pt = std::string(s.help_pt) + (s.live ? "" : " (após reiniciar)");
-                const std::string help_ru = std::string(s.help_ru) + (s.live ? "" : " (после перезапуска)");
-                row(Field(FirstEffect + e), s.en, s.pt, s.ru, help_en.c_str(), help_pt.c_str(), help_ru.c_str(), toggle);
-                break;
-            }
-        }
+        // A new effect without a short name: its full label.
+        const std::string help_en = std::string(name ? name->help_en : effect.label) + " (after a restart)";
+        const std::string help_pt =
+            std::string(name ? name->help_pt : effect.label) + " (após reiniciar)";
+        const std::string help_ru =
+            std::string(name ? name->help_ru : effect.label_ru) + " (после перезапуска)";
+        row(Field(FirstEffect + e), name ? name->en : effect.label, name ? name->pt : effect.label,
+            name ? name->ru : effect.label_ru, help_en.c_str(), help_pt.c_str(), help_ru.c_str(),
+            toggle);
     }
 }
 
@@ -348,7 +430,7 @@ void DestroyFunction(u8* f) {
     if (!impl) {
         return;
     }
-    using Destroy = void (*)(void*, int);
+    using Destroy = void (PS4_SYSV_ABI*)(void*, int);
     Destroy destroy = (*reinterpret_cast<Destroy**>(impl))[4];
     destroy(impl, impl != f);
     *reinterpret_cast<void**>(f + 0x20) = nullptr;
@@ -358,7 +440,7 @@ void DestroyFunction(u8* f) {
 void DestroyText(u8* text) {
     if (*reinterpret_cast<u64*>(text + 0x28) >= 8) {
         void* allocator = *reinterpret_cast<void**>(text + 0x30);
-        using Free = void (*)(void*, void*);
+        using Free = void (PS4_SYSV_ABI*)(void*, void*);
         (*reinterpret_cast<Free**>(allocator))[0x70 / 8](allocator, *reinterpret_cast<void**>(text + 0x10));
     }
     *reinterpret_cast<u64*>(text + 0x28) = 7;
@@ -378,27 +460,74 @@ void DestroyValues(u8* list, std::size_t count_offset) {
 }
 
 void MakeTexts(u8* pair, u32 name, u32 help) {
-    using Make = void* (*)(void*, u32, u32);
+    using Make = void* (PS4_SYSV_ABI*)(void*, u32, u32);
     Game<Make>(MakeText)(pair, TextName, name);
     Game<Make>(MakeText)(pair + TextSize, TextHelp, help);
 }
 
+/// Upscalers this GPU and build can run (known once the device exists, before any menu).
+bool UpscalerAvailable(int i) {
+    const auto& s = BbSettings::Get();
+    return i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
+           : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
+           : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
+                                             : true;
+}
+
+/// Another aspect ratio chosen on the page: the resolution row gets that aspect ratio's outputs
+/// as its values (as many; the texts are looked up in the port's buffers, RefreshOutputs, when the
+/// row shows them) and keeps the chosen height.
+void RefreshOutputRow(u8* row) {
+    const int aspect = std::clamp(values[Aspect], 0, BbSettings::AspectCount - 1);
+    if (aspect == output_row_aspect) return;
+    const BbSettings::OutputSize shown = MenuOutput(output_row_aspect, values[OutputRes]);
+    output_row_aspect = aspect;
+    menu_outputs = BbSettings::Outputs(aspect);
+    RefreshOutputs(aspect);
+    u8* items = row + RowValues;
+    items += (0 - reinterpret_cast<std::uintptr_t>(items)) & 7;
+    u64& count = *reinterpret_cast<u64*>(row + RowCount);
+    // More values: copies of the first (its text an empty in-place string, see SelectRow) with
+    // their own value and text.
+    const u64 want = u64(menu_outputs.count);
+    const bool in_place = *reinterpret_cast<u64*>(items + 0x30) < 8;
+    if (count > 0 && want <= 32 && (want <= count || in_place)) {
+        for (u64 i = count; i < want; ++i) {
+            std::memcpy(items + i * ValueSize, items, ValueSize);
+        }
+        for (u64 i = 0; i < want; ++i) {
+            *reinterpret_cast<u32*>(items + i * ValueSize) = u32(i);
+            *reinterpret_cast<const char16_t**>(items + i * ValueSize + 8) = TextOf(OutputTexts + u32(i));
+        }
+        count = want;
+        Game<void (PS4_SYSV_ABI*)(void*, u32)>(ListSetCount)(row + RowList, u32(want));
+    }
+    const int value = MenuOutputIndex(aspect, BbSettings::NearestOutput(aspect, shown));
+    values[OutputRes] = value;
+    default_values[OutputRes] = MenuOutputIndex(aspect, BbSettings::NearestOutput(aspect, BbSettings::OutputDefault));
+    *reinterpret_cast<int*>(row + RowDefault) = default_values[OutputRes];
+    Game<int (PS4_SYSV_ABI*)(void*, u32)>(ListSelect)(row + RowList, u32(value));
+    Game<void (PS4_SYSV_ABI*)(void*)>(ListShow)(row + RowList);
+    Game<void (PS4_SYSV_ABI*)(void*)>(RowShowValue)(row);
+    Game<void (PS4_SYSV_ABI*)(void*)>(ListDraw)(row + RowList);
+}
+
 void AddRows(void* page, const std::vector<Row>& rows) {
-    using Push = void (*)(void*, void*);
-    using AddRow = void (*)(void*, void*, int*, void*, const int*);
-    using Make = void* (*)(void*, u32, u32);
+    using Push = void (PS4_SYSV_ABI*)(void*, void*);
+    using AddRow = void (PS4_SYSV_ABI*)(void*, void*, int*, void*, const int*);
+    using Make = void* (PS4_SYSV_ABI*)(void*, u32, u32);
     for (const Row& row : rows) {
         alignas(16) u8 pair[2 * TextSize] = {};
         MakeTexts(pair, row.name, row.help);
-        if (row.kind == Kind::Slider || row.kind == Kind::Steps) {
-            using Slider = void (*)(void*, void*, u8*, const u8*);
+        if (row.kind == Kind::Slider) {
+            using Slider = void (PS4_SYSV_ABI*)(void*, void*, u8*, const u8*);
             Game<Slider>(SliderRow)(page, pair, &bytes[row.field], &default_bytes[row.field]);
             DestroyTexts(pair);
             continue;
         }
         if (row.kind == Kind::Toggle) {
-            using PairRowFn = void (*)(void*, void*, u8*, void*, const u8*);
-            u8* two = static_cast<u8*>(std::aligned_alloc(16, PairListSize));
+            using PairRowFn = void (PS4_SYSV_ABI*)(void*, void*, u8*, void*, const u8*);
+            u8* two = static_cast<u8*>(::operator new(PairListSize, std::align_val_t{16}));
             std::memset(two, 0, PairListSize);
             for (std::size_t i = 0; i < 2; ++i) {
                 alignas(16) u8 value[ValueSize] = {};
@@ -409,13 +538,16 @@ void AddRows(void* page, const std::vector<Row>& rows) {
             }
             Game<PairRowFn>(PairRow)(page, pair, &bytes[row.field], two, &default_bytes[row.field]);
             DestroyValues(two, PairCountOffset);
-            std::free(two);
+            ::operator delete(two, std::align_val_t{16});
             DestroyTexts(pair);
             continue;
         }
-        u8* list = static_cast<u8*>(std::aligned_alloc(16, ListSize));
+        u8* list = static_cast<u8*>(::operator new(ListSize, std::align_val_t{16}));
         std::memset(list, 0, ListSize);
-        for (std::size_t i = 0; i < row.choices.size(); ++i) {
+        // The resolution row: as many as the aspect ratio has (its texts are rewritten).
+        const std::size_t count =
+            row.field == OutputRes ? std::size_t(menu_outputs.count) : row.choices.size();
+        for (std::size_t i = 0; i < count; ++i) {
             if (row.field == Upscaler && !UpscalerAvailable(int(i))) {
                 continue; // the list's values are the upscaler numbers, not positions
             }
@@ -425,43 +557,45 @@ void AddRows(void* page, const std::vector<Row>& rows) {
             Game<Push>(ListPush)(list, value);
             DestroyText(value + 8);
         }
-        Game<AddRow>(ListRow)(page, pair, &values[row.field], list, &default_values[row.field]);
+        Game<AddRow>(row.kind == Kind::Select ? SelectRow : ListRow)(page, pair, &values[row.field], list,
+                                                                    &default_values[row.field]);
         DestroyValues(list, ListCountOffset);
-        std::free(list);
+        ::operator delete(list, std::align_val_t{16});
         DestroyTexts(pair);
     }
 }
 
-std::atomic<const char16_t*> title_override{nullptr}; // while the game builds one of our pages (its menu thread)
+std::atomic<int> building_page{-1}; // while the game builds one of our pages (its menu thread)
 // Called by the game's menu code (guest threads, System V ABI like the game), one set per page.
 template <int P>
-void Rows(void* page, void*) {
+void PS4_SYSV_ABI Rows(void* page, void*) {
     LoadValues();
     AddRows(page, pages[P].rows);
 }
 template <int P>
-void* Content(void* a, void* b) {
-    using Open = void* (*)(void*, void*, const char*, void*, u64, u64);
-    title_override = nullptr; // the title was looked up just before
-    return Game<Open>(OpenPage)(a, b, Game<const char*>(ControlsLayout),
-                                reinterpret_cast<void*>(&Rows<P>), 0, 0);
+void* PS4_SYSV_ABI Content(void* a, void* b) {
+    using Open = void* (PS4_SYSV_ABI*)(void*, void*, const char*, void*, u64, u64);
+    void* page = Game<Open>(OpenPage)(a, b, Game<const char*>(pages[P].layout->name),
+                                      reinterpret_cast<void*>(&Rows<P>), 0, 0);
+    building_page = -1; // the layout's texts were looked up
+    return page;
 }
-void* Factory(void* out, void* arg, void* content, const char16_t* title) {
-    using Create = void* (*)(void*, void*, void*);
+void* Factory(void* out, void* arg, void* content, int page) {
+    using Create = void* (PS4_SYSV_ABI*)(void*, void*, void*);
     alignas(16) u8 function[FunctionSize] = {};
     *reinterpret_cast<u64*>(function) = image_base + ContentVtable;
     *reinterpret_cast<void**>(function + 8) = content;
     *reinterpret_cast<void**>(function + 0x20) = function;
     // The page is built later (the game's menu task): its layout title is looked up right before
     // the content function runs, which takes the override back.
-    title_override = title;
+    building_page = page;
     Game<Create>(CreatePage)(out, arg, function);
     DestroyFunction(function);
     return out;
 }
 template <int P>
-void* PageFactory(void* out, void* arg) {
-    return Factory(out, arg, reinterpret_cast<void*>(&Content<P>), TextOf(pages[P].name));
+void* PS4_SYSV_ABI PageFactory(void* out, void* arg) {
+    return Factory(out, arg, reinterpret_cast<void*>(&Content<P>), P);
 }
 constexpr std::size_t MaxPages = 6;
 void* const factories[MaxPages] = {
@@ -470,115 +604,25 @@ void* const factories[MaxPages] = {
     reinterpret_cast<void*>(&PageFactory<4>), reinterpret_cast<void*>(&PageFactory<5>)};
 
 // ---- Hooks ----
-using LookupFn = const char16_t* (*)(void*, u32, u32, u32);
-using AddFn = void* (*)(void*, void*, void*, void*);
+using RowInputFn = u64 (PS4_SYSV_ABI*)(u8*, u64, u64, u64, u64, u64, double);
+RowInputFn row_input_original = nullptr;
+
+u64 PS4_SYSV_ABI RowInputHook(u8* row, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5, double frame_time) {
+    // The game asks the open page's rows: the resolution row is alive while it does.
+    if (*reinterpret_cast<int**>(row + RowValue) == &values[OutputRes]) {
+        RefreshOutputRow(row);
+    }
+    return row_input_original(row, a1, a2, a3, a4, a5, frame_time);
+}
+
+using LookupFn = const char16_t* (PS4_SYSV_ABI*)(void*, u32, u32, u32);
+using AddFn = void* (PS4_SYSV_ABI*)(void*, void*, void*, void*);
 LookupFn lookup_original = nullptr;
 AddFn add_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
 
-const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
-    if (id >= IdBase && id < IdBase + texts.size()) {
-        if (id == upscaler_help_id && upscaler_help_id != 0) {
-            GameLanguage game = game_language.load();
-            if (game == GameLanguage::Unknown) {
-                const int s_lang = BbSettings::Get().menu_language.load();
-                if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
-                    game = GameLanguage::Russian;
-                } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
-                    game = GameLanguage::Portuguese;
-                } else {
-                    game = GameLanguage::English;
-                }
-            }
-            int cur_choice = steps_count[Upscaler] ? ChoiceFromPosition(bytes[Upscaler], steps_count[Upscaler]) : values[Upscaler];
-            const char* name = (cur_choice == 0) ? (game == GameLanguage::Portuguese ? "Desligado" : (game == GameLanguage::Russian ? "Выкл" : "Off"))
-                             : (cur_choice == 1) ? "FSR 3.1"
-                             : (cur_choice == 2) ? "FSR 4"
-                             : (cur_choice == 3) ? "FSR 4.1.1"
-                             : (cur_choice == 4) ? "TAA"
-                             : "DLSS";
-            char buf[256];
-            if (game == GameLanguage::Portuguese) {
-                if (steps_count[Upscaler] > 5) {
-                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Desl, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS", name);
-                } else {
-                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Desligado, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA", name);
-                }
-            } else if (game == GameLanguage::Russian) {
-                if (steps_count[Upscaler] > 5) {
-                    std::snprintf(buf, sizeof(buf), "Апскейлер: [%s] | 0-1 Выкл, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS", name);
-                } else {
-                    std::snprintf(buf, sizeof(buf), "Апскейлер: [%s] | 0-1 Выкл, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA", name);
-                }
-            } else {
-                if (steps_count[Upscaler] > 5) {
-                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Off, 2 FSR 3.1, 3-4 FSR 4, 5-6 FSR 4.1.1, 7-8 TAA, 9-10 DLSS", name);
-                } else {
-                    std::snprintf(buf, sizeof(buf), "Upscaler: [%s] | 0-1 Off, 2-3 FSR 3.1, 4-6 FSR 4, 7-8 FSR 4.1.1, 9-10 TAA", name);
-                }
-            }
-            static std::u16string s_dyn_upscaler;
-            s_dyn_upscaler = Utf16(buf);
-            return s_dyn_upscaler.c_str();
-        }
-        if (id == preset_help_id && preset_help_id != 0) {
-            GameLanguage game = game_language.load();
-            if (game == GameLanguage::Unknown) {
-                const int s_lang = BbSettings::Get().menu_language.load();
-                if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
-                    game = GameLanguage::Russian;
-                } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
-                    game = GameLanguage::Portuguese;
-                } else {
-                    game = GameLanguage::English;
-                }
-            }
-            int cur_choice = steps_count[Preset] ? ChoiceFromPosition(bytes[Preset], steps_count[Preset]) : values[Preset];
-            const char* name = (cur_choice == 0) ? "Native AA"
-                             : (cur_choice == 1) ? (game == GameLanguage::Portuguese ? "Qualidade" : "Quality")
-                             : (cur_choice == 2) ? (game == GameLanguage::Portuguese ? "Equilibrado" : "Balanced")
-                             : (cur_choice == 3) ? (game == GameLanguage::Portuguese ? "Desempenho" : "Performance")
-                             : (game == GameLanguage::Portuguese ? "Ultra Desempenho" : "Ultra Performance");
-            char buf[256];
-            if (game == GameLanguage::Portuguese) {
-                std::snprintf(buf, sizeof(buf), "Resolução interna: [%s] | 0-1 Native AA, 2-3 Qualidade, 4-6 Equilibrado, 7-8 Desempenho, 9-10 Ultra", name);
-            } else if (game == GameLanguage::Russian) {
-                std::snprintf(buf, sizeof(buf), "Разрешение сцены: [%s] | 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra", name);
-            } else {
-                std::snprintf(buf, sizeof(buf), "Scene resolution: [%s] | 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra", name);
-            }
-            static std::u16string s_dyn_preset;
-            s_dyn_preset = Utf16(buf);
-            return s_dyn_preset.c_str();
-        }
-        if (id == output_res_help_id && output_res_help_id != 0) {
-            GameLanguage game = game_language.load();
-            if (game == GameLanguage::Unknown) {
-                const int s_lang = BbSettings::Get().menu_language.load();
-                if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Russian)) {
-                    game = GameLanguage::Russian;
-                } else if (s_lang == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
-                    game = GameLanguage::Portuguese;
-                } else {
-                    game = GameLanguage::English;
-                }
-            }
-            int cur_choice = steps_count[OutputRes] ? ChoiceFromPosition(bytes[OutputRes], steps_count[OutputRes]) : values[OutputRes];
-            cur_choice = std::clamp(cur_choice, 0, BbSettings::OutputCount - 1);
-            char res_str[32];
-            std::snprintf(res_str, sizeof(res_str), "%dx%d", BbSettings::OutputWidths[cur_choice], BbSettings::OutputHeights[cur_choice]);
-            char buf[256];
-            if (game == GameLanguage::Portuguese) {
-                std::snprintf(buf, sizeof(buf), "Quadro final: [%s] (Configurável também no Launcher)", res_str);
-            } else if (game == GameLanguage::Russian) {
-                std::snprintf(buf, sizeof(buf), "Готовый кадр: [%s] (Также настраивается в лаунчере)", res_str);
-            } else {
-                std::snprintf(buf, sizeof(buf), "Final frame: [%s] (Configurable in launcher)", res_str);
-            }
-            static std::u16string s_dyn_outres;
-            s_dyn_outres = Utf16(buf);
-            return s_dyn_outres.c_str();
-        }
+const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 category, u32 id) {
+    if (OurText(id)) {
         // BB_GAME_MENU_TRACE=1: how often the game asks for our texts (per 2 s).
         static const bool count = [] {
             const char* env = std::getenv("BB_GAME_MENU_TRACE");
@@ -599,8 +643,9 @@ const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
         }
         return TextOf(id);
     }
-    if (title_override && category == TextName && id == ControlsTitle) {
-        return title_override;
+    if (const int p = building_page.load(); p >= 0 && category == TextName) {
+        if (id == pages[p].layout->title) return TextOf(pages[p].name);
+        if (pages[p].layout->subtitle && id == pages[p].layout->subtitle) return TextOf(pages[p].help);
     }
     const char16_t* text = lookup_original(repository, table, category, id);
     static const bool trace = [] {
@@ -608,7 +653,7 @@ const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
         return env && env[0] == '1';
     }();
     if (trace && id >= 110000 && id < 120000) {
-        std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, title_override ? " (our page)" : "",
+        std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, building_page >= 0 ? " (our page)" : "",
                     (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));
     }
     if (category == TextName && id == ScreenSoundItem && text) {
@@ -621,7 +666,8 @@ const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
         }
         if (cyrillic) {
             game_language = GameLanguage::Russian;
-        } else if (portuguese || BbSettings::Get().menu_language.load() == static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
+        } else if (portuguese || BbSettings::Get().menu_language.load() ==
+                                     static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
             game_language = GameLanguage::Portuguese;
         } else {
             game_language = GameLanguage::English;
@@ -631,7 +677,7 @@ const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
 }
 
 void AddItem(void* menu, u32 name, u32 help, void* factory) {
-    using ToFunction = void* (*)(void*, void*);
+    using ToFunction = void* (PS4_SYSV_ABI*)(void*, void*);
     alignas(16) u8 pair[2 * TextSize] = {};
     MakeTexts(pair, name, help);
     alignas(16) u8 source[FunctionSize] = {};
@@ -646,7 +692,7 @@ void AddItem(void* menu, u32 name, u32 help, void* factory) {
     DestroyTexts(pair);
 }
 
-void* AddHook(void* menu, void* pair, void* function, void* out) {
+void* PS4_SYSV_ABI AddHook(void* menu, void* pair, void* function, void* out) {
     void* result = add_original(menu, pair, function, out);
     const void* screen_sound = screen_sound_text.load();
     if (screen_sound && *reinterpret_cast<const void* const*>(pair) == screen_sound) {
@@ -683,6 +729,10 @@ bool Detour(unsigned char* image, u64 va, const u8* prologue, std::size_t length
         return false;
     }
     const std::int32_t to32 = std::int32_t(to);
+    const auto page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    const auto start = reinterpret_cast<std::uintptr_t>(site) & ~(page_sz - 1);
+    const auto end = (reinterpret_cast<std::uintptr_t>(site) + length + page_sz - 1) & ~(page_sz - 1);
+    mprotect(reinterpret_cast<void*>(start), end - start, PROT_READ | PROT_WRITE | PROT_EXEC);
     site[0] = 0xe9;
     std::memcpy(site + 1, &to32, 4);
     for (std::size_t i = 5; i < length; ++i) {
@@ -724,8 +774,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     DefineTexts();
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {
-            byte_field[r.field] = r.kind != Kind::List;
-            steps_count[r.field] = r.kind == Kind::Steps ? int(r.choices.size()) : 0;
+            byte_field[r.field] = r.kind == Kind::Toggle || r.kind == Kind::Slider;
         }
     }
     static const BbSettings::Values defaults;
@@ -734,8 +783,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         default_values[FirstEffect + e] = BbSettings::Effects[e].default_on;
     }
     for (int f = 0; f < FieldCount; ++f) {
-        default_bytes[f] =
-            steps_count[f] ? ChoicePosition(default_values[f], steps_count[f]) : u8(default_values[f]);
+        default_bytes[f] = u8(default_values[f]);
     }
     u8* cursor = stubs;
     // The lookup first: the menu hook only acts once it has seen the Screen/Sound text.
@@ -743,7 +791,9 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         Detour(image, MsgLookup, MsgLookupPrologue, sizeof(MsgLookupPrologue),
                reinterpret_cast<void*>(&LookupHook), reinterpret_cast<void**>(&lookup_original), cursor) &&
         Detour(image, AddPageItem, AddPageItemPrologue, sizeof(AddPageItemPrologue),
-               reinterpret_cast<void*>(&AddHook), reinterpret_cast<void**>(&add_original), cursor);
+               reinterpret_cast<void*>(&AddHook), reinterpret_cast<void**>(&add_original), cursor) &&
+        Detour(image, RowInput, RowInputPrologue, sizeof(RowInputPrologue),
+               reinterpret_cast<void*>(&RowInputHook), reinterpret_cast<void**>(&row_input_original), cursor);
     mprotect(stubs, page, PROT_READ | PROT_EXEC);
     std::printf("Game menu: %s (%zu pages in System)\n", ok ? "the port's pages are in" : "hooks failed, off",
                 pages.size());
@@ -754,49 +804,58 @@ void Poll() {
     if (!values_valid) {
         return;
     }
+    // A copy: the game's rows are bound to `values` (writing it would move them back).
+    int now_values[FieldCount];
+    std::memcpy(now_values, values, sizeof(now_values));
     for (int f = 0; f < FieldCount; ++f) {
         if (byte_field[f]) {
-            // A slider with choices: its position, not the choice's number.
-            values[f] = steps_count[f] ? ChoiceFromPosition(bytes[f], steps_count[f]) : bytes[f];
+            now_values[f] = bytes[f];
         }
     }
-    // The output resolution, preset and upscaler re-create the scene targets and upscaler
-    // pipelines (a few frames): a slider walking through its steps did that at each one. Applied
-    // once they rest for 0.4 s; the other rows at once.
+    // The aspect ratio, the resolution and the preset re-create the scene targets and the
+    // upscaler (a few grey frames): stepping through several did that at each one. Applied once
+    // they rest for 0.4 s; the other rows at once.
     using Clock = std::chrono::steady_clock;
     static int resting[3] = {-1, -1, -1};
     static Clock::time_point rested_since{};
     const auto now = Clock::now();
-    if (resting[0] != values[OutputRes] || resting[1] != values[Preset] || resting[2] != values[Upscaler]) {
-        resting[0] = values[OutputRes];
-        resting[1] = values[Preset];
-        resting[2] = values[Upscaler];
+    if (resting[0] != now_values[Aspect] || resting[1] != now_values[OutputRes] ||
+        resting[2] != now_values[Preset]) {
+        resting[0] = now_values[Aspect];
+        resting[1] = now_values[OutputRes];
+        resting[2] = now_values[Preset];
         rested_since = now;
     }
     if (now - rested_since < std::chrono::milliseconds(400)) {
-        values[OutputRes] = applied[OutputRes];
-        values[Preset] = applied[Preset];
-        values[Upscaler] = applied[Upscaler];
+        now_values[Aspect] = applied[Aspect];
+        now_values[OutputRes] = applied[OutputRes];
+        now_values[Preset] = applied[Preset];
     }
-    if (std::memcmp(values, applied, sizeof(values)) == 0) {
+    if (std::memcmp(now_values, applied, sizeof(now_values)) == 0) {
         return;
     }
     auto& s = BbSettings::Get();
-    s.output_res = std::clamp(values[OutputRes], 0, BbSettings::OutputCount - 1);
-    const int upscaler = std::clamp(values[Upscaler], 0, BbSettings::UpscalerCount - 1);
+    if (now_values[Aspect] != applied[Aspect]) {
+        // Another aspect ratio keeps the resolution row's height (its texts show the new
+        // aspect ratio's sizes, RefreshOutputRow).
+        const int aspect = std::clamp(now_values[Aspect], 0, BbSettings::AspectCount - 1);
+        s.output_res = BbSettings::PackSize(MenuOutput(aspect, now_values[OutputRes]));
+        s.aspect = aspect;
+    } else if (now_values[OutputRes] != applied[OutputRes]) {
+        s.output_res = BbSettings::PackSize(MenuOutput(s.aspect, now_values[OutputRes]));
+    }
+    const int upscaler = std::clamp(now_values[Upscaler], 0, BbSettings::UpscalerCount - 1);
     s.upscaler = UpscalerAvailable(upscaler) ? upscaler : int(BbSettings::UpscalerFsr3);
-    s.preset = std::clamp(values[Preset], 0, BbSettings::PresetCount - 1);
-    s.sharpen = values[Sharpness] != 0;
-    if (values[Sharpness] != 0) {
-        s.sharpness = std::clamp(values[Sharpness], 0, SharpnessSteps - 1) * SharpnessStep;
+    s.preset = std::clamp(now_values[Preset], 0, BbSettings::PresetCount - 1);
+    s.sharpen = now_values[Sharpness] != 0;
+    if (now_values[Sharpness] != 0) {
+        s.sharpness = std::clamp(now_values[Sharpness], 0, SharpnessSteps - 1) * SharpnessStep;
     }
-    s.show_fps = values[ShowFps] != 0;
-    s.frame_generation = values[FrameGen] != 0;
-    s.model_lod = LodValues[std::clamp(values[ModelLod], 0, 3)];
+    s.model_lod = LodValues[std::clamp(now_values[ModelLod], 0, 3)];
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
-        s.effects[e] = values[FirstEffect + e] != 0;
+        s.effects[e] = now_values[FirstEffect + e] != 0;
     }
-    std::memcpy(applied, values, sizeof(values));
+    std::memcpy(applied, now_values, sizeof(now_values));
     BbSettings::Save();
 }
 

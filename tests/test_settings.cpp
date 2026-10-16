@@ -71,6 +71,17 @@ int main() {
     assert(s.bloom_scale == 1.35f && s.color_saturation == 1.15f);
     assert(s.ao_strength == 1.50f && s.shadow_distance == 2.00f && s.fog_opacity == 0.75f);
     assert(s.fov_scale == 1.20f && s.cam_distance == 1.40f && s.cam_height == 1.10f);
+    assert(saved.find("menu_language=") == std::string::npos); // only started with it (#134)
+
+    // A language chosen in the menu is saved and wins over the launcher's from then on.
+    s.menu_language = BbSettings::MenuLanguage::Russian;
+    s.menu_language_chosen = true;
+    BbSettings::Save();
+    assert(Read(path).find("menu_language=ru\n") != std::string::npos);
+    setenv("BB_MENU_LANGUAGE", "en", 1);
+    s.menu_language_chosen = false;
+    BbSettings::Load();
+    assert(s.menu_language == BbSettings::MenuLanguage::Russian && s.menu_language_chosen);
     unlink(path);
-    std::puts("PASS: settings save keeps other keys, menu position, and live graphics/camera/mouse settings");
+    std::puts("PASS: settings save keeps other keys, menu position, live graphics/camera/mouse settings and menu language");
 }

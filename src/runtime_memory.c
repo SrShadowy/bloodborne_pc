@@ -13,7 +13,6 @@
 #include <limits.h>
 #include <pthread.h>
 #include <time.h>
-#ifndef _WIN32
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -137,8 +136,14 @@ static int host_prot(int prot) {
 /* Direct memory occupies [0,POOL_SIZE) of the memfd, flexible memory [POOL_SIZE,+FLEX_SPAN). */
 static int pool(void) {
     if (pool_fd>=0) return 0;
+#ifdef _WIN32
+    /* A pagefile-backed section (gpu/platform/win32/posix_memory.cpp). */
+    pool_fd=bb_section_create(POOL_SIZE+FLEX_SPAN);
+    if (pool_fd<0) return -1;
+#else
     pool_fd=memfd_create("bb-guest-memory", MFD_CLOEXEC);
     if (pool_fd<0 || ftruncate(pool_fd,(off_t)(POOL_SIZE+FLEX_SPAN))) return -1;
+#endif
     void *view=mmap(NULL,POOL_SIZE+FLEX_SPAN,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_NORESERVE,pool_fd,0);
     if (view==MAP_FAILED) return -1;
     backing_base=view;
@@ -616,6 +621,26 @@ static ABI int32_t direct_memory_type(uint64_t phys, int *type, void **start, vo
     read_unlock();
     return ACCESS;
 }
+/* The direct memory allocation containing `offset` (or, flags & 1, the next one after it). */
+typedef struct { int64_t start, end; int32_t memory_type; } DirectQueryInfo;
+static ABI int32_t direct_query(int64_t offset, int flags, DirectQueryInfo *info, uint64_t size) {
+    if (!info || size < sizeof(DirectQueryInfo) || offset < 0) return INVALID;
+    read_lock();
+    int best=-1;
+    for (int i=0;i<LIMIT;++i) {
+        if (!blocks[i].used) continue;
+        const uint64_t at=(uint64_t)offset;
+        if (at>=blocks[i].start && at-blocks[i].start<blocks[i].size) { best=i; break; }
+        if ((flags & 1) && blocks[i].start>at && (best<0 || blocks[i].start<blocks[best].start)) best=i;
+    }
+    if (best>=0) {
+        info->start=(int64_t)blocks[best].start;
+        info->end=(int64_t)(blocks[best].start+blocks[best].size);
+        info->memory_type=blocks[best].type;
+    }
+    read_unlock();
+    return best>=0 ? 0 : (int32_t)UINT32_C(0x80020002); /* ENOENT */
+}
 static ABI int32_t batch_map2(BatchEntry *entries, int count, int *processed, int flags) {
     if (!entries || count<0) return INVALID;
     int32_t result=0; int done=0;
@@ -648,29 +673,43 @@ static const RuntimeExport exports[]={
     {"sceKernelReleaseFlexibleMemory",release_flexible}, {"sceKernelReserveVirtualRange",reserve_range},
     {"sceKernelMprotect",kernel_mprotect}, {"sceKernelQueryMemoryProtection",query_protection},
     {"sceKernelVirtualQuery",virtual_query}, {"sceKernelGetDirectMemoryType",direct_memory_type},
+    {"sceKernelDirectMemoryQuery",direct_query},
     {"sceKernelBatchMap",batch_map}, {"sceKernelBatchMap2",batch_map2},
     {"mmap",posix_mmap},
 };
 uintptr_t runtime_memory_resolve(const char *name) {
     /* Direct-memory NIDs are exercised by test_runtime.c before names are loaded. */
-    if (!strcmp(name, "pO96TwzOm5E#p#J")) return (uintptr_t)direct_size;
-    if (!strcmp(name, "rTXw65xmLIA#p#J")) return (uintptr_t)direct_allocate;
-    if (!strcmp(name, "L-Q3LEjIbgA#p#J")) return (uintptr_t)direct_map;
-    if (!strcmp(name, "MBuItvba6z8#p#J")) return (uintptr_t)direct_release;
-    if (!strcmp(name, "cQke9UuBQOk#p#J")) return (uintptr_t)direct_unmap;
+    if (runtime_nid_is(name, "pO96TwzOm5E")) return (uintptr_t)direct_size;
+    if (runtime_nid_is(name, "rTXw65xmLIA")) return (uintptr_t)direct_allocate;
+    if (runtime_nid_is(name, "L-Q3LEjIbgA")) return (uintptr_t)direct_map;
+    if (runtime_nid_is(name, "MBuItvba6z8")) return (uintptr_t)direct_release;
+    if (runtime_nid_is(name, "cQke9UuBQOk")) return (uintptr_t)direct_unmap;
     return RUNTIME_LOOKUP(exports,name);
 }
 /* Host-owned memory the guest can see (image, stacks, trampolines) lives in
  * [LOW_MIN, USER_MIN): PS4 code packs pointers into 40-bit fields. */
 #define LOW_MIN UINT64_C(0x0800000000)
 static uintptr_t low_next=LOW_MIN;
+/* The guest's address range, reserved before anything else can land there (Windows: one
+ * placeholder the game's mappings replace in; Linux needs nothing). */
+void runtime_memory_reserve(void) {
+#ifdef _WIN32
+    if (bb_reserve_arena(USER_MIN,USER_MAX)) exit(21);
+#endif
+}
 void *runtime_low_map(size_t size, int prot) {
+#ifdef _WIN32
+    const uint64_t granule=UINT64_C(65536); /* VirtualAlloc places allocations at 64 KiB */
+#else
+    const uint64_t granule=PAGE;
+#endif
     size=align_up(size,PAGE);
     write_lock();
     void *p=MAP_FAILED;
+    low_next=align_up(low_next,granule);
     while (low_next+size<=USER_MIN) {
         p=mmap((void *)low_next,size,prot,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);
-        low_next+=size+PAGE; /* unmapped gap catches overruns */
+        low_next=align_up(low_next+size+PAGE,granule); /* unmapped gap catches overruns */
         if (p!=MAP_FAILED) break;
     }
     write_unlock();
@@ -1039,9 +1078,3 @@ void runtime_memory_report(void) {
     printf("Runtime: flexible maps=%zu, in use=%" PRIu64 ", protects=%zu, queries=%zu, regions=%zu\n",
            flexible_maps, flexible_bytes, protects, queries, vma_count);
 }
-#else
-void *runtime_low_map(size_t size, int prot) { (void)size; (void)prot; return NULL; }
-uintptr_t runtime_memory_resolve(const char *name) { (void)name; return 0; }
-int runtime_memory_is_mapped(uintptr_t address, uint64_t size) { (void)address; (void)size; return 0; }
-void runtime_memory_report(void) { puts("Runtime: Windows direct-memory backend not implemented"); }
-#endif

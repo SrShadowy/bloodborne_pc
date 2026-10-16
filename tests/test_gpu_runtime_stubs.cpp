@@ -47,3 +47,12 @@ void runtime_wait_report(double) {}
 void runtime_sleep_stats(uint64_t* calls, uint64_t* ns) { *calls = 0; *ns = 0; }
 uint64_t runtime_heap_growths() { return 0; }
 }
+// Input prompts and reverse-engineering watches (no pad, no game files here).
+extern "C" {
+int runtime_pad_prompt_device() { return 0; }
+unsigned runtime_pad_prompt_generation() { return 0; }
+int runtime_pad_mouse_look() { return 0; }
+int runtime_pad_prompt(const char*, int, char*, int) { return 0; }
+int runtime_file_host_path(const char*, char*, size_t) { return -1; }
+void runtime_re_watch(uint64_t) {}
+}

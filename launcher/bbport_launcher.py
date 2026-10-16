@@ -33,6 +33,7 @@ from bbport_config import (
     UI_LANGUAGES, UPSCALERS, PRESETS, OUTPUT_RES, EFFECTS, MODEL_LOD,
     FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
     READBACKS, PREUPLOAD, VK_RECORD_THREADS, MEMORY_MODELS,
+    ASPECTS, output_sizes, resolved_aspect, nearest_output, parse_size,
     NGX_PREFIX, DLSS_SDK_URL, binaries_dir, ngx_libraries, online_module,
     load_settings, save_settings, load_ini, save_ini,
     game_environment,
@@ -68,8 +69,10 @@ class LauncherWindow(
     def __init__(self, app):
         super().__init__(application=app, title="Bloodborne")
         self.set_default_size(980, 780)
-        self.setup_css()
         self.settings = load_settings()
+        self.theme_mode = self.settings.get("theme_mode", "dark")
+        self.apply_theme(self.theme_mode)
+        self.setup_css()
         set_language(self.settings.get("ui_language", ""))
         self.ini, self.ini_lines = load_ini()
         self.process = None
@@ -96,15 +99,43 @@ class LauncherWindow(
             padding: 7px 14px;
             font-weight: 600;
             font-size: 13px;
+            color: #9aa2b1;
+        }
+        .tab-bar-button:hover {
+            color: #ffffff;
+            background-color: rgba(255, 255, 255, 0.08);
         }
         .tab-bar-button:checked {
-            background-color: rgba(255, 255, 255, 0.12);
+            background-color: rgba(255, 255, 255, 0.16);
             color: #ffffff;
         }
         .log-toolbar {
             background-color: #161922;
             border-bottom: 1px solid rgba(255, 255, 255, 0.08);
             padding: 8px 12px;
+            color: #c9d1d9;
+        }
+        .log-toolbar label {
+            color: #c9d1d9;
+        }
+        .log-toolbar button {
+            color: #c9d1d9;
+        }
+        .badge {
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-warning {
+            background-color: rgba(220, 100, 20, 0.2);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        .badge-success {
+            background-color: rgba(34, 197, 94, 0.2);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.3);
         }
         .log-terminal {
             background-color: #0b0d13;
@@ -162,6 +193,59 @@ class LauncherWindow(
             outline: 2px solid #e03131;
             outline-offset: -1px;
         }
+
+        /* Light theme overrides */
+        window.light-theme .tab-bar-button {
+            color: #5c6574;
+        }
+        window.light-theme .tab-bar-button:hover {
+            color: #111827;
+            background-color: rgba(0, 0, 0, 0.06);
+        }
+        window.light-theme .tab-bar-button:checked {
+            background-color: rgba(0, 0, 0, 0.12);
+            color: #111827;
+        }
+        window.light-theme .log-toolbar {
+            background-color: #f1f3f7;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+            color: #1e293b;
+        }
+        window.light-theme .log-toolbar label {
+            color: #1e293b;
+        }
+        window.light-theme .log-toolbar button {
+            color: #1e293b;
+        }
+        window.light-theme .badge-warning {
+            background-color: rgba(245, 158, 11, 0.15);
+            color: #b45309;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+        }
+        window.light-theme .badge-success {
+            background-color: rgba(34, 197, 94, 0.15);
+            color: #15803d;
+            border: 1px solid rgba(34, 197, 94, 0.35);
+        }
+        window.light-theme .log-terminal {
+            background-color: #ffffff;
+            color: #1e293b;
+        }
+        window.light-theme .gamepad-hints-bar {
+            background-color: rgba(241, 243, 247, 0.95);
+            border-top: 1px solid rgba(0, 0, 0, 0.08);
+        }
+        window.light-theme .gamepad-badge {
+            background-color: rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(0, 0, 0, 0.15);
+            color: #1e293b;
+        }
+        window.light-theme .gamepad-label {
+            color: #5c6574;
+        }
+        window.light-theme .gamepad-name {
+            color: #1e293b;
+        }
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css.encode())
@@ -176,6 +260,40 @@ class LauncherWindow(
             if hasattr(self, "gamepad_name_label") and pad_name:
                 self.gamepad_name_label.set_label(pad_name)
 
+    def update_theme_button(self):
+        if not hasattr(self, "theme_button") or not self.theme_button:
+            return
+        if getattr(self, "theme_mode", "dark") == "light":
+            self.theme_button.set_icon_name("weather-clear-night-symbolic")
+            self.theme_button.set_tooltip_text(tr("Тёмная тема"))
+        else:
+            self.theme_button.set_icon_name("display-brightness-symbolic")
+            self.theme_button.set_tooltip_text(tr("Светлая тема"))
+
+    def apply_theme(self, mode=None, save=False):
+        if mode is None:
+            mode = self.settings.get("theme_mode", "dark")
+        self.theme_mode = mode
+        self.settings["theme_mode"] = mode
+        if save:
+            save_settings(self.settings)
+
+        sm = Adw.StyleManager.get_default()
+        if mode == "light":
+            sm.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+            self.remove_css_class("dark-theme")
+            self.add_css_class("light-theme")
+        else:
+            sm.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            self.remove_css_class("light-theme")
+            self.add_css_class("dark-theme")
+
+        self.update_theme_button()
+
+    def on_toggle_theme(self, _button):
+        next_mode = "dark" if self.theme_mode == "light" else "light"
+        self.apply_theme(next_mode, save=True)
+
     def build(self):
         """(Re)creates the window's content in the current launcher language."""
         toolbar = Adw.ToolbarView()
@@ -185,6 +303,11 @@ class LauncherWindow(
         title_lbl = Gtk.Label(label="Bloodborne")
         title_lbl.add_css_class("title")
         header.set_title_widget(title_lbl)
+
+        self.theme_button = Gtk.Button()
+        self.theme_button.add_css_class("flat")
+        self.theme_button.connect("clicked", self.on_toggle_theme)
+        header.pack_start(self.theme_button)
 
         self.launch_button = Gtk.Button()
         self.launch_button.connect("clicked", self.on_launch)
@@ -304,6 +427,7 @@ class LauncherWindow(
         self.update_user_status()
         self.update_upscaler_status()
         self.update_fsr411_auto_row()
+        self.update_theme_button()
         if hasattr(self, "gamepad_nav") and self.gamepad_nav and self.gamepad_nav.pad_handle:
             self.set_gamepad_hints_visible(True, self.gamepad_nav.pad_name)
 
@@ -405,22 +529,34 @@ class LauncherWindow(
         page = Adw.PreferencesPage()
 
         screen = Adw.PreferencesGroup(title=tr("Экран"))
-        self.output_row = combo_row(tr("Разрешение вывода"),
-                                    tr("Апскейлер дорисовывает кадр; Steam Deck — 720p"),
-                                    OUTPUT_RES, self.ini.get("output_res", "1920x1080"))
+        # The aspect ratio, then its resolutions (rebuilt when it changes, the height kept).
+        self.aspect_row = Adw.ComboRow(title=tr("Соотношение сторон"), subtitle=tr(
+            "Шире 16:9 — больше обзор по бокам, выше — сверху и снизу; интерфейс у краёв экрана"))
+        self.aspect_row.values = ASPECTS
+        self.output_row = Adw.ComboRow(title=tr("Разрешение вывода"),
+                                       subtitle=tr("Апскейлер дорисовывает кадр; Steam Deck — 1280×800 (16:10)"))
+        self.output_row.values = []
+        screen.add(self.aspect_row)
         screen.add(self.output_row)
+        self.fullscreen_row = Adw.SwitchRow(title=tr("Полноэкранный режим"),
+                                            active=self.settings["fullscreen"])
+        screen.add(self.fullscreen_row)
         self.live_row = combo_row(tr("Смена разрешения на лету"),
                                   tr("Без перезапуска, но медленнее на Steam Deck и старых GPU"),
                                   LIVE_RESOLUTION, self.ini.get("live_resolution", "0"))
         screen.add(self.live_row)
-        self.fullscreen_row = Adw.SwitchRow(title=tr("Полноэкранный режим"),
-                                            active=self.settings["fullscreen"])
-        screen.add(self.fullscreen_row)
         self.display_row = Adw.ComboRow(title=tr("Монитор"))
         self.display_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
                                                 lambda _button: self.fill_displays()))
-        self.fill_displays()
         screen.add(self.display_row)
+
+        self.fill_displays()
+        self.fill_aspects(self.ini.get("aspect", "auto"))
+        self.fill_outputs(keep=self.ini.get("output_res"))
+
+        self.aspect_row.connect("notify::selected",
+                                lambda *_: self.fill_outputs(keep=self.output_row.get_selected_item()))
+        self.display_row.connect("notify::selected", lambda *_: self.on_display_changed())
         self.present_row = combo_row(tr("Режим показа кадров"), None, PRESENT_MODES,
                                      self.settings["present_mode"])
         screen.add(self.present_row)
@@ -672,11 +808,15 @@ class LauncherWindow(
         self.store()
 
     def update_upscaler_status(self):
+        if not hasattr(self, "upscaler_row"):
+            return
         value = combo_value(self.upscaler_row)
         if value == "fsr4":
             ok = (PORT_DIR / "fsr4_shaders").is_dir()
             hint = tr("Ассеты найдены") if ok else tr("Нет ассетов: tools/fetch_fsr4_assets.sh")
         elif value == "fsr411":
+            if not hasattr(self, "output_row") or not hasattr(self, "preset_row"):
+                return
             directory = fsr411_dir()
             problem = fsr411_problem(directory, combo_value(self.output_row),
                                      int(combo_value(self.preset_row)))
@@ -693,9 +833,12 @@ class LauncherWindow(
                 "DLSS не найден: выберите библиотеку NVIDIA ниже (и нужна сборка с мостом DLSS). Игра включит FSR 3.1")
         else:
             hint = tr("Сглаживание в разрешении вывода без модели FSR") if value == "taa" else None
-        self.preset_row.set_sensitive(value not in ("taa", "off"))
-        self.sharpen_row.set_sensitive(value != "off")
-        self.sharpness_row.set_sensitive(value != "off")
+        if hasattr(self, "preset_row"):
+            self.preset_row.set_sensitive(value not in ("taa", "off"))
+        if hasattr(self, "sharpen_row"):
+            self.sharpen_row.set_sensitive(value != "off")
+        if hasattr(self, "sharpness_row"):
+            self.sharpness_row.set_sensitive(value != "off")
         self.upscaler_row.set_subtitle(hint or "")
 
     def game_problem(self, path):
@@ -743,8 +886,52 @@ class LauncherWindow(
             self.store()
         self.choose_folder(tr("Папка игры (CUSA03173)"), self.game_dir(), chosen)
 
+    def monitor_size(self):
+        displays = getattr(self.display_row, "displays", [])
+        index = self.display_row.get_selected()
+        if 0 <= index < len(displays):
+            _val, _lbl, size, _primary = displays[index]
+            return size
+        return None
+
+    def fill_aspects(self, current):
+        choices = [
+            (tr("Авто") + (f" ({resolved_aspect('auto', self.monitor_size())})" if self.monitor_size() else ""), "auto"),
+            ("4:3", "4:3"),
+            ("16:10", "16:10"),
+            ("16:9", "16:9"),
+            ("21:9", "21:9"),
+            ("32:9", "32:9"),
+        ]
+        self.aspect_row.set_model(Gtk.StringList.new([label for label, _ in choices]))
+        self.aspect_row.values = [val for _, val in choices]
+        selected = self.aspect_row.values.index(current) if current in self.aspect_row.values else 0
+        self.aspect_row.set_selected(selected)
+
+    def fill_outputs(self, keep=None):
+        aspect = combo_value(self.aspect_row)
+        sizes = output_sizes(aspect, self.monitor_size())
+        texts = [f"{w}×{h}" for w, h in sizes]
+        values = [f"{w}x{h}" for w, h in sizes]
+        keep_size = parse_size(keep if isinstance(keep, str) else keep.get_string() if keep else "")
+        target = nearest_output(sizes, keep_size) if keep else sizes[-1]
+        self.output_row.set_model(Gtk.StringList.new(texts))
+        self.output_row.values = values
+        self.output_row.set_selected(sizes.index(target) if target in sizes else len(sizes) - 1)
+        self.update_upscaler_status()
+
+    def on_display_changed(self):
+        if not hasattr(self, "aspect_row") or not hasattr(self, "output_row"):
+            return
+        aspect = combo_value(self.aspect_row)
+        keep = self.output_row.get_selected_item()
+        self.fill_aspects(aspect)
+        self.fill_outputs(keep=keep)
+
     def store(self):
         s = self.settings
+        s["theme_mode"] = getattr(self, "theme_mode", "dark")
+        s["aspect"] = combo_value(self.aspect_row)
         s["gamepad"] = combo_value(self.gamepad_row)
         s["gamepad_name"] = self.gamepad_row.names[self.gamepad_row.get_selected()]
         s["display"] = combo_value(self.display_row)
@@ -789,6 +976,7 @@ class LauncherWindow(
             "object_motion": "1" if self.motion_row.get_active() else "0",
             "frame_generation": "1" if self.frame_gen_row.get_active() else "0",
             "show_fps": "1" if self.show_fps_row.get_active() else "0",
+            "aspect": combo_value(self.aspect_row),
             "output_res": combo_value(self.output_row),
             "model_lod": combo_value(self.lod_row),
             "live_resolution": combo_value(self.live_row),
@@ -855,6 +1043,7 @@ class LauncherApp(Adw.Application):
 def play():
     """--play: the game with the saved settings, no window (Steam Deck game mode)."""
     settings = load_settings()
+    set_language(settings.get("ui_language", ""))
     if not (Path(settings["game_dir"]).expanduser() / "eboot.bin").is_file():
         print("bbport: choose the game folder in the launcher first", file=sys.stderr)
         return 1

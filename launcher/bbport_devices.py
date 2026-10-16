@@ -2,7 +2,7 @@
 """Device and gamepad detection and formatting helpers for BBPort launcher."""
 
 import subprocess
-from bbport_config import PACKAGED, PORT_DIR
+from bbport_config import PACKAGED, PORT_DIR, parse_size
 from bbport_i18n import tr
 
 
@@ -38,8 +38,9 @@ def connected_gamepads():
 
 
 def connected_displays():
-    """(BB_DISPLAY value, label) of the monitors (bb-gpu-capabilities --displays), [] if unknown.
-    The value is the monitor's name, or its number when two monitors share a name."""
+    """(BB_DISPLAY value, label, (w, h) or None, primary) of the monitors (bb-gpu-capabilities
+    --displays), [] if unknown. The value is the monitor's name, or its number when two monitors
+    share a name."""
     tool = PORT_DIR / ("bin" if PACKAGED else "out") / "bb-gpu-capabilities"
     try:
         run = subprocess.run([str(tool), "--displays"], capture_output=True, text=True, timeout=5)
@@ -48,6 +49,7 @@ def connected_displays():
     rows = [line.split("\t") for line in run.stdout.splitlines() if line.count("\t") == 2]
     names = [name for name, _, _ in rows]
     return [(name if names.count(name) == 1 else str(number),
-             f"{number}: {name} ({size})" + (tr(", основной") if primary == "1" else ""))
+             f"{number}: {name} ({size})" + (tr(", основной") if primary == "1" else ""),
+             parse_size(size, None), primary == "1")
             for number, (name, size, primary) in enumerate(rows, 1)]
 

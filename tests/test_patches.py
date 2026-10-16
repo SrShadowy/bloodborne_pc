@@ -201,6 +201,16 @@ class ExternalPatchTests(unittest.TestCase):
         self.assertEqual(external_patches(XML.parent), [])
 
 
+class FrameRateTests(unittest.TestCase):
+    def test_frame_rate_needs_no_patches_but_with_hooks_off(self):
+        # Above 30 FPS hooks in the game's code run the frame rate (gpu/shim/bbport_frame_rate.cpp).
+        for fps in ('uncap', '60', '90', '30'):
+            self.assertEqual(patches.fps_patches(fps, {}), [], fps)
+        self.assertEqual(patches.fps_patches('uncap', {'BB_FRAME_HOOKS': '0'}),
+                         ['Uncap FPS++', 'Sprint Fix (High FPS)'])
+        self.assertEqual(patches.fps_patches('60', {'BB_FRAME_HOOKS': '0'}), ['60 FPS++'])
+
+
 class IntelTonemapTests(unittest.TestCase):
     def cpuinfo(self, vendor):
         path = Path(tempfile.mkdtemp()) / 'cpuinfo'

@@ -56,7 +56,15 @@ extern "C" void CharaStepHook() {
     }
 }
 
+void MakeWritable(void* ptr, std::size_t size) {
+    const auto page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    const auto start = reinterpret_cast<std::uintptr_t>(ptr) & ~(page_sz - 1);
+    const auto end = (reinterpret_cast<std::uintptr_t>(ptr) + size + page_sz - 1) & ~(page_sz - 1);
+    mprotect(reinterpret_cast<void*>(start), end - start, PROT_READ | PROT_WRITE | PROT_EXEC);
+}
+
 void WriteRel32Jump(std::uint8_t* from, const std::uint8_t* to, std::size_t pad_len) {
+    MakeWritable(from, pad_len);
     const auto rel = static_cast<std::int32_t>(to - (from + 5));
     from[0] = 0xe9;
     std::memcpy(from + 1, &rel, 4);
@@ -73,13 +81,16 @@ void PatchHeapHeadroom(unsigned char* image, std::uint64_t size) {
         std::memcmp(image + kPageHeapSize, kPageOrig, 5) == 0) {
         const std::uint32_t block_2x = 0x320000;
         const std::uint32_t page_2x = 0xa0000;
+        MakeWritable(image + kBlockHeapSize, 5);
         std::memcpy(image + kBlockHeapSize + 1, &block_2x, 4);
+        MakeWritable(image + kPageHeapSize, 5);
         std::memcpy(image + kPageHeapSize + 1, &page_2x, 4);
     }
     std::uint64_t menu_cur = 0;
     std::memcpy(&menu_cur, image + kMenuSize, sizeof(menu_cur));
     if (menu_cur == kMenuOrig) {
         const std::uint64_t menu_2x = 0x1400000;
+        MakeWritable(image + kMenuSize, sizeof(menu_2x));
         std::memcpy(image + kMenuSize, &menu_2x, sizeof(menu_2x));
     }
 }

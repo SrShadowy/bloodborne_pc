@@ -13,10 +13,20 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 EBOOT_BASE=0x400000
-# BB_FPS presets: BbFrameRate::PatchImage (gpu/shim/bbport_frame_rate.cpp) installs the
-# curated frame-rate patches, dynamic delta-time scaling, and SprjFlipper::Update hook directly
-# on the clean eboot image, avoiding destructive writes in the legacy XML FPS++ patches.
-FPS_PRESETS={'30':[],'60':[],'90':[],'uncap':[]}
+# BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
+# Above 60 FPS the sprint fix always goes with the frame rate patch: without it sprinting drops to
+# half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
+FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
+             'uncap':['Uncap FPS++','Sprint Fix (High FPS)']}
+# Above 30 FPS the frame rate is done by hooks in the game's code (gpu/shim/bbport_frame_rate.cpp:
+# 60 and 90 are the same as uncap, at most that many frames a second): no patches. The patches
+# only with BB_FRAME_HOOKS=0 (comparisons).
+
+
+def fps_patches(fps, env=os.environ):
+    if fps!='30' and env.get('BB_FRAME_HOOKS','1')!='0':
+        return []
+    return FPS_PRESETS[fps]
 # Upscaler presets (bbport.ini "preset", the in-game menu): output / render size ratio. The game
 # then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
 OUTPUT_SIZE=(1920,1080)
@@ -358,7 +368,7 @@ def main():
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
         return
-    names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
+    names=fps_patches(a.fps)+[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
     if intel_tonemap_fix() and INTEL_TONEMAP not in names:
         names.append(INTEL_TONEMAP)

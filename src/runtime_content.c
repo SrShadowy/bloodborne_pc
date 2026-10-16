@@ -121,12 +121,12 @@ static ABI int32_t addon_list(uint32_t service,void *list,uint32_t capacity,uint
     ++lists; return 0;
 }
 uintptr_t runtime_content_resolve(const char *name) {
-    if (!strcmp(name,"g8cM39EUZ6o#M#N")) return (uintptr_t)module_load;
-    if (!strcmp(name,"fMP5NHUOaMk#M#N")) return (uintptr_t)module_loaded;
-    if (!strcmp(name,"eR2bZFAAU0Q#M#N")) return (uintptr_t)module_unload;
-    if (!strcmp(name,"R9lA82OraNs#c#d")) return (uintptr_t)content_init;
-    if (!strcmp(name,"99b82IKXpH4#c#d")) return (uintptr_t)param_int;
-    if (!strcmp(name,"xnd8BJzAxmk#c#d")) return (uintptr_t)addon_list;
+    if (runtime_nid_is(name, "g8cM39EUZ6o")) return (uintptr_t)module_load;
+    if (runtime_nid_is(name, "fMP5NHUOaMk")) return (uintptr_t)module_loaded;
+    if (runtime_nid_is(name, "eR2bZFAAU0Q")) return (uintptr_t)module_unload;
+    if (runtime_nid_is(name, "R9lA82OraNs")) return (uintptr_t)content_init;
+    if (runtime_nid_is(name, "99b82IKXpH4")) return (uintptr_t)param_int;
+    if (runtime_nid_is(name, "xnd8BJzAxmk")) return (uintptr_t)addon_list;
     return 0;
 }
 void runtime_content_report(void) {

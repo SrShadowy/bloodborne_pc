@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "common/types.h"
 #include "bbport_gnm_hooks.h"
 
 #include <algorithm>
@@ -201,7 +202,7 @@ void Mark(std::uint32_t index, u64 before, u64 after, u64 cb = 0) {
     }
 }
 
-extern "C" void BbGnmEnter(std::uint32_t index, u64 cb, u64* slot) {
+extern "C" void PS4_SYSV_ABI BbGnmEnter(std::uint32_t index, u64 cb, u64* slot) {
     __atomic_fetch_add(CounterAt(index), 1, __ATOMIC_RELAXED);
     if (depth == MaxDepth) {
         overflow.fetch_add(1, std::memory_order_relaxed);
@@ -218,7 +219,7 @@ extern "C" void BbGnmEnter(std::uint32_t index, u64 cb, u64* slot) {
     *slot = reinterpret_cast<u64>(exit_thunk);
 }
 
-extern "C" u64 BbGnmLeave() {
+extern "C" u64 PS4_SYSV_ABI BbGnmLeave() {
     const Frame f = frames[--depth];
     const bool cb_method = Table[f.index].cb_method;
     if (f.index == trace_index && trace_left.fetch_sub(1, std::memory_order_relaxed) > 0) {

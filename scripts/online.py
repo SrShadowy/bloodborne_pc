@@ -3,8 +3,15 @@
 """Co-op addresses (BB_ONLINE=1): the game's own server, the shadNet server and its WebAPI.
 
 From run.py and the launcher of the Windows port of bbport. Messages,
-bloodstains and ghosts come from the community game server (The Hunter's Dream by default);
-bells and summons go through a shadNet server (shadPS4's public one by default).
+bloodstains and ghosts come from the community game server; bells and summons go through a shadNet
+server. By default both are Seamless Hunt's (play.seamlesshunt.com, BBSC's server): shadPS4's public
+shadNet (srv.shadps4.net) accepts only shadPS4's own builds since 2026-10-12.
+
+`online.py bbsc-local` (BB_BBSC=1): prints the shadNet host when BBSC's game server should run on
+this PC (scripts/bbsc_gameserver, started by run.sh): BB_BBSC_LOCAL_SERVER=1, or =auto (default)
+when the server's own game server does not answer (its ss.info on port 20443 timed out for players
+while the rest worked; the local one serves ss.info and sends summons to the shadNet server, as
+BBSC's players do). Nothing printed: the server's game server is used.
 
 `online.py overrides --user DIR` writes DIR/host_overrides.json for this launch (the game's
 server -> the community server; summon signs -> the shadNet WebAPI when it has the Bloodborne
@@ -20,8 +27,15 @@ import sys
 import urllib.error
 import urllib.request
 
-COMMUNITY_SERVER = 'https://thehuntersdream.com'
-SHADNET_SERVER = 'srv.shadps4.net:31313'
+COMMUNITY_SERVER = 'http://play.seamlesshunt.com'
+SHADNET_SERVER = 'play.seamlesshunt.com:31313'
+WEBAPI_SERVER = 'http://play.seamlesshunt.com:31315'
+# The defaults before 2026-10-15 (the launcher replaces them in saved settings).
+OLD_DEFAULTS = {
+    'online_server': ('srv.shadps4.net:31313',),
+    'online_community': ('https://thehuntersdream.com', ''),
+    'online_webapi': ('',),
+}
 # Bloodborne's own game server, answered by the community server on the same port.
 GAME_SERVER = 'https://ss4.scej-network.jp:20443'
 # The server's ss.info sends the game to this port for its API (summons among them).
@@ -29,11 +43,13 @@ COMMUNITY_API_PORT = 18671
 
 
 def community_address(value):
-    """The game server as https://host (the game picks the ports), The Hunter's Dream by default."""
+    """The game server as scheme://host (the game picks the ports), Seamless Hunt by default.
+    Without a scheme: https, but http for the default server's host (it serves plain http)."""
     value = str(value or '').strip() or COMMUNITY_SERVER
     scheme, _sep, rest = value.rpartition('://')
     host = rest.split('/')[0].split(':')[0]
-    return f'{scheme or "https"}://{host}'
+    default_scheme, _sep, default_host = COMMUNITY_SERVER.partition('://')
+    return f'{scheme or (default_scheme if host == default_host else "https")}://{host}'
 
 
 def webapi_address(server):
@@ -114,16 +130,42 @@ def check(server, webapi, community):
     return results
 
 
+def bbsc_local_server():
+    """The shadNet host for a local BBSC game server, or '' (see the module's description)."""
+    mode = os.environ.get('BB_BBSC_LOCAL_SERVER', 'auto').strip().lower()
+    server = os.environ.get('BB_SHADNET_SERVER') or SHADNET_SERVER
+    host = server.rsplit(':', 1)[0] if server.count(':') == 1 else server
+    if mode in ('0', 'off', 'no'):
+        return ''
+    if mode in ('1', 'on', 'yes'):
+        return host
+    community = community_address(os.environ.get('BB_COMMUNITY_SERVER'))
+    if community.split('://', 1)[1] in ('127.0.0.1', 'localhost'):
+        return ''  # pointed at a local one already
+    try:
+        with urllib.request.urlopen(community + ':20443/bb-eu/ss.info', timeout=5) as reply:
+            reply.read(64)
+        return ''
+    except (OSError, ValueError) as error:
+        print(f'Co-op: {community}:20443 does not answer ({error}): BBSC game server on this PC',
+              file=sys.stderr)
+        return host
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = parser.add_subparsers(dest='command', required=True)
     overrides = sub.add_parser('overrides')
     overrides.add_argument('--user', required=True)
     sub.add_parser('check')
+    sub.add_parser('bbsc-local')
     a = parser.parse_args()
     server = os.environ.get('BB_SHADNET_SERVER') or SHADNET_SERVER
     community = community_address(os.environ.get('BB_COMMUNITY_SERVER'))
     webapi = webapi_setting(os.environ.get('BB_SHADNET_WEBAPI'), server, community)
+    if a.command == 'bbsc-local':
+        print(bbsc_local_server())
+        return
     if a.command == 'overrides':
         print(write_overrides(a.user, community, webapi))
     else:

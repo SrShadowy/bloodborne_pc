@@ -7,7 +7,7 @@
 
 #include <string>
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_common.h"
+#include "vulkan/vk_common.h"
 #include "bbport_keyboard.h"
 
 union SDL_Event;
@@ -29,6 +29,8 @@ void UpdateTextInput(SDL_Window* window);
 
 /// Whether anything is drawn this frame (menu open or FPS counter on).
 bool Visible();
+/// A line of text over the game until called with null (bbgpu_overlay_banner).
+void SetBanner(const char* text);
 
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool is_generated = false);

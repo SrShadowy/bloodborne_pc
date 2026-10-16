@@ -32,7 +32,15 @@ inline void SealExecPage(void* page) {
     mprotect(page, page_sz, PROT_READ | PROT_EXEC);
 }
 
+inline void MakeWritable(void* ptr, std::size_t size) {
+    const auto page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    const auto start = reinterpret_cast<std::uintptr_t>(ptr) & ~(page_sz - 1);
+    const auto end = (reinterpret_cast<std::uintptr_t>(ptr) + size + page_sz - 1) & ~(page_sz - 1);
+    mprotect(reinterpret_cast<void*>(start), end - start, PROT_READ | PROT_WRITE | PROT_EXEC);
+}
+
 inline void WriteRel32Jump(std::uint8_t* from, const std::uint8_t* to, std::size_t pad_len = 5) {
+    MakeWritable(from, pad_len);
     const auto rel = static_cast<std::int32_t>(to - (from + 5));
     from[0] = 0xe9;
     std::memcpy(from + 1, &rel, sizeof(rel));

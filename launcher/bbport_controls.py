@@ -226,16 +226,26 @@ class ControlsMixin:
     def fill_displays(self):
         """The monitor choices: the primary one, the connected ones, and the saved choice while it
         is not connected."""
+        displays = connected_displays()
+        self.display_row.displays = displays
+        if displays:
+            choices = [(value, label) for value, label, _, _ in displays]
+            primaries = [value for value, _, _, primary in displays if primary]
+            default = primaries[0] if primaries else choices[0][0]
+        else:
+            choices = [("", tr("Основной"))]
+            default = ""
         current = self.settings.get("display", "")
-        choices = [(tr("Основной"), "")] + [(label, value) for value, label in connected_displays()]
-        if current and current not in [value for _, value in choices]:
-            choices.append((tr("{} (не подключён)").format(current), current))
-        self.display_row.set_model(Gtk.StringList.new([label for label, _ in choices]))
-        self.display_row.values = [value for _, value in choices]
-        self.display_row.set_selected(self.display_row.values.index(current) if current in self.display_row.values else 0)
+        self.display_row.set_model(Gtk.StringList.new([label for _, label in choices]))
+        self.display_row.values = [value for value, _ in choices]
+        selected = self.display_row.values.index(current) if current in self.display_row.values else (
+            self.display_row.values.index(default) if default in self.display_row.values else 0
+        )
+        self.display_row.set_selected(selected)
 
     def show_gamepad(self):
         names = getattr(self.gamepad_row, "names", None)
-        selected = names[self.gamepad_row.get_selected()] if names else ""
+        idx = self.gamepad_row.get_selected()
+        selected = names[idx] if names and 0 <= idx < len(names) else ""
         self.gamepad_row.set_subtitle("\n".join(
             line for line in (selected, tr("Выбранный берётся, как только подключится")) if line))

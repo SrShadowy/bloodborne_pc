@@ -35,7 +35,7 @@ PC_MODEL_SUBTITLE = (
     "графики переводятся, а не эмулируются. Старая — модель памяти 0.3 со всеми "
     "исправлениями. Если драйвер не проходит проверку при запуске — старая"
 )
-MEMORY_MODELS = [("Авто: новая на AMD, старая на других", "auto"), ("Новая", "new"),
+MEMORY_MODELS = [("Авто: новая на любой видеокарте", "auto"), ("Новая", "new"),
                  ("Старая (как в 0.3)", "old")]
 
 # The package's own environment must not reach Proton's container
@@ -52,6 +52,53 @@ UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
              ("TAA (нативное сглаживание)", "taa"), ("DLSS (NVIDIA RTX)", "dlss"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
+ASPECTS = ["auto", "4:3", "16:10", "16:9", "21:9", "32:9"]
+ASPECT_RATIOS = {"4:3": 4 / 3, "16:10": 16 / 10, "16:9": 16 / 9, "21:9": 64 / 27, "32:9": 32 / 9}
+OUTPUTS = {
+    "4:3": [(640, 480), (800, 600), (1024, 768), (1280, 960), (1440, 1080), (1600, 1200), (2048, 1536),
+            (2880, 2160)],
+    "16:10": [(640, 400), (960, 600), (1280, 800), (1440, 900), (1680, 1050), (1920, 1200), (2560, 1600),
+              (3840, 2400)],
+    "16:9": [(640, 360), (854, 480), (960, 540), (1280, 720), (1600, 900), (1920, 1080), (2560, 1440),
+             (3200, 1800), (3840, 2160)],
+    "21:9": [(860, 360), (1280, 540), (1720, 720), (2560, 1080), (3440, 1440), (3840, 1600), (5120, 2160)],
+    "32:9": [(1280, 360), (1920, 540), (2560, 720), (3840, 1080), (5120, 1440), (7680, 2160)],
+}
+
+
+def parse_size(text, default=(1920, 1080)):
+    try:
+        w, h = (int(v) for v in text.lower().split("x"))
+        return (w, h) if w > 0 and h > 0 else default
+    except (ValueError, AttributeError):
+        return default
+
+
+def resolved_aspect(aspect, monitor):
+    """The aspect ratio's name, 'auto' resolved to the group closest to the monitor's aspect ratio."""
+    if aspect != "auto" or not monitor:
+        return aspect
+    ratio = monitor[0] / monitor[1]
+    return min(ASPECT_RATIOS.keys(), key=lambda key: abs(ASPECT_RATIOS[key] - ratio))
+
+
+def output_sizes(aspect, monitor):
+    """(w, h) of the aspect ratio's output resolutions, the monitor's own included when it fits."""
+    group = resolved_aspect(aspect, monitor)
+    sizes = OUTPUTS.get(group, OUTPUTS["16:9"])
+    if (monitor and group != "auto"
+            and abs(monitor[0] / monitor[1] - ASPECT_RATIOS[group]) < 0.05
+            and monitor not in sizes
+            and 360 <= monitor[1] <= 4320):
+        sizes = sorted(sizes + [monitor], key=lambda size: (size[1], size[0]))
+    return sizes
+
+
+def nearest_output(sizes, size):
+    """The size itself if listed, else the one nearest in height (another aspect ratio keeps it)."""
+    return size if size in sizes else min(sizes, key=lambda s: abs(s[1] - size[1]))
+
+
 OUTPUT_RES = [
     ("960×540 (16:9 qHD)", "960x540"),
     ("1280×720 (16:9 HD)", "1280x720"),
@@ -137,9 +184,10 @@ DEFAULTS = {
     "extra_env": "",
     # Online play (Online page, the online module gpu/bbnet): off by default; shadNet server and The Hunter's Dream.
     "online": False,
+    "online_bbsc": True,
     "online_community": online.COMMUNITY_SERVER,
     "online_server": online.SHADNET_SERVER,
-    "online_webapi": "",
+    "online_webapi": online.WEBAPI_SERVER,
     "online_npid": "",
     "online_password": "",
     "online_upnp": True,
@@ -147,6 +195,8 @@ DEFAULTS = {
     # The Hunter's Dream account (bbport_bbhost), its co-op backend comes later.
     "online_backend": "shadnet",
     "online_bbhost_server": bbhost.DEFAULT_SERVER,
+    "aspect": "auto",
+    "theme_mode": "dark",
 }
 
 # bbport.ini keys the launcher edits; the rest of the file is kept.
@@ -158,6 +208,7 @@ INI_DEFAULTS = {
     "object_motion": "1",
     "frame_generation": "0",
     "show_fps": "1",
+    "aspect": "auto",
     "output_res": "1920x1080",
     "model_lod": "0",
     "live_resolution": "0",
@@ -204,9 +255,12 @@ CONTROLS = [
 def load_settings():
     settings = dict(DEFAULTS)
     try:
-        settings.update(json.loads(CONFIG_FILE.read_text()))
+        settings.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
+    for key, old_values in getattr(online, "OLD_DEFAULTS", {}).items():
+        if str(settings.get(key, "")).strip() in old_values:
+            settings[key] = DEFAULTS.get(key, "")
     return settings
 
 
@@ -365,6 +419,8 @@ def game_environment(s):
             online_id, token = bbhost.load_account(ACCOUNT_FILE)
             env["BB_HOST_ONLINE_ID"] = online_id
             env["BB_HOST_TOKEN"] = token
+        elif s.get("online_bbsc", True):
+            env["BB_BBSC"] = "1"
     for item in s["extra_env"].split():
         if "=" in item:
             key, value = item.split("=", 1)

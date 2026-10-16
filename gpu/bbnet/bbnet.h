@@ -30,6 +30,11 @@ typedef struct BbNetHost {
 typedef int (*BbNetInitFn)(const BbNetHost *host);
 int bbnet_init(const BbNetHost *host);
 
+/* Optional: the game's image is mapped and patched, before its first instruction runs (game
+ * modules of the online module install their hooks here: BBSC for Bloodborne). */
+typedef void (*BbNetImageReadyFn)(uint64_t image_base, uint64_t image_size);
+void bbnet_image_ready(uint64_t image_base, uint64_t image_size);
+
 /* The module's function for an imported NID ("NID#lib#mod"), or 0. */
 typedef uintptr_t (*BbNetResolveFn)(const char *scoped_nid);
 uintptr_t bbnet_resolve(const char *scoped_nid);

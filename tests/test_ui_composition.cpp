@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <cassert>
 #include <cstdio>
-#include "gpu/shadps4/video_core/renderer_vulkan/ui_composition.h"
+#include "gpu/upscale/ui_composition.h"
 
 int main() {
     using namespace Vulkan::UiComposition;

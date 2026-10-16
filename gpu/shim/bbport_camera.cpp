@@ -7,6 +7,8 @@
 #include <cstring>
 #include <mutex>
 #include <vector>
+#include <sys/mman.h>
+#include <unistd.h>
 
 namespace BbCamera {
 namespace {
@@ -117,6 +119,9 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     u8* clamp_site = image + kFovClamp;
     if (std::memcmp(clamp_site, kFovClampBytes, 4) == 0 ||
         std::memcmp(clamp_site, kFovNoClamp, 4) == 0) {
+        const auto page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        const auto start = reinterpret_cast<std::uintptr_t>(clamp_site) & ~(page_sz - 1);
+        mprotect(reinterpret_cast<void*>(start), page_sz, PROT_READ | PROT_WRITE | PROT_EXEC);
         std::memcpy(clamp_site, kFovNoClamp, 4);
         std::printf("Camera: 48-degree FOV cap lifted at 0x%llx\n",
                     static_cast<unsigned long long>(kFovClamp));
