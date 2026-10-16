@@ -233,9 +233,6 @@ void FrameGeneration::CaptureScene(const Scene& in) {
         }};
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 2, .pImageMemoryBarriers = after.data()});
     });
-
-    // Capture the clean scene output before any UI / subtitles are drawn over it.
-    CaptureHudless(in.color);
 }
 
 
@@ -346,14 +343,15 @@ void FrameGeneration::Interpolate(vk::Image color, VAddr display) {
                                      ColorUsage | vk::ImageUsageFlagBits::eColorAttachment,
                                      vk::ImageAspectFlagBits::eColor,
                                      FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
-    // The UI-less frame (CaptureHudless): FSR interpolates it and lays the UI over unmoved. Without
-    // one (no UI drawn this frame) the whole frame is interpolated.
-    if (hudless_ready && !BbToggle::Disabled(1u << 30)) {
+    // The UI-less frame (CaptureHudless from RedirectColor): FSR interpolates it and lays the UI over unmoved.
+    // Without one (no UI drawn this frame) the whole frame is interpolated.
+    if (hudless_ready) {
         dispatch.hudlessColor = Describe(vk::Image(hudless), scene.color_format, scene.width,
                                          scene.height, ColorUsage, vk::ImageAspectFlagBits::eColor,
                                          FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
     } else {
-        dispatch.hudlessColor.structSize = sizeof(dispatch.hudlessColor); // none: described, null
+        dispatch.hudlessColor.structSize = sizeof(dispatch.hudlessColor);
+        dispatch.hudlessColor.image = VK_NULL_HANDLE;
     }
     hudless_ready = false;
     dispatch.distortionField.structSize = sizeof(dispatch.distortionField); // absent: described, null

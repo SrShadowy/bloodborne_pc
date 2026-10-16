@@ -1073,6 +1073,22 @@ During gameplay, translating guest shaders to SPIR-V and compiling Vulkan graphi
 - Extended `EmulatorSettingsImpl::GetFrameLimit()` in `gpu/shim/core/emulator_settings.h` to check `fps_limit` defined in `bbport.ini` in addition to `BB_FPS_LIMIT`.
 - Allows locking the game directly to 30 FPS (`fps_limit=30`) from `bbport.ini` without requiring shell environment variables.
 
+---
+
+## 39. FSR 3.1 Frame Generation & Object Motion Stabilization
+Comprehensive resolution of motion vector artifacts, player jitter, ghosting, and subtitle/HUD optical distortion under FSR 3.1 Frame Generation:
+1. **Bone Palette Classification (`gpu/upscale/motion_history.h`)**:
+   - Refined `ClassifyBuffer` with strict $3 \times 4$ float matrix stride rules (`size % 48 == 0 || (size - 32) % 48 == 0` for `size >= 640`), preventing general 1024/2048/4096-byte scenery constant buffers from being misclassified as character skeletons.
+2. **Dynamic Address Discard from Draw Keys (`gpu/upscale/motion_history.h` & `gpu/render/rasterizer.cpp`)**:
+   - Restored stable static mesh identity keys by excluding dynamic GNM ring-allocated constant buffer addresses from `Draw` and `GateKey`, ensuring character draw calls match previous frame history (`load != 0`) across 100% of frames.
+3. **Physical Velocity Divergence Bound (`gpu/upscale/shaders/camera_motion.comp`)**:
+   - Added `dot(rel_motion, rel_motion) < 16384.0` ceiling (128 px/frame relative speed limit) rejecting cross-instance culling mismatches and vertex spikes from object motion.
+4. **Synchronized HUDless Capture & Presentation (`gpu/upscale/vk_frame_generation.cpp`)**:
+   - Eliminated premature pre-tonemapping `CaptureHudless(in.color)` in `CaptureScene` that caused FSR 3 to detect the entire player character as static UI and paste a 50% transparent ghost over each generated frame.
+   - Re-enabled `dispatch.hudlessColor` from `TemporalUpscaler::RedirectColor` (taken after all 3D post-processing, immediately prior to the first UI draw), ensuring pristine UI/subtitle isolation without optical flow tearing when rotating the camera.
+- Full architectural breakdown and mathematical formulas documented in [`docs/FRAME_GENERATION_CONTEXT.md`](file:///home/shadowy/Documentos/GitHub/BBPort/docs/FRAME_GENERATION_CONTEXT.md).
+
+
 
 
 

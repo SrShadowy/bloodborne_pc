@@ -104,6 +104,7 @@ class GameRunnerMixin:
             pass
         status = process.get_exit_status() if process.get_if_exited() else -1
         self.process = None
+        self.reload_ini_from_disk()
         self.update_launch_button()
         self.update_game_status()
         if hasattr(self, "update_cache_status"):
@@ -113,6 +114,73 @@ class GameRunnerMixin:
             self.log_status_badge.remove_css_class("badge-success")
             self.log_status_badge.add_css_class("badge-warning")
         self.append_log(tr("\n— игра завершилась (код {}) —\n").format(status))
+
+    def reload_ini_from_disk(self):
+        """Reloads bbport.ini from disk and refreshes all launcher widgets that display ini values."""
+        from bbport_config import load_ini
+        self.ini, self.ini_lines = load_ini()
+        # Refresh graphics page widgets that mirror bbport.ini values
+        self._sync_ini_to_widgets()
+
+    def _sync_ini_to_widgets(self):
+        """Updates launcher UI widgets from the reloaded self.ini dict."""
+        from bbport_ui_helpers import combo_value
+        def set_combo(row, value):
+            if not hasattr(row, "values"):
+                return
+            for i, v in enumerate(row.values):
+                if str(v) == str(value):
+                    row.set_selected(i)
+                    return
+        # Upscaler settings
+        if hasattr(self, "upscaler_row"):
+            set_combo(self.upscaler_row, self.ini.get("upscaler", "fsr4"))
+        if hasattr(self, "preset_row"):
+            set_combo(self.preset_row, self.ini.get("preset", "4"))
+        if hasattr(self, "sharpen_row"):
+            self.sharpen_row.set_active(self.ini.get("sharpen") == "1")
+        if hasattr(self, "sharpness_row"):
+            try:
+                self.sharpness_row.set_value(float(self.ini.get("sharpness", "0.50")))
+            except (ValueError, TypeError):
+                pass
+        if hasattr(self, "motion_row"):
+            self.motion_row.set_active(self.ini.get("object_motion") == "1")
+        if hasattr(self, "frame_gen_row"):
+            self.frame_gen_row.set_active(self.ini.get("frame_generation") == "1")
+        if hasattr(self, "show_fps_row"):
+            self.show_fps_row.set_active(self.ini.get("show_fps") == "1")
+        if hasattr(self, "lod_row"):
+            set_combo(self.lod_row, self.ini.get("model_lod", "0"))
+        if hasattr(self, "live_row"):
+            set_combo(self.live_row, self.ini.get("live_resolution", "0"))
+        # Effects
+        if hasattr(self, "effect_rows"):
+            for key, row in self.effect_rows.items():
+                row.set_active(self.ini.get(key, "1") == "1")
+        # Mouse settings
+        if hasattr(self, "mouse_sens_row"):
+            try:
+                self.mouse_sens_row.set_value(float(self.ini.get("mouse_sensitivity", "1.00")))
+            except (ValueError, TypeError):
+                pass
+        if hasattr(self, "mouse_inv_y_row"):
+            self.mouse_inv_y_row.set_active(self.ini.get("mouse_invert_y") == "1")
+        if hasattr(self, "mouse_inv_x_row"):
+            self.mouse_inv_x_row.set_active(self.ini.get("mouse_invert_x") == "1")
+        if hasattr(self, "mouse_capture_row"):
+            self.mouse_capture_row.set_active(self.ini.get("mouse_capture") == "1")
+        if hasattr(self, "mouse_look_row"):
+            self.mouse_look_row.set_active(self.ini.get("mouse_look") == "1")
+        # FPS limit (stored in both ini and settings.json)
+        if hasattr(self, "limit_row"):
+            try:
+                self.limit_row.set_value(int(self.ini.get("fps_limit", "0")))
+            except (ValueError, TypeError):
+                pass
+        # Update dependent status displays
+        if hasattr(self, "update_upscaler_status"):
+            self.update_upscaler_status()
 
     def on_close(self, _window):
         self.store()

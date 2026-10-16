@@ -240,11 +240,12 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             const u32 size = buffer.GetSize();
             if (!buffer.Valid() || buffer.GetStride() != 16) continue;
             const auto role = Motion::ClassifyBuffer(size);
+            if (role == Motion::BufferRole::Other) continue;
+            const VAddr address = buffer.base_address;
             if (role == Motion::BufferRole::Skeleton) {
                 gated = false;
                 break;
             }
-            const VAddr address = buffer.base_address;
             if (role == Motion::BufferRole::SmallSkeleton &&
                 memory->IsValidGpuMapping(address, 0) &&
                 memory->ClampRangeSize(address, size) == size) {

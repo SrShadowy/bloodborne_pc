@@ -15,6 +15,13 @@
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+
+#ifndef UFFD_FEATURE_WP_HUGETLBFS_SHMEM
+#define UFFD_FEATURE_WP_HUGETLBFS_SHMEM (1ULL << 12)
+#endif
+#ifndef UFFD_FEATURE_WP_UNPOPULATED
+#define UFFD_FEATURE_WP_UNPOPULATED (1ULL << 13)
+#endif
 #endif
 #include <sys/mman.h>
 #include <ucontext.h>

@@ -41,13 +41,17 @@ VertexRange IndexedRange(std::span<const Index, Extent> indices, int32_t base_ve
 // (48 bytes per bone). Characters have 656+ bytes; weapons and props 2-8 bones (96-384).
 enum class BufferRole { Other, Skeleton, SmallSkeleton };
 inline BufferRole ClassifyBuffer(uint32_t size) {
-    if (size == 864 || size > 16384) {
+    if (size == 416 || size == 864 || size > 16384) {
         return BufferRole::Other;
     }
     if (size >= 640) {
-        return BufferRole::Skeleton;
+        const bool is_skeleton = (size % 48 == 0) || ((size - 32) % 48 == 0);
+        return is_skeleton ? BufferRole::Skeleton : BufferRole::Other;
     }
-    return size >= 96 && size % 48 == 0 ? BufferRole::SmallSkeleton : BufferRole::Other;
+    if (size >= 96 && size % 48 == 0) {
+        return BufferRole::SmallSkeleton;
+    }
+    return BufferRole::Other;
 }
 
 // Scanning and hashing the index list of every stored draw each frame took ~10% of the GPU
