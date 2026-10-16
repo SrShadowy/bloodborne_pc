@@ -12,7 +12,13 @@ from pathlib import Path
 
 from bbport_i18n import language
 
-PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
+if "BB_PORT_DIR" in os.environ:
+    PORT_DIR = Path(os.environ["BB_PORT_DIR"]).resolve()
+elif getattr(sys, "frozen", False):
+    exe_path = Path(sys.executable).resolve()
+    PORT_DIR = exe_path.parent.parent if exe_path.parent.name in ("launcher", "bin") else exe_path.parent
+else:
+    PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / "scripts"))
 sys.path.insert(0, str(PORT_DIR / "tools"))
 import online

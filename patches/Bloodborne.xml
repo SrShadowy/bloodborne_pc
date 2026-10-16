@@ -248,6 +248,12 @@
             <Line Type="bytes" Address="0x026170C0" Value="EB"/>
         </PatchList>
     </Metadata>
+    <Metadata Title="Bloodborne" Name="Fix Yebis Motion Blur Sample Assert" Note="Fixes Yebis GPUTexUtil_GetRecursiveSampleParameters assertion when camera rotation produces 2 samples at high frame rates." Author="BBPort" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
+        <PatchList>
+            <Line Type="bytes" Address="0x00fbc40b" Value="4183fc01"/>
+            <Line Type="bytes" Address="0x00fbc470" Value="4183fc01"/>
+        </PatchList>
+    </Metadata>
     <Metadata Title="Bloodborne" Name="Disable Motion Blur (perf increase)" Note="Disable Motion Blur constructor, which also disables the velomap render, performance increase." Author="Kyo" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
         <PatchList>
             <Line Type="bytes" Address="0x026C2549" Value="00"/>

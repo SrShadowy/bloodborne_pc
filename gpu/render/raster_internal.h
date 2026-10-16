@@ -18,6 +18,7 @@
 #include "bbport_free_check.h"
 #include "bbport_guest_memory.h"
 #include "bbport_sections.h"
+#include "bbport_settings.h"
 #include "bbport_threads.h"
 #include "bbport_timeline.h"
 #include "bbport_toggles.h"

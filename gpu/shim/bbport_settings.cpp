@@ -139,6 +139,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.cam_height = Clamp(f, 0.0f, 2.0f);
     } else if (key == "light_grid_opt") {
         v.light_grid_opt = i != 0;
+    } else if (key == "hide_hud") {
+        v.hide_hud = i != 0;
     } else if (key == "fps_limit") {
         v.fps_limit = std::max(0, i);
     } else {
@@ -456,6 +458,7 @@ void Save() {
     put("cam_distance", fixed(v.cam_distance.load(), 2));
     put("cam_height", fixed(v.cam_height.load(), 2));
     put("light_grid_opt", flag(v.light_grid_opt.load()));
+    put("hide_hud", flag(v.hide_hud.load()));
     put("frame_generation", flag(v.frame_generation));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));

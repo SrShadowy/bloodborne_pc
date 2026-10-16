@@ -67,6 +67,7 @@ def intel_cpu(cpuinfo='/proc/cpuinfo'):
 # The title's PLAY ONLINE / PLAY OFFLINE dialog: the port has no PSN, the game goes straight to the
 # main menu offline. On by default (the launcher's switch); BB_SKIP_NETWORK_CHOICE=0 shows it.
 SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
+YEBIS_BLUR_FIX='Fix Yebis Motion Blur Sample Assert'
 
 
 def skip_network_choice(env=os.environ):
@@ -374,6 +375,8 @@ def main():
         names.append(INTEL_TONEMAP)
     if skip_network_choice() and SKIP_NETWORK_CHOICE not in names:
         names.append(SKIP_NETWORK_CHOICE)
+    if YEBIS_BLUR_FIX not in names:
+        names.append(YEBIS_BLUR_FIX)
     names=validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)

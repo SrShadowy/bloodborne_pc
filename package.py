@@ -113,6 +113,7 @@ def create_start_script(package_dir):
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export BB_PORT_DIR="$HERE"
 export BB_PREBUILT=1
 
 # Configura busca de bibliotecas compartilhadas empacotadas
@@ -133,12 +134,17 @@ if [[ "${1:-}" == "--play" || "${1:-}" == "--game" ]]; then
     exec "$HERE/run.sh" "$@"
 fi
 
-# Tenta abrir o Launcher nativo GTK 4 / Libadwaita
-if python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
+# 1. Tenta abrir o Launcher standalone empacotado (GTK 4 e Libadwaita embutidos)
+if [[ -x "$HERE/launcher/bbport-launcher" ]]; then
+    exec "$HERE/launcher/bbport-launcher" "$@"
+elif [[ -x "$HERE/bin/bbport-launcher" ]]; then
+    exec "$HERE/bin/bbport-launcher" "$@"
+# 2. Fallback: Tenta abrir o Launcher via Python do sistema se GTK 4 / Libadwaita estiverem instalados
+elif python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
     exec python3 "$HERE/launcher/bbport_launcher.py" "$@"
 else
     echo "================================================================="
-    echo "Aviso: GTK 4 e/ou Libadwaita não encontrados no sistema."
+    echo "Aviso: Launcher standalone ou GTK 4/Libadwaita não encontrados."
     echo "Iniciando Bloodborne diretamente via run.sh..."
     echo "================================================================="
     exec "$HERE/run.sh" "$@"
@@ -190,7 +196,7 @@ Versão compilada e pronta para execução em distribuições Linux (x86_64).
   - **NVIDIA:** Driver oficial proprietário (versão 535+ recomendada).
   - **Intel:** Mesa ANV (Intel Arc, Xe, Iris Xe).
 - **Python 3:** Necessário para scripts de patches e carregamento.
-- **Para o Launcher (Opcional):** `python3-gi`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`.
+- **Launcher:** Totalmente standalone! Inclui GTK 4, Libadwaita e interpretador embutidos (não requer instalação de pacotes do sistema).
 
 ---
 
@@ -213,6 +219,130 @@ def copy_tree_filtered(src_dir, dst_dir, ignore_patterns=(".pyc", "__pycache__",
             src_f = Path(root) / f
             dst_f = target_sub / f
             shutil.copy2(src_f, dst_f)
+
+def ensure_pyinstaller():
+    """Locates pyinstaller or bootstraps a virtualenv with pyinstaller if missing."""
+    for candidate in [
+        shutil.which("pyinstaller"),
+        ROOT_DIR / "out" / ".venv" / "bin" / "pyinstaller",
+        Path("/tmp/test_venv/bin/pyinstaller"),
+    ]:
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
+
+    venv_dir = ROOT_DIR / "out" / ".venv"
+    venv_pyi = venv_dir / "bin" / "pyinstaller"
+    if venv_pyi.is_file():
+        return venv_pyi
+
+    venv_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        print("[*] PyInstaller not found. Bootstrapping out/.venv with system-site-packages...")
+        subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
+        subprocess.run([str(venv_dir / "bin" / "pip"), "install", "pyinstaller"], check=True)
+        return venv_pyi
+    except Exception as e:
+        print(f"[*] Note: Virtualenv creation failed ({e}). Attempting direct pip install...")
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "pyinstaller"], check=True)
+            pyi = shutil.which("pyinstaller")
+            if pyi:
+                return Path(pyi)
+        except Exception:
+            pass
+        raise
+
+def build_standalone_launcher(staging_dir, force_rebuild=False):
+    """
+    Builds a standalone executable for bbport_launcher with embedded GTK4, Libadwaita,
+    PyGObject, and Python runtime using PyInstaller.
+    """
+    cached_binary = ROOT_DIR / "out" / "bbport-launcher"
+    staging_launcher_bin = staging_dir / "launcher" / "bbport-launcher"
+
+    need_rebuild = force_rebuild or not cached_binary.is_file()
+    if not need_rebuild:
+        cached_mtime = cached_binary.stat().st_mtime
+        for check_dir in [ROOT_DIR / "launcher", ROOT_DIR / "scripts", ROOT_DIR / "tools"]:
+            if need_rebuild:
+                break
+            for root, _, files in os.walk(check_dir):
+                for f in files:
+                    if f.endswith(".py"):
+                        if (Path(root) / f).stat().st_mtime > cached_mtime:
+                            need_rebuild = True
+                            break
+                if need_rebuild:
+                    break
+
+    if not need_rebuild and cached_binary.is_file():
+        print(f"\n[+] Reusing existing compiled launcher binary: {cached_binary}")
+        staging_launcher_bin.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cached_binary, staging_launcher_bin)
+        staging_launcher_bin.chmod(0o755)
+        print(f"[✓] Standalone Launcher deployed to {staging_launcher_bin}")
+        return
+
+    print("\n[+] Building standalone GTK4/Libadwaita Launcher executable...")
+    try:
+        pyi_path = ensure_pyinstaller()
+        print(f"[*] Using PyInstaller: {pyi_path}")
+    except Exception as e:
+        print(f"[!] Warning: PyInstaller is unavailable in this environment: {e}")
+        if cached_binary.is_file():
+            print(f"[*] Falling back to cached binary: {cached_binary}")
+            staging_launcher_bin.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cached_binary, staging_launcher_bin)
+            staging_launcher_bin.chmod(0o755)
+            print(f"[✓] Standalone Launcher deployed to {staging_launcher_bin}")
+            return
+        print("[!] Proceeding without standalone launcher (package will use system Python or run.sh fallback).")
+        return
+
+    launcher_src_dir = ROOT_DIR / "launcher"
+    dist_dir = ROOT_DIR / "out" / "pyi_dist"
+    work_dir = ROOT_DIR / "out" / "pyi_work"
+    pyi_cmd = [
+        str(pyi_path),
+        "--noconfirm",
+        "--onefile",
+        "--clean",
+        "--name", "bbport-launcher",
+        "--paths", str(ROOT_DIR / "launcher"),
+        "--paths", str(ROOT_DIR / "scripts"),
+        "--paths", str(ROOT_DIR / "tools"),
+        "--hidden-import", "gi",
+        "--hidden-import", "gi.repository.Gtk",
+        "--hidden-import", "gi.repository.Adw",
+        "--hidden-import", "gi.repository.Gio",
+        "--hidden-import", "gi.repository.GLib",
+        "--hidden-import", "gi.repository.Gdk",
+        "--hidden-import", "gi.repository.Pango",
+        "--distpath", str(dist_dir),
+        "--workpath", str(work_dir),
+        "--specpath", str(work_dir),
+        str(launcher_src_dir / "bbport_launcher.py"),
+    ]
+    try:
+        run_command(pyi_cmd)
+        built_file = dist_dir / "bbport-launcher"
+        if not built_file.is_file():
+            raise RuntimeError(f"PyInstaller failed to create {built_file}")
+        shutil.copy2(built_file, cached_binary)
+        cached_binary.chmod(0o755)
+    except Exception as e:
+        print(f"[!] Warning: Failed to compile standalone launcher with PyInstaller: {e}")
+        if cached_binary.is_file():
+            print(f"[*] Falling back to cached binary: {cached_binary}")
+        else:
+            print("[!] Proceeding without standalone launcher.")
+            return
+
+    # Deploy to staging
+    staging_launcher_bin.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(cached_binary, staging_launcher_bin)
+    staging_launcher_bin.chmod(0o755)
+    print(f"[✓] Standalone Launcher deployed to {staging_launcher_bin}")
 
 def build_and_package(args):
     print("=" * 70)
@@ -341,6 +471,9 @@ def build_and_package(args):
     if (staging_dir / "launcher" / "bb-launcher.sh").exists():
         (staging_dir / "launcher" / "bb-launcher.sh").chmod(0o755)
 
+    if args.standalone_launcher:
+        build_standalone_launcher(staging_dir, force_rebuild=args.rebuild_launcher)
+
     print("[*] Copying scripts...")
     copy_tree_filtered(ROOT_DIR / "scripts", staging_dir / "scripts")
 
@@ -418,6 +551,10 @@ def main():
                         help="Do not bundle fsr4_shaders/ folder")
     parser.add_argument("--no-strip", dest="strip", action="store_false", default=True,
                         help="Do not strip debug symbols from libbbgpu.so")
+    parser.add_argument("--no-standalone-launcher", dest="standalone_launcher", action="store_false", default=True,
+                        help="Do not compile a standalone PyInstaller launcher with bundled GTK4/Libadwaita")
+    parser.add_argument("--rebuild-launcher", action="store_true", default=False,
+                        help="Force rebuilding standalone launcher executable even if cached binary is present")
     parser.add_argument("--docker", action="store_true", default=False,
                         help="Build inside an Ubuntu 22.04 Docker container for maximum Linux distribution compatibility (glibc 2.35)")
     parser.add_argument("--clean", action="store_true", default=True,

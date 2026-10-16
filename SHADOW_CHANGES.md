@@ -1088,8 +1088,57 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
    - Re-enabled `dispatch.hudlessColor` from `TemporalUpscaler::RedirectColor` (taken after all 3D post-processing, immediately prior to the first UI draw), ensuring pristine UI/subtitle isolation without optical flow tearing when rotating the camera.
 - Full architectural breakdown and mathematical formulas documented in [`docs/FRAME_GENERATION_CONTEXT.md`](file:///home/shadowy/Documentos/GitHub/BBPort/docs/FRAME_GENERATION_CONTEXT.md).
 
+---
+
+## 40. Standalone GTK4 & Libadwaita Launcher Bundling (PyInstaller)
+- Integrated PyInstaller freeze pipeline into `package.py`:
+  - Automatically compiles `launcher/bbport_launcher.py` into a standalone ELF binary `bbport-launcher` (with embedded Python 3 runtime, PyGObject, GTK 4, Libadwaita, Pango, Cairo, FreeType, HarfBuzz, and compiled GSettings schemas).
+  - Automatically detects or bootstraps a lightweight virtual environment (`out/.venv`) with `--system-site-packages` if PyInstaller is not available in system `PATH`.
+  - Added smart incremental caching: reuses `out/bbport-launcher` unless `--rebuild-launcher` is passed or launcher/scripts source files have changed.
+- Updated `launcher/bbport_config.py` and `launcher/bbport_launcher.py`:
+  - Added support for `BB_PORT_DIR` environment variable and `sys.frozen` runtime inspection for `PORT_DIR` resolution, preventing temporary directory path skew in PyInstaller `--onefile` mode.
+- Updated `start.sh` entrypoint:
+  - Exports `BB_PORT_DIR="$HERE"`.
+  - Prioritizes the bundled standalone launcher (`$HERE/launcher/bbport-launcher`), with fallback to system Python (`gi.require_version`) and finally headless direct execution (`run.sh`).
+- Updated `README_RELEASE.md` in release packages to indicate zero external dependencies needed for the visual launcher.
+
+---
+
+## 41. In-Game Photo Mode (Modo Foto), Simulation Freeze, HUD Suppression & Screenshot Engine
+- **Simulation / AI Freeze via Delta-Time (`gpu/shim/bbport_frame_rate.cpp`)**:
+  - Gated the main engine pacing loop in `FrameStep(u64 pacer)` behind `photo_pause.load()`:
+  - When active, clamps `live->dt = 0.0f`, `live->decay95 = 1.0f`, `live->decay08 = 1.0f`, `live->approach30 = 0.0f`, `live->approach10 = 0.0f`, `live->step_down = 0.0f`, `live->step_up = 0.0f`, and `live->cloth = 1.0f`.
+  - All physics bodies, character animations, boss/enemy AI scripts, blood splatters, and particle effects freeze in place instantly while the Vulkan render loop continues running smoothly at 60/120+ FPS.
+- **HUD & UI Suppression (`gpu/render/rasterizer.cpp`)**:
+  - In `Rasterizer::DrawRecord`, draws during `upscaler->InUiPhase()` are bypassed when `BbSettings::Get().hide_hud` is active, excluding display buffer presentation passes (`FrameCapture::IsDisplayBuffer`).
+  - Hides health bars, stamina meters, reticles, crosshairs, boss bars, dialogue prompts, and subtitles, leaving the full 3D composition unobstructed.
+- **Pristine Screenshot Engine (`gpu/render/presenter.cpp`)**:
+  - Gated behind atomic trigger `BbSettings::Get().request_screenshot`.
+  - Captures the swapchain image (`target`) in `Presenter::RecordPresent` immediately after post-processing/blit and **before** `BbOverlay::Render`, guaranteeing 0% ImGui overlay, menu, or FPS counter leakage.
+  - Copies swapchain image to a host-visible VMA staging buffer via `vkCmdCopyImageToBuffer` with automatic BGRA32/RGBA32 format detection.
+  - Defers asynchronous file writing via `present_scheduler.DeferPriorityOperation`: saves high-resolution PNG using SDL3 (`SDL_CreateSurfaceFrom` + `SDL_SavePNG`) to `user/screenshots/BBPort_YYYY-MM-DD_HH-MM-SS.png`.
+- **Integrated ImGui Photo Mode Section & Global Hotkeys (`gpu/shim/bbport_overlay.cpp` & `bbport_overlay_sections.cpp`)**:
+  - Dedicated **Modo Foto (Photo Mode)** section in the in-game overlay menu with bilingual/trilingual localization (PT-BR, EN, RU).
+  - Toggles for `Pausar Jogo (Congelar IA/Mundo)` and `Ocultar HUD do Jogo (F11)`.
+  - One-click buttons: `Tirar Foto (F12)`, `Abrir Pasta de Fotos` (launches system file manager via `xdg-open`), and `Restaurar Padrões de Câmera e Efeitos`.
+  - Global hotkeys: **F12** and **PrintScreen** capture clean screenshots at any time (even when overlay menu is closed); **F11** toggles HUD visibility on the fly.
+  - Enhanced `BbOverlay::SetBanner(const char* text, float duration_seconds)` with automated expiration timer (3.0s toast on screen confirming screenshot file name).
 
 
+---
 
+## 42. Fix Crash 23 on Yebis Post-Processing Assertion (`sceKernelDebugRaiseException`)
+- **Root Cause Analysis (`STOP: guest raised debug exception code=0xa0020007`)**:
+  - The game crashed with `— o jogo foi encerrado (código 23) —` from call stack `+0xbbc429 +0xc33f3c` when camera rotation motion blur calculated small sample counts (`nSamples == 2`) at high framerates / frame generation.
+  - In `GetMotionBlur_CameraRotationPerspectiveParameters`, the function checked `nSamples >= 2` and called `GPUTexUtil_GetRecursiveSampleParameters`. However, `GPUTexUtil_GetRecursiveSampleParameters` contained debug assertions asserting `nBaseSamples >= 3` (`GPUMath.cpp(3199)` and `(3210)`).
+  - The assertion invoked `libc.prx`'s `__assert`, which called `sceKernelDebugRaiseException(0xa0020007, 0)`.
+  - In `src/runtime_kernel.c`, `raise_exception` treated this API call as a fatal error and immediately called `_exit(23)`.
+- **Non-Fatal Debug Exception Handling (`src/runtime_kernel.c`)**:
+  - On retail PS4 hardware, `sceKernelDebugRaiseException` and `sceKernelDebugRaiseExceptionOnReleaseMode` are intended to trap an attached debugger; without a debugger attached, they return `0` so the game can execute its fallback recovery code paths.
+  - Removed `__attribute__((noreturn))` and `_exit(23)` from `raise_exception`.
+  - Added atomic rate-limiting (`last_log_sec`) to log warnings to `stderr` at most once per second while allowing the guest process to continue executing gracefully.
+- **Yebis Motion Blur Sample Assert Patch (`patches/Bloodborne.xml` & `scripts/patches.py`)**:
+  - Added `<Metadata Title="Bloodborne" Name="Fix Yebis Motion Blur Sample Assert">` to `patches/Bloodborne.xml`, modifying the sample count comparison at eboot offsets `0xbbc40b` and `0xbbc470` from `cmp $0x2, %r12d` to `cmp $0x1, %r12d` (`4183fc01`).
+  - Enabled the patch by default in `scripts/patches.py` (`YEBIS_BLUR_FIX`), preventing the assertion from tripping altogether during camera rotation at high framerates.
 
 

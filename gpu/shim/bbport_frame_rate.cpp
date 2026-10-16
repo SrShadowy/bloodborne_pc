@@ -18,6 +18,7 @@
 #include "common/types.h"
 #include "bbport_frame_rate.h"
 #include "bbport_guest_code.h"
+#include "bbport_settings.h"
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -64,6 +65,17 @@ Live* live = nullptr;
 
 /// The pacer at the main loop's step (rdi: it): this frame's values.
 void PS4_SYSV_ABI FrameStep(u64 pacer) {
+    if (BbSettings::Get().photo_pause.load(std::memory_order_relaxed)) {
+        live->dt = 0.0f;
+        for (float& d : live->decay95) d = 1.0f;
+        live->approach30 = 0.0f;
+        live->approach10 = 0.0f;
+        live->step_down = 0.0f;
+        live->step_up = 0.0f;
+        live->decay08 = 1.0f;
+        live->cloth = 1.0f;
+        return;
+    }
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
     float dt = std::clamp(std::isfinite(measured) ? measured : Frame30, live->shortest, Frame30);
     // BB_FRAME_DT_SMOOTH=a (diagnostics, 0 < a < 1): the step follows the measured frame time by

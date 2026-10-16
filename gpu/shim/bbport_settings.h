@@ -155,6 +155,11 @@ struct Values {
     std::atomic<float> cam_height{1.0f};
     std::atomic<bool> light_grid_opt{false};
 
+    /// Photo mode
+    std::atomic<bool> photo_pause{false};
+    std::atomic<bool> hide_hud{false};
+    std::atomic<bool> request_screenshot{false};
+
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
     int startup_upscaler = UpscalerFsr3;

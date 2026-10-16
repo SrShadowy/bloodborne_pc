@@ -57,6 +57,7 @@ int main() {
     s.cam_distance = 1.40f;
     s.cam_height = 1.10f;
     s.light_grid_opt = false;
+    s.hide_hud = true;
     BbSettings::Save();
 
     s.raw_mouse_camera = true;
@@ -65,23 +66,24 @@ int main() {
     s.vignette = true;
     s.fov_scale = 1.0f;
     s.light_grid_opt = true;
+    s.hide_hud = false;
     BbSettings::Load();
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
-    assert(!s.raw_mouse_camera && !s.mouse_hold_auto_rotate && !s.light_grid_opt && !s.vignette);
+    assert(!s.raw_mouse_camera && !s.mouse_hold_auto_rotate && !s.light_grid_opt && !s.vignette && s.hide_hud);
     assert(s.bloom_scale == 1.35f && s.color_saturation == 1.15f);
     assert(s.ao_strength == 1.50f && s.shadow_distance == 2.00f && s.fog_opacity == 0.75f);
     assert(s.fov_scale == 1.20f && s.cam_distance == 1.40f && s.cam_height == 1.10f);
     assert(saved.find("menu_language=") == std::string::npos); // only started with it (#134)
 
     // A language chosen in the menu is saved and wins over the launcher's from then on.
-    s.menu_language = BbSettings::MenuLanguage::Russian;
+    s.menu_language = static_cast<int>(BbSettings::MenuLanguage::Russian);
     s.menu_language_chosen = true;
     BbSettings::Save();
     assert(Read(path).find("menu_language=ru\n") != std::string::npos);
     setenv("BB_MENU_LANGUAGE", "en", 1);
     s.menu_language_chosen = false;
     BbSettings::Load();
-    assert(s.menu_language == BbSettings::MenuLanguage::Russian && s.menu_language_chosen);
+    assert(s.menu_language.load() == static_cast<int>(BbSettings::MenuLanguage::Russian) && s.menu_language_chosen);
     unlink(path);
     std::puts("PASS: settings save keeps other keys, menu position, live graphics/camera/mouse settings and menu language");
 }

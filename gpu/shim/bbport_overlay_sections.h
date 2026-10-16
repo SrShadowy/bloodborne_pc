@@ -4,6 +4,9 @@
 
 namespace BbOverlaySections {
 
+// Renders the Photo Mode controls (freeze world, hide HUD, screenshot, quick reset).
+void RenderPhotoModeSection(BbSettings::Values& s, int lang, bool& dirty);
+
 // Renders the live YEBIS post-processing, SSAO strength, shadow cascade distance, and fog sliders.
 void RenderPostProcessingAndLightingSection(BbSettings::Values& s, int lang, bool& dirty);
 

@@ -165,23 +165,29 @@ static ABI __attribute__((noreturn)) void hard_exit(int status) {
     fflush(stdout);
     _exit(status);
 }
-static ABI __attribute__((noreturn)) void raise_exception(uint32_t code,uint64_t argument) {
-    fprintf(stderr,"STOP: guest raised debug exception code=0x%x argument=0x%llx\n",code,(unsigned long long)argument);
-    /* Who raised it: the caller and the game's return addresses further up this thread's stack. */
-    const uint64_t text_lo=0x800000000ull, text_hi=0x800000000ull+0x50d96dcull;
-    const uint64_t caller=(uint64_t)__builtin_return_address(0);
-    fprintf(stderr,"STOP: called from %s0x%llx; game code up the stack:",
-            caller>=text_lo && caller<text_hi ? "+" : "host ",
-            (unsigned long long)(caller>=text_lo && caller<text_hi ? caller-text_lo : caller));
-    const uint64_t *stack=(const uint64_t *)__builtin_frame_address(0);
-    for (int i=0,found=0;i<256 && found<12;++i)
-        if (stack[i]>=text_lo && stack[i]<text_hi) { fprintf(stderr," +0x%llx",(unsigned long long)(stack[i]-text_lo)); ++found; }
-    fprintf(stderr,"\n");
-    runtime_report();
-    /* Other threads still run (the game's network threads among them): no static destructors
-     * under them. */
-    fflush(NULL);
-    _exit(23);
+static ABI int32_t raise_exception(uint32_t code,uint64_t argument) {
+    /* On retail PS4 hardware, sceKernelDebugRaiseException / sceKernelDebugRaiseExceptionOnReleaseMode
+     * notify an attached debugger (e.g. from __assert). Without a debugger attached,
+     * the call returns without terminating the process. Terminating here caused hard aborts (exit 23)
+     * on recoverable assertions left in production middleware (such as Yebis post-processing
+     * camera rotation motion blur calculating nBaseSamples < 3). */
+    static _Atomic uint64_t last_log_sec;
+    uint64_t now = (uint64_t)time(NULL);
+    uint64_t prev = atomic_load_explicit(&last_log_sec, memory_order_relaxed);
+    if (now != prev && atomic_compare_exchange_strong_explicit(&last_log_sec, &prev, now, memory_order_relaxed, memory_order_relaxed)) {
+        fprintf(stderr,"Runtime: guest raised debug exception code=0x%x argument=0x%llx (non-fatal, continuing)\n",code,(unsigned long long)argument);
+        const uint64_t text_lo=0x800000000ull, text_hi=0x800000000ull+0x50d96dcull;
+        const uint64_t caller=(uint64_t)__builtin_return_address(0);
+        fprintf(stderr,"Runtime: called from %s0x%llx; game code up the stack:",
+                caller>=text_lo && caller<text_hi ? "+" : "host ",
+                (unsigned long long)(caller>=text_lo && caller<text_hi ? caller-text_lo : caller));
+        const uint64_t *stack=(const uint64_t *)__builtin_frame_address(0);
+        for (int i=0,found=0;i<256 && found<12;++i)
+            if (stack[i]>=text_lo && stack[i]<text_hi) { fprintf(stderr," +0x%llx",(unsigned long long)(stack[i]-text_lo)); ++found; }
+        fprintf(stderr,"\n");
+        fflush(stderr);
+    }
+    return 0;
 }
 static ABI int32_t print_backtrace(void) {
     fputs("Runtime: guest requested a backtrace (not available)\n",stderr);

@@ -321,7 +321,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         .program = {vs_info.ProgramBase(), ps_info ? ps_info->ProgramBase() : 0},
         .count = {num_indices, num_instances, 0},
     };
+    const bool hide_ui_draw = BbSettings::Get().hide_hud.load(std::memory_order_relaxed) &&
+                              upscaler->Enabled() && upscaler->InUiPhase() &&
+                              !(regs.color_buffers[0] && FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address()));
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
+        if (hide_ui_draw) {
+            return;
+        }
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
         if (is_indexed) {
             cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex), first_instance);
@@ -329,7 +335,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             cmdbuf.draw(num_indices, num_instances, first_vertex, first_instance);
         }
     });
-    if (FrameCapture::Active()) {
+    if (!hide_ui_draw && FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
         if (const auto& bc = regs.blend_control[0]; bc.enable && regs.color_buffers[0]) {

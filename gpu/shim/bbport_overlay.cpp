@@ -71,6 +71,7 @@ std::atomic<bool> prompt_active{false};
 std::mutex banner_mutex;
 std::string banner_text;
 std::atomic<bool> banner_active{false};
+std::chrono::steady_clock::time_point banner_expire{};
 std::string prompt_title, prompt_text;
 
 // Present rate for the FPS counter: original frames vs total presented frames.
@@ -1166,6 +1167,7 @@ void RenderGraphicsSettings() {
     const int lang = s.menu_language.load();
 
     RenderLanguageSection(s, lang);
+    BbOverlaySections::RenderPhotoModeSection(s, lang, dirty);
     ToyPadSection();
     RenderUpscalerSection(s, lang);
     RenderPresetSection(s, lang);
@@ -1313,6 +1315,16 @@ bool HandleEvent(const SDL_Event& event) {
             SetOpen(event.key.key == SDLK_INSERT ? !is_open : false);
             return true;
         }
+        if (down && !event.key.repeat && (event.key.key == SDLK_F12 || event.key.key == SDLK_PRINTSCREEN)) {
+            BbSettings::Get().request_screenshot.store(true, std::memory_order_relaxed);
+            return true;
+        }
+        if (down && !event.key.repeat && event.key.key == SDLK_F11) {
+            bool cur = BbSettings::Get().hide_hud.load(std::memory_order_relaxed);
+            BbSettings::Get().hide_hud.store(!cur, std::memory_order_relaxed);
+            SetBanner(!cur ? "HUD: Oculto (Hidden)" : "HUD: Visivel (Visible)", 2.0f);
+            return true;
+        }
         if (!is_open) {
             return false;
         }
@@ -1397,15 +1409,28 @@ bool HandleEvent(const SDL_Event& event) {
     return false;
 }
 
-void SetBanner(const char* text) {
+void SetBanner(const char* text, float duration_seconds) {
     {
         std::scoped_lock lock{banner_mutex};
         banner_text = text ? text : "";
+        if (duration_seconds > 0.0f) {
+            banner_expire = std::chrono::steady_clock::now() +
+                            std::chrono::milliseconds(int(duration_seconds * 1000.0f));
+        } else {
+            banner_expire = {};
+        }
     }
     banner_active = text != nullptr && text[0] != 0;
 }
 
 bool Visible() {
+    if (banner_active.load(std::memory_order_relaxed)) {
+        std::scoped_lock lock{banner_mutex};
+        if (banner_expire.time_since_epoch().count() != 0 &&
+            std::chrono::steady_clock::now() >= banner_expire) {
+            banner_active = false;
+        }
+    }
     return initialized && (menu_open || prompt_active || banner_active ||
                            BbSettings::Get().show_fps || BbShaderTracker::IsCompiling());
 }
@@ -1506,16 +1531,25 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
     }
     if (banner_active) {
         std::string text;
+        bool expired = false;
         {
             std::scoped_lock banner_lock{banner_mutex};
-            text = banner_text;
+            if (banner_expire.time_since_epoch().count() != 0 && now >= banner_expire) {
+                expired = true;
+            } else {
+                text = banner_text;
+            }
         }
-        const ImVec2 size = ImGui::CalcTextSize(text.c_str());
-        auto* draw = ImGui::GetForegroundDrawList();
-        const ImVec2 at{(io.DisplaySize.x - size.x) * 0.5f, io.DisplaySize.y * 0.82f};
-        draw->AddRectFilled({at.x - 24.0f, at.y - 12.0f}, {at.x + size.x + 24.0f, at.y + size.y + 12.0f},
-                            IM_COL32(0, 0, 0, 170), 6.0f);
-        draw->AddText(at, IM_COL32(230, 220, 200, 255), text.c_str());
+        if (expired) {
+            banner_active = false;
+        } else if (!text.empty()) {
+            const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+            auto* draw = ImGui::GetForegroundDrawList();
+            const ImVec2 at{(io.DisplaySize.x - size.x) * 0.5f, io.DisplaySize.y * 0.82f};
+            draw->AddRectFilled({at.x - 24.0f, at.y - 12.0f}, {at.x + size.x + 24.0f, at.y + size.y + 12.0f},
+                                IM_COL32(0, 0, 0, 170), 6.0f);
+            draw->AddText(at, IM_COL32(230, 220, 200, 255), text.c_str());
+        }
     }
     ImGui::Render();
 
