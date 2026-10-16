@@ -25,9 +25,7 @@ public:
     ObjectMotion(const Instance& instance, Scheduler& scheduler);
     ~ObjectMotion();
 
-    [[nodiscard]] bool Enabled() const noexcept {
-        return enabled;
-    }
+    [[nodiscard]] bool Enabled() const noexcept;
 
     using DrawInfo = Motion::Draw;
     u32 PrepareDraw(const DrawInfo& draw);
