@@ -49,13 +49,15 @@ bool CreateBuffer(const Instance& instance, vk::DeviceSize size, bool host, vk::
 
 } // namespace
 
-bool ObjectMotion::Enabled() const noexcept {
-    const auto& s = BbSettings::Get();
-    return enabled && (s.object_motion || s.frame_generation);
-}
-
 ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
+    // Pipeline selection limits the extra attachment and vertex stores to likely
+    // animated draws. A setting or environment override can still disable the path.
+    if (!BbSettings::Get().object_motion ||
+        BbSettings::Get().upscaler == BbSettings::UpscalerOff) {
+        std::puts("Object motion: off (enable in menu or BB_OBJECT_MOTION=1)");
+        return;
+    }
     const auto& features = instance.GetPhysicalDevice().getFeatures();
     if (!features.vertexPipelineStoresAndAtomics) {
         std::printf("Object motion: vertexPipelineStoresAndAtomics unsupported, off\n");
@@ -75,8 +77,7 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     Shader::MotionVectors::params_address = params_address;
     Shader::MotionVectors::positions_address = positions_address;
     enabled = true;
-    std::printf("Object motion: ready (%u vertices per frame, %s)\n", PositionsPerFrame,
-                Enabled() ? "active" : "standby");
+    std::printf("Object motion: on (%u vertices per frame)\n", PositionsPerFrame);
 }
 
 ObjectMotion::~ObjectMotion() {
@@ -139,7 +140,7 @@ void ObjectMotion::OnFrameStart() {
 }
 
 u32 ObjectMotion::PrepareDraw(const DrawInfo& draw) {
-    if (!Enabled() || BbToggle::Disabled(1u << 29) || params_used >= ParamsPerFrame) {
+    if (!enabled || BbToggle::Disabled(1u << 29) || params_used >= ParamsPerFrame) {
         return 0;
     }
     const auto allocation = history.Prepare(draw);
