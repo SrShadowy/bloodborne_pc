@@ -966,6 +966,14 @@ static const char* OverlayGetClipboardText(ImGuiContext*) {
 static void OverlaySetClipboardText(ImGuiContext*, const char* text) {
     if (text) {
         SDL_SetClipboardText(text);
+        SDL_SetPrimarySelectionText(text);
+#if !defined(_WIN32)
+        FILE* pipe = popen("wl-copy 2>/dev/null || xclip -selection clipboard 2>/dev/null", "w");
+        if (pipe) {
+            fputs(text, pipe);
+            pclose(pipe);
+        }
+#endif
     }
 }
 

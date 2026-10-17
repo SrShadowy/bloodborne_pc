@@ -1488,5 +1488,103 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
   - Adicionados todos os diretórios e subdiretórios de `extra/` (`extra/core/camera`, `extra/core/engine_fixes`, `extra/core/frame_pacing`, `extra/core/shader_tracker`, `extra/core/screenshot`, `extra/ui/scaleform`, `extra/ui/keyboard`, `extra/management/hud`, etc.) ao `target_include_directories(bbgpu PRIVATE ...)`.
   - Atualizados targets de testes (`settings-test`, `bbt-table-test`, `assembler-pattern-test`, `upscaler-support-test`) para referenciar os novos caminhos em `extra/`.
 
+---
+
+## 55. Modernização do Desassemblador x86-64 e Visualizador de Memória: Resolução de Símbolos, Seleção e Cópia Interativa, Inspeção de Registradores e Modos de Tela Cheia
+- **Solicitações do Usuário**:
+  1. *"no disassembler você consegue pegar os simbolos? quando vc faz um reveser você pega os simboloos das funções como ce faz isso e é possivel por no dissasembler no lugar do endereço puro? (uma check box para mostrar o simbolo e desmarcar para por aaparecer so o endereço)"*
+  2. *"quero melhorar essa parte no geral, fazer algo para selecionar linhas copiar, seguir um registrador, por ocultar a tela do hex e deixa o espaço todo para o disassembler colocar simbolos, colorir a linha marcada etc"*
+  3. *"pode processeguir não esqueça também de incluir no md de organização my as novas ideias de arquitetura simples de inclusão e separado do original para facilitar o merge e afins, e aproveita segue essa ideia nessa implementação nova"*
+
+- **1. Resolução e Anotação de Símbolos em Tempo Real (`Debugger::SymbolManager`)**:
+  - **Módulo Dedicado (`extra/core/debugger/symbol_manager.{h,cpp}`)**:
+    - Catálogo nativo embutido de **45+ símbolos essenciais do retail Bloodborne 1.09 (CUSA03173)**, mapeados para a base de imagem de 64 bits (`0x800000000`):
+      - Gerenciadores globais: `GameDataMan` (`0x80553B130`), `CurrentMapList` (`0x80553B148`), `OnlineState` (`0x8056C7048`), `GlobalState` (`0x805556678`), `BossGauge` (`0x805562878`), `SprjLuaEventMan` (`0x80553B0C8`), `MultiPlayMan` (`0x805540230`).
+      - Core de engine e hooks: `PlayTimeAdd` (`0x8019419D6`), `TaskScheduler_Alloc` (`0x802199310`), `ReleaseCheck` (`0x800BB5FB0`), `UseItemNativeApply` (`0x8018F9720`), `CamLook` (`0x801338660`), `CamFov` (`0x801339120`), `StageTransition` (`0x8013CDE30`), `WorldChrMan_RemoteCleanup` (`0x8015BED10`).
+      - Rede e matchmaking: `BeckoningAreaComparison`, `ResponderSearchAreaRange`, `SosStatusUpdate`, `SummonBuildEntry`, `CrossMapGuestHandoff`, etc.
+    - Suporte a carregamento dinâmico via arquivos externos (`symbols.csv`, `symbols.map`, `symbols.txt`, `bloodborne.sym`) permitindo expansão ilimitada da base de símbolos pelo usuário sem recompilar o binário.
+  - **Controle por Checkbox (`[X] Símbolos`)**:
+    - Adicionado checkbox no topo da visualização do desassemblador (`ViewDisasm`), permitindo alternar instantaneamente entre a exibição de endereços puros e nomes de símbolos.
+  - **Anotação Dinâmica de Operandos**:
+    - A função `AnnotateInstruction` inspeciona referências a endereços hexadecimais em instruções (`lea`, `mov`, `call`, `jmp`, etc.) e anexa automaticamente o símbolo correspondente, e.g.:
+      `lea rax, [0x000000080553B130] <GameDataMan>`
+      `call 0x0000000802199310 <TaskScheduler_Alloc>`
+  - **Coluna de Endereço com Cores e Tooltips**:
+    - Símbolos exatos de ponto de entrada de funções/variáveis são destacados em **âmbar dourado** (`<GameDataMan>`).
+    - Tooltip ao passar o cursor sobre qualquer endereço exibe o nome do símbolo completo, deslocamento relativo (`SymbolName + 0xOffset`) e o endereço de 64 bits.
+
+- **2. Seleção Interativa de Linhas e Realce Visual**:
+  - Clique em qualquer linha (com suporte a `SpanAllColumns`) registra a seleção ativa (`s_selected_disasm_addr`).
+  - Paleta de cores para identificação rápida:
+    - **Linha do RIP (Ponto de Execução Atual)**: Fundo vermelho escuro `ImColor(80, 20, 20, 200)` com prefixo `=> ` e texto avermelhado.
+    - **Linha Selecionada pelo Usuário**: Fundo **Royal Blue** vibrante `ImColor(25, 75, 140, 210)` com prefixo `> ` e texto em ciano brilhante (`ImVec4(0.4f, 1.0f, 1.0f, 1.0f)`).
+    - **Linha com Bytes Modificados / Patcheados**: Fundo verde esmeralda `ImColor(20, 60, 40, 180)` com prefixo `* ` e texto verde claro.
+
+- **3. Atalhos de Teclado e Cópia com 1 Clique (`Ctrl+C`)**:
+  - Quando a tabela ou janela de desassemblagem está em foco, pressionar `Ctrl+C` copia instantaneamente a linha selecionada formatada para a área de transferência do sistema operacional (`ImGui::SetClipboardText` / `SDL_SetClipboardText`).
+  - Menu de contexto (botão direito) oferece opções pontuais:
+    - `Copiar Endereço (Ctrl+C)`
+    - `Copiar Instrução`
+    - `Copiar Bytes Hex`
+    - `Copiar Linha Completa` (endereço, bytes e mnemônico formatados)
+
+- **4. Inspeção e Navegação de Registradores e Alvos de Memória**:
+  - **Seguir Alvos da Instrução**:
+    - O menu de contexto detecta referências a endereços na instrução atual e oferece atalhos para:
+      - `Seguir Alvo no Hex (0x%llx <Símbolo>)`
+      - `Seguir Alvo no Disasm (0x%llx <Símbolo>)`
+  - **Seguir Registradores da CPU (`RAX`, `RBX`, `RCX`, etc.)**:
+    - Se houver um snapshot válido de registradores capturado por um breakpoint (`bp.GetLastRegisters()`), o menu de contexto disponibiliza o submenu:
+      `Seguir Registrador...`
+      Exibindo em tempo real os valores de `RAX`, `RBX`, `RCX`, `RDX`, `RSI`, `RDI`, `RBP`, `RSP`, `R8` a `R15` e `RIP` com símbolos correspondentes, permitindo pular com 1 clique para o ponteiro no Hex ou Disassembler.
+
+- **5. Modos de Visualização e Tela Cheia no Memory Viewer (`ViewMemViewer`)**:
+  - Adicionado seletor de modo na barra superior da janela do Memory Viewer:
+    - `[Dividido]`: Exibição simultânea de Desassemblador e Hex Dump (50% / 50%).
+    - `[Apenas Disasm]`: Oculta completamente o dump hexadecimal e estende a tabela do desassemblador para **100% da altura da janela** (`avail_y - 30.0f`).
+    - `[Apenas Hex]`: Oculta o desassemblador e concede 100% da altura para o grid hexadecimal.
+  - O buffer de decodificação foi expandido de 256 para **512 bytes**, permitindo que o desassemblador em tela cheia exiba até **60 instruções contínuas** sem truncamento.
+
+- **6. Arquitetura Modular e Isolamento para Merges Limpos**:
+  - Toda a funcionalidade foi construída inteiramente na pasta `extra/` (`extra/core/debugger/symbol_manager.{h,cpp}`, `extra/ui/views/view_disasm.{h,cpp}`, `extra/ui/views/view_memviewer.{h,cpp}`).
+  - Não há acoplamento invasivo ou modificações em fontes originais do upstream do shadPS4, permitindo atualizar o projeto com versões mais recentes do upstream através de `git merge` sem conflitos.
+
+---
+
+## 56. Correção do Botão "Copiar Regs" (Linux Wayland), Interatividade por Registrador e Roadmap Priorizado do Memory Viewer
+- **Solicitações do Usuário**:
+  1. *"o botão n ta funcionando (copiar regs)"*
+  2. *"e as ideias de melhoria seria algo mais assim também: não precisamos aplicar tudo de uma vez, faz uma ordem de prioridades [Roadmap Memory Viewer]"*
+
+- **1. Diagnóstico e Correção da Área de Transferência (Linux Wayland/X11)**:
+  - **Causa Raiz**: O usuário utiliza sessão Wayland (`XDG_SESSION_TYPE=wayland`, compositor Wayland). No Wayland e XWayland, chamadas padrão de `SDL_SetClipboardText()` disparadas de threads secundárias (como a thread de renderização Vulkan do overlay) são rejeitadas pelos compositores Wayland se não houver um evento ativo de foco do seat. Além disso, o botão não fornecia nenhum feedback visual na interface, parecendo inerte.
+  - **Correções Aplicadas**:
+    - **Pipeline Robusto Multi-Camada de Clipboard (`SetClipboardSafe`)**:
+      1. `ImGui::SetClipboardText(text)` (buffer interno do ImGui).
+      2. `SDL_SetClipboardText(text)` (buffer padrão SDL3).
+      3. `SDL_SetPrimarySelectionText(text)` (buffer de seleção primária do Linux X11/Wayland).
+      4. Pipe direto com ferramentas nativas do sistema (`popen("wl-copy 2>/dev/null || xclip -selection clipboard 2>/dev/null", "w")`), garantindo que o texto vá instantaneamente para o clipboard da área de trabalho do usuário sob Wayland e X11.
+    - Integrado também em `gpu/shim/bbport_overlay.cpp` (`OverlaySetClipboardText`), beneficiando todas as ações de cópia do overlay.
+  - **Feedback Visual Instantâneo no Botão**:
+    - Ao clicar em `[Copiar Regs]`, o botão muda imediatamente para a cor verde e exibe `[Copiado!]` por 1.5 segundos (`ImGui::GetTime()`).
+    - Exibe notificação de status no rodapé: `"Registradores copiados para a área de transferência"`.
+
+- **2. Interatividade Contextual para Cada Registrador Individual**:
+  - Cada célula da tabela de registradores (`RAX`, `RBX`, `RCX`, `RDX`, `RSI`, `RDI`, `RBP`, `RSP`, `R8`-`R15`, `RIP`) agora é um item interativo com menu de contexto (botão direito):
+    - `Copiar Valor` (copia apenas o valor hex daquele registrador específico via pipeline seguro).
+    - `Seguir na Visão Hex` (se o valor for um ponteiro `>= 0x10000`, pula diretamente para ele no Hex Viewer).
+    - `Seguir no Desassemblador` (se for código/ponteiro, abre o endereço imediatamente no desassemblador).
+    - Tooltip ao passar o cursor indicando o valor e opções de navegação.
+
+- **3. Estruturação do Roadmap de Melhorias em Fases Prioritárias**:
+  - Organizado o plano em 5 fases lógicas seguindo as diretrizes do `MyGUIDELINES.md`:
+    - **Fase 1 (Segurança de Patches, Undo e Histórico de Navegação)**: Validação estrita de bytes originais antes de gravar, verificação de alinhamento com Zydis (evitar instrução parcial), pilha de Undo/Redo (`Ctrl+Z`), histórico de navegação `<` e `>` no Disasm/Hex e Bookmarks de endereços.
+    - **Fase 2 (Destaque de Registradores Modificados & Data Inspector)**: Destacar em cor vibrante os registradores que mudaram de valor entre um hit e outro; Data Inspector no Hex Editor (int8..64, float, double, ASCII, ponteiros); syntax highlighting por tipo de mnemônico (`jmp`/`jcc`, `call`, `ret`).
+    - **Fase 3 (Watchlist com Cadeias de Ponteiros & Snapshots de Memória)**: Suporte a ponteiros multinível `[[Base + Off1] + Off2]`; comparação de snapshots de blocos de memória (antes/depois).
+    - **Fase 4 (Controle de Execução & Breakpoints Condicionais)**: Pausa de thread, Step Into, Step Over; breakpoints condicionais (`RAX == X`).
+    - **Fase 5 (Mapa de Memória & Scanners Avançados)**: Visualizador de regiões de memória (`/proc/self/maps`, `.text`, `.data`, heap); Signature scanner com curingas (`??`).
+
+
+
 
 

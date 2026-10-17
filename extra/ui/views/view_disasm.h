@@ -16,6 +16,10 @@ public:
     static bool RestoreInstruction(uintptr_t addr);
     static bool NopInstruction(uintptr_t addr);
     static bool HasPatch(uintptr_t addr);
+    static uintptr_t GetSelectedAddress();
+    static void SetSelectedAddress(uintptr_t addr);
+    static bool GetShowSymbols();
+    static void SetShowSymbols(bool show);
     static void ApplyPatch(uintptr_t addr, const std::vector<uint8_t>& new_bytes, const std::vector<uint8_t>& orig_bytes);
 };
 

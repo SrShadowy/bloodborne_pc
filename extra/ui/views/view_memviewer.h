@@ -5,6 +5,12 @@
 
 namespace UI {
 
+enum class MemViewerMode {
+    Split = 0,
+    DisasmOnly = 1,
+    HexOnly = 2,
+};
+
 class ViewMemViewer {
 public:
     static bool IsOpen();
@@ -13,6 +19,8 @@ public:
     static void Render();
     static void NavigateHex(uintptr_t addr);
     static void NavigateDisasm(uintptr_t addr);
+    static MemViewerMode GetMode();
+    static void SetMode(MemViewerMode mode);
 };
 
 } // namespace UI
