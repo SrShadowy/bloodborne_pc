@@ -17,7 +17,7 @@ namespace UI {
 
 static char value_input[128] = "1";
 static int selected_type = 2; // Default u32
-static int selected_scope = 0; // Default ExecutableOnly
+static int selected_scope = 1; // Default GuestMemory (PS4 Heap)
 static int selected_comp = 0; // Default Exact
 
 void TabScanner::Render() {
@@ -175,6 +175,13 @@ void TabScanner::Render() {
     ImGui::SameLine();
     ImGui::TextDisabled("(%zu %s)", count, L("matches", "encontrados", "найдено"));
     ImGui::Separator();
+    if (count == 0 && !scanner.IsScanning() && selected_scope == 0) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.35f, 1.0f), "%s",
+                           L("Tip: Dynamic variables (HP, Vials, Echoes) are located in 'Guest Memory (PS4 Heap)'.",
+                             "Dica: Variaveis dinamicas (HP, Vials, Ecos) ficam em 'Memoria Guest (Heap PS4)'.",
+                             "Подсказка: Динамические данные (HP, склянки, отголоски) находятся в 'Памяти PS4 (Heap)'."));
+    }
 
     if (count > 0) {
         static int current_page = 0;

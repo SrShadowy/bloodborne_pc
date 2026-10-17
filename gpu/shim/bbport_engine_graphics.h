@@ -1,10 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include <cstdint>
-
-namespace BbEngineGraphics {
-
-// Installs live post-processing, lighting, shadow, fog, LOD, and 4x4 light grid hooks.
-void PatchImage(unsigned char* image, std::uint64_t size);
-
-} // namespace BbEngineGraphics
+#include "extra/core/engine_fixes/bbport_engine_graphics.h"

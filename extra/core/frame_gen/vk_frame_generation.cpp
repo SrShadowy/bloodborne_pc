@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "upscale/vk_frame_generation.h"
+#include "vk_frame_generation.h"
 #include "bbport_toggles.h"
 
 #include <atomic>

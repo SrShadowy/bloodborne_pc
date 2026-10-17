@@ -447,6 +447,10 @@ extern "C" uint32_t bbgpu_menu_pointer_step_pad(uint32_t current_buttons, uint8_
     return BbMenuPointer::StepPad(current_buttons, lx, ly);
 }
 
+extern "C" int bbgpu_get_prompt_layout(void) {
+    return BbSettings::Get().prompt_layout.load();
+}
+
 extern "C" int bbgpu_text_input_begin(const char* initial, const char* prompt) {
     if (!g_window) return 0;
     g_window->BeginTextInput(initial ? initial : "", prompt ? prompt : "Text");

@@ -28,6 +28,7 @@ int runtime_pad_prompt(const char* name, int prefer_mouse, char* label, int size
 unsigned runtime_pad_prompt_generation(void);
 int runtime_pad_prompt_device(void);
 int runtime_pad_mouse_look(void);
+__attribute__((weak)) int runtime_pad_is_nintendo(void);
 // bbport_overlay.cpp: DejaVu Sans, embedded.
 extern const unsigned char bb_font_ttf[];
 }
@@ -436,18 +437,35 @@ void Mouse(Canvas& c, std::string_view button) {
     }
 }
 
-/// A round button of another gamepad: A B X Y in their colours, else its name (LS, RS) or sign
-/// (Menu, View).
+/// A round button of another gamepad: A B X Y in their colours (or monochrome for Nintendo),
+/// else its name (LS, RS) or sign (Menu, View, +, -).
 void Round(Canvas& c, std::string_view label, bool face) {
     constexpr float cx = 64, cy = 64, radius = 56, stroke = 5;
     Plate(c, stroke, [&](float x, float y) { return Circle(x, y, cx, cy, radius); });
     if (face) {
-        const Color ink = label == "A"   ? Color{0.40f, 0.76f, 0.30f}
-                          : label == "B" ? Color{0.88f, 0.27f, 0.23f}
-                          : label == "X" ? Color{0.27f, 0.55f, 0.92f}
-                          : label == "Y" ? Color{0.95f, 0.78f, 0.18f}
-                                         : Ink;
+        const bool is_nintendo = runtime_pad_is_nintendo && runtime_pad_is_nintendo();
+        Color ink;
+        if (is_nintendo) {
+            ink = Ink; // Clean monochrome white lettering for Nintendo Switch
+        } else {
+            ink = label == "A"   ? Color{0.40f, 0.76f, 0.30f}
+                : label == "B"   ? Color{0.88f, 0.27f, 0.23f}
+                : label == "X"   ? Color{0.27f, 0.55f, 0.92f}
+                : label == "Y"   ? Color{0.95f, 0.78f, 0.18f}
+                                 : Ink;
+        }
         Text(c, label, cx, cy, 70, 58, ink);
+        return;
+    }
+    if (label == "+") {
+        // Nintendo Plus button: clean horizontal and vertical bars
+        c.Paint(Ink, [&](float x, float y) { return Cover(Segment(x, y, 46.0f, 64.0f, 82.0f, 64.0f, 4.5f)); });
+        c.Paint(Ink, [&](float x, float y) { return Cover(Segment(x, y, 64.0f, 46.0f, 64.0f, 82.0f, 4.5f)); });
+        return;
+    }
+    if (label == "-") {
+        // Nintendo Minus button: clean horizontal bar
+        c.Paint(Ink, [&](float x, float y) { return Cover(Segment(x, y, 48.0f, 64.0f, 80.0f, 64.0f, 4.5f)); });
         return;
     }
     if (label == "Menu") {
@@ -627,9 +645,11 @@ bool Update(u32 generation, Set& out) {
             canvas.Store(out.pixels.data() + i * IconSize * IconSize);
         }
     }
-    static const char* const devices[] = {"the game's (PlayStation pad)", "the gamepad's", "the keyboard's and mouse's"};
     const int device = runtime_pad_prompt_device();
-    std::printf("Button prompts: %s\n", device >= 0 && device <= 2 ? devices[device] : "?");
+    const bool is_nintendo = runtime_pad_is_nintendo && runtime_pad_is_nintendo();
+    std::printf("Button prompts: %s\n", device == 0 ? "the game's (PlayStation pad)" :
+                                       device == 1 ? (is_nintendo ? "the gamepad's (Nintendo layout)" : "the gamepad's (Xbox layout)") :
+                                       device == 2 ? "the keyboard's and mouse's" : "?");
     return true;
 }
 

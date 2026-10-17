@@ -1337,4 +1337,156 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
       - Discord RPC: includes `• Mortes: X` when `discord_rpc_show_deaths` is enabled.
       - Dedicated ImGui Window: simple checkbox `Exibir Contador de Mortes` and single button `[ Resetar Contador de Mortes ]`.
 
+---
+
+## 52. Dynamic Controller Layout Detection & In-Game Prompts Customization (PlayStation, Xbox, Nintendo Switch, Keyboard/Mouse)
+- **User Request**: *"sabe o sistema que muda o layout dos icones do controle baseado no keyboard e controller que ta agora? consegue detectar e mudar de acordo com os controles especifico tipo nintendo layout e xbox layout e restaura o padrão se for playstation layout?"*
+- **Architecture & Implementation Details**:
+  - **Enhanced Hardware Detection (`src/runtime_pad.c`)**:
+    - **Vendor ID Validation (`SDL_GetGamepadVendor`)**:
+      - `0x054c`: Sony Interactive Entertainment (PlayStation 3/4/5, DualShock, DualSense).
+      - `0x057e`: Nintendo Co., Ltd. (Switch Pro Controller, Joy-Cons, NES/SNES/N64/GameCube pads).
+      - `0x045e`: Microsoft Corp. (Xbox 360, Xbox One, Xbox Series X/S, standard XInput devices).
+    - **Fallback Substring Name Matching (`SDL_GetGamepadName`)**:
+      - Handles third-party controllers, generic Bluetooth mappings, and Steam Input emulations where `SDL_GamepadType` may report as `STANDARD` or `UNKNOWN`.
+      - PlayStation: case-insensitive check for `"Sony"`, `"PlayStation"`, `"DualShock"`, `"DualSense"`, `"PS3"`, `"PS4"`, `"PS5"`.
+      - Nintendo: case-insensitive check for `"Nintendo"`, `"Switch"`, `"Joy-Con"`, `"Joycon"`, `"Pro Controller"`, `"GameCube"`, `"SNES"`.
+  - **Dynamic Layout & Prompt Overhauls (`src/runtime_pad.c`, `gpu/shim/bbport_button_prompts.cpp`)**:
+    - **PlayStation Layout (`device = 0`)**:
+      - Disables port texture overriding; restores the original PS4 button glyphs baked in Bloodborne (`menu/common.tpf.dcx`): Cross (✕), Circle (◯), Square (▢), Triangle (△), L1, R1, L2, R2, Options, Touchpad, and D-Pad.
+    - **Xbox Layout (`device = 1`, `type = Xbox`)**:
+      - Standard diamond layout: A (South), B (East), X (West), Y (North).
+      - Colored face buttons: Green A, Red B, Blue X, Yellow Y.
+      - Shoulder & triggers: LB, RB, LT, RT.
+      - Start & Back: Hamburger lines (`Menu`), overlapping windows (`View`).
+    - **Nintendo Switch Layout (`device = 1`, `type = Nintendo`)**:
+      - Physical diamond layout matching authentic Nintendo controllers:
+        - South (Bottom / Interact / Cross): **B**
+        - East (Right / Dodge / Circle): **A**
+        - West (Left / Item / Square): **Y**
+        - North (Top / Heal / Triangle): **X**
+      - Shoulder & triggers: **L**, **R**, **ZL**, **ZR**.
+      - Menus: Dedicated, crisp geometric vector rendering for **+** (plus cross) and **-** (minus horizontal bar).
+      - Authentic Switch button aesthetic: clean monochrome ivory lettering (`Ink`) on dark rounded caps instead of Xbox colors.
+    - **Keyboard & Mouse (`device = 2`)**:
+      - Dynamically kicks in when key caps or mouse inputs are received, displaying key cap borders (`[Space]`, `[F]`, `[Q]`, `[E]`, `[Tab]`, `[W]`, `[A]`, `[S]`, `[D]`) and mouse diagrams.
+  - **In-Game Settings & Real-Time Manual Override (`gpu/shim/bbport_settings.h`, `.cpp`, `bbport_overlay.cpp`, `bbgpu.h`, `bbgpu.cpp`)**:
+    - Added `enum PromptLayout` (`Auto = 0`, `PlayStation = 1`, `Xbox = 2`, `Nintendo = 3`, `Kbm = 4`) and `std::atomic<int> prompt_layout`.
+    - Added UI dropdown combo in the F10 configuration overlay under **Mouse & Controles** with multilingual options (PT-BR, EN, RU) and descriptive hint.
+    - Exported weak hook `bbgpu_get_prompt_layout()` to allow real-time layout changes that immediately trigger prompt atlas regeneration without requiring game restart.
+    - Full persistence in `bbport.ini` (`prompt_layout=auto|playstation|xbox|nintendo|keyboard`).
+
+- **Seção 53 - Correção de Regressão Crítica no Memory Scanner e Debugger**:
+  - **Diagnóstico & Causa Raiz**:
+    - O scanner de memória apresentava lentidão extrema, travamentos severos e falhas em localizar variáveis de gameplay (HP, Vials, Ecos de Sangue) devido a quatro fatores:
+      1. **Escopo padrão incorreto**: `selected_scope` iniciava como `0` (`ExecutableOnly`), varrendo somente o código estático `eboot.bin` (<256MB) e ignorando completamente o heap dinâmico do jogo (`0x1000000000` em diante).
+      2. **Tempestade de exceções SIGSEGV**: No commit `0359633`, `ReadMemory` foi alterado para `memcpy` com `sigsetjmp`. Como o heap PS4 possui alocações virtuais esparsas e páginas protegidas por dirty-tracking da GPU (`PROT_NONE`), cada bloco não mapeado gerava 1 SIGSEGV no chunk e mais 64 SIGSEGVs no loop de página por página (totalizando 65 sinais por bloco de 256KB), disparando centenas de milhares de sinais para o kernel, travando a CPU e congelando o scanner.
+      3. **Falha de gravação em código**: `WriteMemory` não desprotegia páginas de código `PROT_READ | PROT_EXEC`, impedindo patches de assembly, NOPs no desassemblador e inserção de breakpoints (`0xCC`).
+      4. **Mapeamentos de dispositivo e kernel**: `/proc/self/maps` incluía eventuais nós DRM (`/dev/dri/...`) e áreas de kernel como `[vsyscall]` (`0xffffffffff600000`).
+  - **Implementação & Correções (`debugger/mem_scanner_io.cpp`, `debugger/mem_scanner.cpp`, `ui/tab_scanner.cpp`)**:
+    - **Leitura Segura e Livre de Sinais (`ReadMemory`)**:
+      - Restaurado `process_vm_readv(getpid(), &local_iov, 1, &remote_iov, 1, 0)` como primeiro caminho atômico do kernel. Se o endereço for inválido ou não comitado, retorna `-1` (`EFAULT`) instantaneamente em nanossegundos, sem gerar qualquer sinal `SIGSEGV` e sem interromper a execução.
+      - Para páginas com proteção de dirty-tracking da GPU (`bbgpu`), faz verificação com `runtime_memory_is_mapped(addr, size)` e lê os dados diretamente do buffer host através de `runtime_memory_read_backing(addr, dest, size)`, obtendo a memória do jogo sem causar faltas de página.
+      - Tratamento para leituras parciais (`n > 0`), completando o restante do buffer com zeros.
+      - Mantido `sigsetjmp`/`memcpy` apenas como último recurso em ambientes com restrições severas de ptrace.
+    - **Escrita em Código Executável (`WriteMemory`)**:
+      - Caso a escrita direta em memória falhe (como em páginas de código executável `PROT_READ | PROT_EXEC`), o sistema agora aplica temporariamente `mprotect(..., PROT_READ | PROT_WRITE | PROT_EXEC)`, realiza a gravação e restaura a proteção original para `PROT_READ | PROT_EXEC`. Isso corrige completamente o patching de instruções no desassemblador (`ApplyPatch`), inserção de NOPs e adição de breakpoints.
+    - **Filtro Seguro de Regiões (`QueryRegions`)**:
+      - Mapeamentos de `/dev/` (como nós DRM de GPU) e áreas de kernel `[vsyscall]` e `[vvar]` são descartados na leitura de `/proc/self/maps`.
+      - O escopo `FullProcess` foi delimitado a endereços `< 0x7fffffffffffULL` para evitar áreas privilegiadas de kernel.
+    - **Escopo Padrão Ajustado (`ui/tab_scanner.cpp`)**:
+      - `selected_scope` agora inicia em `1` (`Guest Memory (PS4 Heap)`), cobrindo todo o intervalo de `img_base` até 1 TiB e garantindo que buscas numéricas encontrem as variáveis do jogador imediatamente.
+      - Adicionada dica visual explicativa caso o usuário faça uma busca no escopo Executável e não encontre resultados.
+
+---
+
+## 54. Modularização Arquitetural em `extra/` e Arquitetura de Interceptação por Hooks (Clean Upstream Merges)
+- **Solicitações do Usuário**:
+  1. *"quero organizar o projeto, cria uma pasta coom as nossas adições extras de arquivos e separa por core, ui, management, contact etc faça uma boa arquitetura de organização de arquivos que seja facil de encontrar so de olhar, isso inclui o frame gen o memory debugger se tiver criado um arquivo novo para o treco do layout também, o rich presence etc"*
+  2. *"revise as condições de fazer umas funções em arquivos separados ao editar chame a função que a gente quer editar como se fosse uma "hook" na original, em outro arquivo e etc, organizar dessa forma vai nós da mais controle quando for editar nossas funções, ai, não teria grandes mudanças apenas alterações mais certas, e mais facil de ver nas proximas versões futuras para merge certo?"*
+- **Objetivos e Benefícios Arquiteturais**:
+  - **Isolamento de Adições Personalizadas**: Todos os subsistemas adicionados ou estendidos pelo projeto (FSR Frame Generation, Memory Debugger, Tabs/Views/Modals da UI, Gerenciamento de Prompts/HUD/I18N e Integração Discord RPC / Game Data) foram consolidados sob o diretório raiz `extra/`, divididos em 4 domínios claros.
+  - **Facilidade Máxima de Merge com Upstream (`git merge upstream/master`)**: Em vez de modificar dezenas ou centenas de linhas dentro dos arquivos originais de upstream (`src/runtime_pad.c`, `gpu/render/presenter.cpp`, `gpu/shim/bbport_overlay.cpp`, etc.), o código original é mantido praticamente intocado, realizando apenas chamadas concisas (1 a 3 linhas) para funções "hook" implementadas e isoladas em `extra/`. Qualquer merge futuro de upstream ocorre de forma limpa e sem conflitos.
+  - **Preservação de Histórico Git (`git mv`)**: Todos os 44 arquivos migrados tiveram seu histórico de commits e autoria integralmente preservados pelo Git.
+  - **Headers de Encaminhamento (Backward Compatibility)**: Nas localizações legadas (`debugger/`, `ui/`, `gpu/upscale/`, `gpu/shim/`, `gpu/shim/rpc/`), foram mantidos headers de encaminhamento com `#pragma once` e inclusão do novo caminho, assegurando que nenhum arquivo legado ou script de teste quebre.
+
+- **Estrutura de Diretórios Criada em `extra/`**:
+  ```text
+  extra/
+  ├── core/                        # Funcionalidades essenciais do engine e runtime estendido
+  │   ├── debugger/                # Scanner de memória, breakpoints, visualizador, BBT e cutscene detector
+  │   └── frame_gen/               # Gerador de quadros FSR 3.1 / Vulkan (vk_frame_generation)
+  ├── ui/                          # Interface gráfica estendida do menu de depuração e ferramentas
+  │   ├── assembler.*              # Montador de instruções x86-64
+  │   ├── ui_manager.*             # Gerenciador central do overlay de debug
+  │   ├── ui_strings.h             # Tabela de localização e strings da interface
+  │   ├── modals/                  # Diálogos modais (edição de watch, patch de instruções)
+  │   ├── tabs/                    # Abas do debugger (scanner, watchlist, debugger, settings)
+  │   └── views/                   # Visualizadores (desassemblador, hexgrid, memviewer, registradores)
+  ├── management/                  # Gerenciamento de HUD, prompts de controle, seções e idiomas
+  │   ├── hud/                     # HUD de informações (FPS, frametime, contador de mortes)
+  │   ├── i18n/                    # Localização e tradução dinâmica de strings
+  │   ├── prompts/                 # Gerador de glifos e detecção de controles (PlayStation, Xbox, Nintendo, KBM)
+  │   │   ├── bbport_button_prompts.*
+  │   │   ├── bbport_pad_hook.h    # Hook de controle com detecção de hardware e resolução de layout
+  │   │   └── bbport_pad_hook.c
+  │   └── sections/                # Seções e janelas do overlay ImGui (bbport_overlay_sections)
+  └── contact/                     # Integrações externas e exportação de telemetria de jogo
+      ├── game_data/               # Telemetria do jogo (HP, bosses, sessão de mortes, save tracking)
+      └── rpc/                     # Integração Discord Rich Presence
+  ```
+
+- **Arquitetura de Hooks Implementada (Desacoplamento Completo de Funções)**:
+  - **1. Hook de Controle e Sensores em `src/runtime_pad.c` via `extra/management/prompts/bbport_pad_hook.h`**:
+    - Removidas mais de 150 linhas de lógicas embutidas de `src/runtime_pad.c`:
+      - Detecção de hardware por Vendor ID e nome (`extra_pad_is_playstation`, `extra_pad_is_nintendo`).
+      - Resolução de layout ativo e mapeamento de botões físicos (`extra_pad_check_nintendo_active`, `extra_pad_override_device`, `extra_pad_override_type`, `extra_pad_resolve_button`).
+      - Simulação de toque capacitivo com linger de 150ms (`extra_pad_update_synthetic_touch`, `extra_pad_reset_synthetic_touch`, `extra_pad_touch_click`).
+      - Leitura e conversão física de sensores acelerômetro e giroscópio (`extra_pad_read_sensors`).
+    - `src/runtime_pad.c` agora delega todas essas operações a chamadas limpas de 1 linha.
+
+  - **2. Hook de Captura de Tela (Photo Mode) em `gpu/render/presenter.cpp` via `extra/core/screenshot/bbport_screenshot.{h,cpp}`**:
+    - Removidas cerca de 90 linhas de código do pipeline de apresentação (`Presenter::RecordPresent`):
+      - Alocação de buffer de staging VMA, gravação de cópia de imagem Vulkan, barreira de transição, agendamento de thread em segundo plano com `DeferPriorityOperation` e codificação PNG via `SDL_SavePNG`.
+    - `Presenter::RecordPresent` agora realiza apenas 1 chamada pontual:
+      ```cpp
+      if (!BbScreenshot::RecordCapture(instance, present_scheduler, cmdbuf, target, extent,
+                                       swapchain.GetSurfaceFormat().format, overlay, ColorRange)) { ... }
+      ```
+
+  - **3. Hook do Contador de FPS e Compilação de Shaders em `gpu/shim/bbport_overlay.cpp` via `extra/management/hud/bbport_fps_hud.{h,cpp}`**:
+    - Extraídas 216 linhas da função `FpsCounter()` para módulo dedicado em `extra/management/hud/`:
+      - Cálculo de FPS nativo vs gerado, indicação visual "+ FG", leitor de compilação de shaders (`BbShaderTracker`), spinner circular animado e laser azul-ciano animado na borda inferior.
+    - `gpu/shim/bbport_overlay.cpp` agora invoca uma chamada concisa:
+      ```cpp
+      BbFpsHud::Render(BbFpsHud::Stats{ ... });
+      ```
+
+  - **4. Hook de UI de Layout de Botões e Ferramentas de Memória em `extra/management/sections/bbport_overlay_sections.{h,cpp}`**:
+    - Extraído o combo seletor de layout de prompts (`RenderPromptLayoutSection`) e os botões de abertura da janela de depuração e visualizador hexadecimal (`RenderMemoryToolsSection`).
+    - `bbport_overlay.cpp` agora mantém seu layout de controles limpo, delegando a renderização para as seções em `extra/`.
+
+  - **5. Mapeamento e Hook do Shader Tracker via `extra/core/shader_tracker/bbport_shader_tracker.{h,cpp}`**:
+    - Confirmada a autoria da implementação do Shader Tracker (adicionado originalmente no commit `0a9a5c2`, inexistente no repositório upstream).
+    - Movido `bbport_shader_tracker.{h,cpp}` de `gpu/shim/` para `extra/core/shader_tracker/` mantendo histórico git (`git mv`).
+    - Criado header de encaminhamento retrocompatível em `gpu/shim/bbport_shader_tracker.h`.
+    - Reconectado o hook em `CompileTimer` dentro de `gpu/render/pipeline_cache.cpp` (`BbShaderTracker::OnCompileStart()` no construtor e `BbShaderTracker::OnCompileEnd()` no destrutor) para disparar com precisão o indicador visual do HUD durante compilação assíncrona ou em lote de pipelines no novo renderer.
+
+  - **6. Isolamento Completo de Shims Customizados em `extra/` e Headers de Encaminhamento**:
+    - Todos os 10 arquivos adicionais criados no commit `d54f932` que residiam soltos em `gpu/shim/` foram transferidos para seus domínios na árvore `extra/`:
+      - `extra/core/camera/`: `bbport_camera.{h,cpp}`, `bbport_mouse_camera.{h,cpp}`.
+      - `extra/core/engine_fixes/`: `bbport_engine_fixes.{h,cpp}`, `bbport_engine_graphics.{h,cpp}`, `bbport_code_patch.h`.
+      - `extra/core/frame_pacing/`: `bbport_frame_rate_pacer.{h,cpp}`, `bbport_frame_rate_tables.h`.
+      - `extra/ui/scaleform/`: `bbport_menu_pointer.{h,cpp}`, `bbport_scaleform_hit.{h,cpp}`.
+      - `extra/ui/keyboard/`: `bbport_keyboard.{h,cpp}`.
+    - Criados headers de encaminhamento em `gpu/shim/` para garantir 100% de compatibilidade com qualquer código legado ou inclusões existentes.
+    - O diretório `gpu/shim/` retorna estritamente à estrutura original do repositório upstream, com todas as modificações atuando via hooks concisos em `bbgpu.cpp` e `window.cpp`.
+
+- **Integração do Sistema de Compilação (`gpu/CMakeLists.txt`)**:
+  - Adicionado `file(GLOB_RECURSE EXTRA_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.c)`.
+  - Vinculado `target_sources(bbgpu PRIVATE ${EXTRA_SOURCES})`.
+  - Adicionados todos os diretórios e subdiretórios de `extra/` (`extra/core/camera`, `extra/core/engine_fixes`, `extra/core/frame_pacing`, `extra/core/shader_tracker`, `extra/core/screenshot`, `extra/ui/scaleform`, `extra/ui/keyboard`, `extra/management/hud`, etc.) ao `target_include_directories(bbgpu PRIVATE ...)`.
+  - Atualizados targets de testes (`settings-test`, `bbt-table-test`, `assembler-pattern-test`, `upscaler-support-test`) para referenciar os novos caminhos em `extra/`.
+
+
 

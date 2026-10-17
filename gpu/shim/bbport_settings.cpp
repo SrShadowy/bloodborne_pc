@@ -160,6 +160,18 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.raw_mouse_camera = i != 0;
     } else if (key == "mouse_hold_auto_rotate") {
         v.mouse_hold_auto_rotate = i != 0;
+    } else if (key == "prompt_layout" || key == "button_prompts_layout") {
+        if (value == "playstation" || value == "ps" || value == "ps4" || value == "ps5" || value == "1") {
+            v.prompt_layout = PromptLayoutPlayStation;
+        } else if (value == "xbox" || value == "xinput" || value == "2") {
+            v.prompt_layout = PromptLayoutXbox;
+        } else if (value == "nintendo" || value == "switch" || value == "3") {
+            v.prompt_layout = PromptLayoutNintendo;
+        } else if (value == "kbm" || value == "keyboard" || value == "4") {
+            v.prompt_layout = PromptLayoutKbm;
+        } else {
+            v.prompt_layout = PromptLayoutAuto;
+        }
     } else if (key == "bloom_scale") {
         v.bloom_scale = Clamp(f, 0.0f, 2.0f);
     } else if (key == "color_saturation") {
@@ -506,6 +518,14 @@ void Save() {
     put("mouse_capture", flag(v.mouse_capture.load()));
     put("raw_mouse_camera", flag(v.raw_mouse_camera.load()));
     put("mouse_hold_auto_rotate", flag(v.mouse_hold_auto_rotate.load()));
+    {
+        const int pl = v.prompt_layout.load();
+        const char* layout_str = pl == PromptLayoutPlayStation ? "playstation" :
+                                 pl == PromptLayoutXbox ? "xbox" :
+                                 pl == PromptLayoutNintendo ? "nintendo" :
+                                 pl == PromptLayoutKbm ? "keyboard" : "auto";
+        put("prompt_layout", layout_str);
+    }
     put("bloom_scale", fixed(v.bloom_scale.load(), 2));
     put("color_saturation", fixed(v.color_saturation.load(), 2));
     put("vignette", flag(v.vignette.load()));

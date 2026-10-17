@@ -1,31 +1,3 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
-
-#include "bbport_settings.h"
-
-namespace BbOverlaySections {
-
-// Renders the Photo Mode controls (freeze world, hide HUD, screenshot, quick reset).
-void RenderPhotoModeSection(BbSettings::Values& s, int lang, bool& dirty);
-
-// Renders the live YEBIS post-processing, SSAO strength, shadow cascade distance, and fog sliders.
-void RenderPostProcessingAndLightingSection(BbSettings::Values& s, int lang, bool& dirty);
-
-// Renders the live Camera FOV, distance, and height sliders.
-void RenderCameraSection(BbSettings::Values& s, int lang, bool& dirty);
-
-// Renders the 4x4 Light Grid Optimization checkbox in the Performance section.
-void RenderLightGridCheckbox(BbSettings::Values& s, int lang, bool& dirty);
-
-// Renders the Raw 1:1 Mouse Camera and Hold Movement/Slope Auto-Rotation checkboxes.
-void RenderRawMouseCameraControls(BbSettings::Values& s, int lang, bool& dirty);
-
-// Renders the customizable Info HUD (OSD) section.
-void RenderInfoHudSection(BbSettings::Values& s, int lang, bool& dirty);
-
-// Renders the Discord Rich Presence (RPC) configuration section in settings menu.
-void RenderDiscordRpcSection(BbSettings::Values& s, int lang, bool& dirty);
-
-// Renders the standalone Discord Rich Presence configuration window.
-void RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty);
-
-} // namespace BbOverlaySections
+#include "extra/management/sections/bbport_overlay_sections.h"

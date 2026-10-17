@@ -190,10 +190,36 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
     third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp
     third_party/imgui/backends/imgui_impl_vulkan.cpp)
 target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends
-    ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../debugger ${CMAKE_CURRENT_SOURCE_DIR}/../ui)
-file(GLOB DEBUGGER_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../debugger/*.cpp)
-file(GLOB UI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../ui/*.cpp)
-target_sources(bbgpu PRIVATE ${DEBUGGER_SOURCES} ${UI_SOURCES})
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/debugger
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/frame_gen
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/screenshot
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/shader_tracker
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/camera
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/engine_fixes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/frame_pacing
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/ui/scaleform
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/ui/keyboard
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/ui/tabs
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/ui/views
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/ui/modals
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/management
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/management/prompts
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/management/hud
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/management/sections
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/management/i18n
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/contact
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/contact/rpc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/contact/game_data
+    ${CMAKE_CURRENT_SOURCE_DIR}/../debugger
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ui)
+file(GLOB_RECURSE EXTRA_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.c)
+target_sources(bbgpu PRIVATE ${EXTRA_SOURCES})
 # Dear ImGui stays private to libbbgpu.so. The library is linked into bb-probe, so its exports are
 # in the global symbol scope; a Vulkan layer carrying its own Dear ImGui without -Bsymbolic
 # (vkShade 0.1) had its ImGui_ImplVulkan_Init bound to this copy, which called the Vulkan loader
@@ -267,18 +293,18 @@ target_compile_options(cp-decoder-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(cp-decoder-test PRIVATE cp)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp
     shim/bbport_settings.cpp
-    shim/bbport_strings.cpp)
+    ../extra/management/i18n/bbport_strings.cpp)
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-target_include_directories(settings-test PRIVATE .. shim)
+target_include_directories(settings-test PRIVATE .. shim ../extra/management/i18n)
 
 add_executable(bbt-table-test EXCLUDE_FROM_ALL ../tests/test_bbt_table.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_compile_options(bbt-table-test PRIVATE -UNDEBUG -fPIC)
-target_include_directories(bbt-table-test PRIVATE .. ../debugger)
+target_include_directories(bbt-table-test PRIVATE .. ../debugger ../extra/core/debugger)
 target_link_libraries(bbt-table-test PRIVATE bbgpu)
 
 add_executable(assembler-pattern-test EXCLUDE_FROM_ALL ../tests/test_assembler_pattern.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_compile_options(assembler-pattern-test PRIVATE -UNDEBUG -fPIC)
-target_include_directories(assembler-pattern-test PRIVATE .. ../debugger ../ui)
+target_include_directories(assembler-pattern-test PRIVATE .. ../debugger ../ui ../extra/core/debugger ../extra/ui)
 target_link_libraries(assembler-pattern-test PRIVATE bbgpu)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
@@ -318,8 +344,8 @@ target_link_libraries(translation-memory-test PRIVATE bbgpu)
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp
-    shim/bbport_strings.cpp)
-target_include_directories(upscaler-support-test PRIVATE shim)
+    ../extra/management/i18n/bbport_strings.cpp)
+target_include_directories(upscaler-support-test PRIVATE shim ../extra/management/i18n)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp

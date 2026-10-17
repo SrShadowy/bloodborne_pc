@@ -6,13 +6,8 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
-#include <csetjmp>
-#include <csignal>
 #include <unistd.h>
 #include "gpu/bbgpu.h"
-
-extern "C" __thread sigjmp_buf* runtime_fault_recover;
-extern "C" int runtime_memory_write_backing(uintptr_t address, const void* data, uint64_t size);
 
 namespace Debugger {
 

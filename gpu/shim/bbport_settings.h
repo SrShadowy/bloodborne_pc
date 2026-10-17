@@ -21,6 +21,14 @@ enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerforman
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum Language : int { LangEnglish = 0, LangPortuguese = 1, LangRussian = 2, LangCount = 3 };
 enum class MenuLanguage : int { English = LangEnglish, Portuguese = LangPortuguese, Russian = LangRussian };
+enum PromptLayout : int {
+    PromptLayoutAuto = 0,
+    PromptLayoutPlayStation = 1,
+    PromptLayoutXbox = 2,
+    PromptLayoutNintendo = 3,
+    PromptLayoutKbm = 4,
+    PromptLayoutCount = 5
+};
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
@@ -141,6 +149,7 @@ struct Values {
     std::atomic<bool> mouse_capture{true};
     std::atomic<bool> raw_mouse_camera{true};
     std::atomic<bool> mouse_hold_auto_rotate{true};
+    std::atomic<int> prompt_layout{PromptLayoutAuto}; ///< Button prompts layout (0=Auto, 1=PS, 2=Xbox, 3=Nintendo, 4=KBM)
     std::atomic<int> fps_limit{0}; ///< Target frame rate limit (0 = uncapped)
 
     /// Live post-processing, lighting, and camera parameters (from bbhost).

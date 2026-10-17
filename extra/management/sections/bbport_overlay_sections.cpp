@@ -8,6 +8,8 @@
 #include "bbport_strings.h"
 #include "common/path_util.h"
 #include "rpc/bbport_game_data.h"
+#include "ui_manager.h"
+#include "ui_strings.h"
 
 #include <imgui.h>
 
@@ -482,6 +484,104 @@ void RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty) {
                        "Resets the death counter for the current gaming session.");
 
     ImGui::End();
+}
+
+void RenderPromptLayoutSection(BbSettings::Values& s, int lang, bool& dirty) {
+    const char* prompt_options_pt[] = {
+        "Automático (Detectar Dispositivo)",
+        "PlayStation (Padrão Original)",
+        "Xbox (A / B / X / Y)",
+        "Nintendo Switch (B / A / Y / X)",
+        "Teclado & Mouse"
+    };
+    const char* prompt_options_en[] = {
+        "Auto (Detect Active Device)",
+        "PlayStation (Original Default)",
+        "Xbox (A / B / X / Y)",
+        "Nintendo Switch (B / A / Y / X)",
+        "Keyboard & Mouse"
+    };
+    const char* prompt_options_ru[] = {
+        "Авто (Определять устройство)",
+        "PlayStation (По умолчанию)",
+        "Xbox (A / B / X / Y)",
+        "Nintendo Switch (B / A / Y / X)",
+        "Клавиатура и мышь"
+    };
+    const char** prompt_options = (lang == 1) ? prompt_options_pt :
+                                  (lang == 2) ? prompt_options_ru :
+                                                prompt_options_en;
+    int cur_layout = s.prompt_layout.load(std::memory_order_relaxed);
+    if (cur_layout < 0 || cur_layout >= 5) cur_layout = 0;
+    const char* combo_label = (lang == 1) ? "Layout dos Botões (Prompts)" :
+                              (lang == 2) ? "Раскладка подсказок кнопок" :
+                                            "Button Prompts Layout";
+    if (ImGui::BeginCombo(combo_label, prompt_options[cur_layout])) {
+        for (int i = 0; i < 5; ++i) {
+            const bool selected = (i == cur_layout);
+            if (ImGui::Selectable(prompt_options[i], selected)) {
+                s.prompt_layout.store(i, std::memory_order_relaxed);
+                dirty = true;
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    const char* hint_text = (lang == 1) ? "Escolhe quais ícones de botões aparecem no jogo (Examinar, Esquiva, Ataque). O modo Automático alterna dinamicamente entre seu controle e teclado." :
+                            (lang == 2) ? "Выбирает подсказки кнопок в игре. Автоматический режим переключается между активным геймпадом и клавиатурой." :
+                                          "Choose which button glyphs appear in-game (Examine, Roll, Attack). Auto dynamically switches between your active gamepad and keyboard.";
+    Hint(hint_text);
+}
+
+void RenderMemoryToolsSection(float base_scale) {
+    ImGui::Spacing();
+    ImGui::SeparatorText(UI::L("Memory & Reverse Engineering", "Operações de Memória", "Операции с памятью"));
+    const bool mem_open = UI::UiManager::IsMemoryWindowOpen();
+    if (mem_open) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.45f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.55f, 0.48f, 1.0f));
+        if (ImGui::Button(UI::L("Hide Memory Tools Window###btn_memtools",
+                                "Ocultar Janela de Memória###btn_memtools",
+                                "Скрыть окно памяти###btn_memtools"), ImVec2(-1, 32.0f * base_scale))) {
+            UI::UiManager::SetMemoryWindowOpen(false);
+        }
+        ImGui::PopStyleColor(2);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.32f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.42f, 0.54f, 1.0f));
+        if (ImGui::Button(UI::L("Open Memory Tools Window (Scanner, Watchlist, Debugger)###btn_memtools",
+                                "Abrir Janela de Memória (Scanner, Watchlist, Debugger)###btn_memtools",
+                                "Открыть окно памяти (Сканер, Таблица, Отладчик)###btn_memtools"), ImVec2(-1, 32.0f * base_scale))) {
+            UI::UiManager::SetMemoryWindowOpen(true);
+        }
+        ImGui::PopStyleColor(2);
+    }
+
+    const bool mv_open = UI::UiManager::IsMemoryViewerOpen();
+    if (mv_open) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.45f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.55f, 0.48f, 1.0f));
+        if (ImGui::Button(UI::L("Hide Memory Viewer###btn_memviewer",
+                                "Ocultar Memory Viewer###btn_memviewer",
+                                "Скрыть Memory Viewer###btn_memviewer"), ImVec2(-1, 28.0f * base_scale))) {
+            UI::UiManager::SetMemoryViewerOpen(false);
+        }
+        ImGui::PopStyleColor(2);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.32f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.42f, 0.54f, 1.0f));
+        if (ImGui::Button(UI::L("Open Memory Viewer###btn_memviewer",
+                                "Abrir Memory Viewer###btn_memviewer",
+                                "Открыть Memory Viewer###btn_memviewer"), ImVec2(-1, 28.0f * base_scale))) {
+            UI::UiManager::SetMemoryViewerOpen(true);
+        }
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::TextDisabled("%s", UI::L("Opens separate floating windows for memory scanning, hex view, and live disassembly",
+                                   "Abre janelas flutuantes separadas para varredura, hex view e desassemblagem em tempo real",
+                                   "Открывает отдельные плавающие окна для сканирования, hex-инспектора и дизассемблера"));
 }
 
 #undef S
