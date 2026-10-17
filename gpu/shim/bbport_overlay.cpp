@@ -16,6 +16,8 @@
 
 #include <SDL3/SDL.h>
 #include "bbport_overlay_sections.h"
+#include "bbport_discord_rpc.h"
+#include "bbport_info_hud.h"
 #include "bbport_settings.h"
 #include "bbport_strings.h"
 #include "ui_manager.h"
@@ -1178,6 +1180,8 @@ void RenderGraphicsSettings() {
     BbOverlaySections::RenderPostProcessingAndLightingSection(s, lang, dirty);
     BbOverlaySections::RenderCameraSection(s, lang, dirty);
     RenderPerformanceSection(s, lang);
+    BbOverlaySections::RenderInfoHudSection(s, lang, dirty);
+    BbOverlaySections::RenderDiscordRpcSection(s, lang, dirty);
     RenderControlsSection(s, lang);
     RenderMemoryToolsSection();
 }
@@ -1241,6 +1245,8 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
 
     ImGui::StyleColorsDark();
     UI::UiManager::InitStyle();
+    BbInfoHud::Init();
+    BbDiscordRpc::Init();
 
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;
@@ -1432,7 +1438,8 @@ bool Visible() {
         }
     }
     return initialized && (menu_open || prompt_active || banner_active ||
-                           BbSettings::Get().show_fps || BbShaderTracker::IsCompiling());
+                           BbSettings::Get().show_fps || BbShaderTracker::IsCompiling() ||
+                           (BbSettings::Get().show_info_hud && !BbSettings::Get().hide_hud));
 }
 
 bool MenuOpen() {
@@ -1525,6 +1532,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
     }
     if ((BbSettings::Get().show_fps || BbShaderTracker::IsCompiling()) && !menu_open) {
         FpsCounter();
+    }
+    if (BbSettings::Get().show_info_hud && !menu_open && !BbSettings::Get().hide_hud) {
+        BbInfoHud::Render(base_scale);
     }
     if (prompt_active && !menu_open) {
         TextPrompt();

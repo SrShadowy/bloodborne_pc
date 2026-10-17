@@ -69,6 +69,30 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "show_info_hud") {
+        v.show_info_hud = i != 0;
+    } else if (key == "info_hud_pos") {
+        v.info_hud_pos = std::clamp(i, 0, 3);
+    } else if (key == "info_hud_show_playtime") {
+        v.info_hud_show_playtime = i != 0;
+    } else if (key == "info_hud_show_map") {
+        v.info_hud_show_map = i != 0;
+    } else if (key == "info_hud_show_name") {
+        v.info_hud_show_name = i != 0;
+    } else if (key == "info_hud_show_coop") {
+        v.info_hud_show_coop = i != 0;
+    } else if (key == "discord_rpc") {
+        v.discord_rpc = i != 0;
+    } else if (key == "discord_rpc_show_character") {
+        v.discord_rpc_show_character = i != 0;
+    } else if (key == "discord_rpc_show_area") {
+        v.discord_rpc_show_area = i != 0;
+    } else if (key == "discord_rpc_show_time") {
+        v.discord_rpc_show_time = i != 0;
+    } else if (key == "discord_client_id") {
+        if (!value.empty()) {
+            v.discord_client_id = value;
+        }
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -428,6 +452,17 @@ void Save() {
     put("reactive_max", fixed(v.reactive_max, 2));
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
+    put("show_info_hud", flag(v.show_info_hud));
+    put("info_hud_pos", std::to_string(v.info_hud_pos.load()));
+    put("info_hud_show_playtime", flag(v.info_hud_show_playtime));
+    put("info_hud_show_map", flag(v.info_hud_show_map));
+    put("info_hud_show_name", flag(v.info_hud_show_name));
+    put("info_hud_show_coop", flag(v.info_hud_show_coop));
+    put("discord_rpc", flag(v.discord_rpc));
+    put("discord_rpc_show_character", flag(v.discord_rpc_show_character));
+    put("discord_rpc_show_area", flag(v.discord_rpc_show_area));
+    put("discord_rpc_show_time", flag(v.discord_rpc_show_time));
+    put("discord_client_id", v.discord_client_id);
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     put("puddle_reflections", flag(v.puddle_reflections.load()));

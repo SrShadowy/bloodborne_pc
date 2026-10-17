@@ -442,6 +442,8 @@ int runtime_file_host_path(const char *guest,char *out,size_t size) {
     if (access(out,F_OK)!=0 && !fix_case(out)) return ENOENT;
     return 0;
 }
+__attribute__((weak)) void bbgpu_notify_save_slot(int slot);
+
 static int64_t do_open(const char *guest,int flags,int mode) {
     if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
     char path[1024];
@@ -449,7 +451,13 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     if (e) return -e;
     char *commit=NULL, *temp=NULL, current[1024];
     snprintf(current,sizeof(current),"%s",path);
-    if (save_path(guest)) current_copy(current,sizeof(current),0);
+    if (save_path(guest)) {
+        current_copy(current,sizeof(current),0);
+        const char *ud = strstr(guest, "userdata000");
+        if (ud && ud[11] >= '0' && ud[11] <= '9') {
+            if (bbgpu_notify_save_slot) bbgpu_notify_save_slot(ud[11] - '0');
+        }
+    }
     int host;
     if (save_path(guest) && (flags&3)) {
         host=open_for_commit(path,current,flags,mode,&commit,&temp);

@@ -160,6 +160,21 @@ struct Values {
     std::atomic<bool> hide_hud{false};
     std::atomic<bool> request_screenshot{false};
 
+    /// Info HUD (OSD)
+    std::atomic<bool> show_info_hud{false};
+    std::atomic<int> info_hud_pos{0}; // 0 = Top-Left, 1 = Top-Right, 2 = Bottom-Left, 3 = Bottom-Right
+    std::atomic<bool> info_hud_show_playtime{true};
+    std::atomic<bool> info_hud_show_map{true};
+    std::atomic<bool> info_hud_show_name{true};
+    std::atomic<bool> info_hud_show_coop{true};
+
+    /// Discord Rich Presence (RPC)
+    std::atomic<bool> discord_rpc{true};
+    std::atomic<bool> discord_rpc_show_character{true};
+    std::atomic<bool> discord_rpc_show_area{true};
+    std::atomic<bool> discord_rpc_show_time{true};
+    std::string discord_client_id{"1139939140494971051"};
+
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
     int startup_upscaler = UpscalerFsr3;
