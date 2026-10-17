@@ -167,12 +167,20 @@ struct Values {
     std::atomic<bool> info_hud_show_map{true};
     std::atomic<bool> info_hud_show_name{true};
     std::atomic<bool> info_hud_show_coop{true};
+    std::atomic<bool> info_hud_show_deaths{true};
 
     /// Discord Rich Presence (RPC)
     std::atomic<bool> discord_rpc{true};
-    std::atomic<bool> discord_rpc_show_character{true};
+    std::atomic<bool> discord_rpc_show_character{true}; // legacy alias
+    std::atomic<bool> discord_rpc_show_name{true};
+    std::atomic<bool> discord_rpc_show_level{true};
+    std::atomic<bool> discord_rpc_show_deaths{true};
+    std::atomic<int>  discord_rpc_deaths_mode{1}; // legacy alias
     std::atomic<bool> discord_rpc_show_area{true};
     std::atomic<bool> discord_rpc_show_time{true};
+    std::atomic<bool> discord_rpc_show_party{true};
+    std::atomic<bool> discord_rpc_show_boss{true};
+    std::atomic<bool> discord_rpc_window_open{false};
     std::string discord_client_id{"1139939140494971051"};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.

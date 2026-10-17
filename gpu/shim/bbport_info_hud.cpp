@@ -28,8 +28,9 @@ void Render(float base_scale) {
     const bool show_map = s.info_hud_show_map.load();
     const bool show_time = s.info_hud_show_playtime.load();
     const bool show_coop = s.info_hud_show_coop.load();
+    const bool show_deaths = s.info_hud_show_deaths.load();
 
-    if (!show_name && !show_map && !show_time && !show_coop) {
+    if (!show_name && !show_map && !show_time && !show_coop && !show_deaths) {
         return;
     }
 
@@ -64,23 +65,7 @@ void Render(float base_scale) {
                                   (lang == 2) ? cached_snap.map_name_ru :
                                                 cached_snap.map_name_en;
 
-    std::string coop_status;
-    if (cached_snap.coop_role == 1) {
-        int coop = cached_snap.hunters_count - 1;
-        if (coop > 0) {
-            char buf[64];
-            if (lang == 1) std::snprintf(buf, sizeof(buf), "Anfitrião (+%d Caçador%s)", coop, coop > 1 ? "es" : "");
-            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Хост (+%d)", coop);
-            else std::snprintf(buf, sizeof(buf), "Host (+%d Hunter%s)", coop, coop > 1 ? "s" : "");
-            coop_status = buf;
-        } else {
-            coop_status = (lang == 1) ? "Anfitrião (Host)" : (lang == 2) ? "Хост" : "Host";
-        }
-    } else if (cached_snap.coop_role == 2) {
-        coop_status = (lang == 1) ? "Convidado (Co-op)" : (lang == 2) ? "Гость (Кооп)" : "Guest (Co-op)";
-    } else {
-        coop_status = (lang == 1) ? "Solo" : (lang == 2) ? "Одиночная" : "Solo";
-    }
+    const std::string coop_status = BbGameData::FormatCoopStatus(cached_snap, lang);
 
     // Setup Window Position & Flags
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -173,9 +158,23 @@ void Render(float base_scale) {
             ImGui::TextColored(col_lbl, "%s", lbl_coop);
             ImGui::SameLine(0.0f, 0.0f);
 
-            const bool is_coop = (cached_snap.coop_role != 0);
-            const ImVec4 coop_col = is_coop ? ImVec4(0.3f, 0.9f, 1.0f, 1.0f) : col_val;
+            ImVec4 coop_col = col_val;
+            if (cached_snap.invaders_count > 0) {
+                coop_col = ImVec4(1.0f, 0.35f, 0.35f, 1.0f); // Hostile Red
+            } else if (cached_snap.coop_role != 0) {
+                coop_col = ImVec4(0.3f, 0.9f, 1.0f, 1.0f);   // Friendly Cyan
+            }
             ImGui::TextColored(coop_col, "%s", coop_status.c_str());
+        }
+
+        // 5. Deaths counter
+        if (show_deaths) {
+            const char* lbl_deaths = (lang == 1) ? "Mortes: " : (lang == 2) ? "Смерти: " : "Deaths: ";
+            ImGui::TextColored(col_lbl, "%s", lbl_deaths);
+            ImGui::SameLine(0.0f, 0.0f);
+
+            const uint32_t deaths = cached_snap.session_deaths;
+            ImGui::TextColored((deaths > 0) ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f) : col_val, "%u", deaths);
         }
     }
     ImGui::End();

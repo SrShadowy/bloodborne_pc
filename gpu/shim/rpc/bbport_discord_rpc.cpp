@@ -316,6 +316,169 @@ static std::string GetMapAssetKey(const std::string& map_en) {
     return "app_icon";
 }
 
+ActivityDisplay FormatActivity(const BbGameData::PresenceSnapshot& p, const BbSettings::Values& s, int lang) {
+    ActivityDisplay ad;
+    const std::string& cid = s.discord_client_id;
+    const bool is_custom_app = (!cid.empty() && cid != kClientId);
+
+    if (!p.in_game) {
+        ad.details = (lang == 1) ? "Menu Principal" : (lang == 2) ? "Главное меню" : "Main Menu";
+        ad.state = (lang == 1) ? "No Menu Principal" : (lang == 2) ? "В главном меню" : "In Main Menu";
+        if (s.discord_rpc_show_time.load(std::memory_order_relaxed) && p.session_start_unix_s > 0) {
+            const auto now_s = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            int64_t elapsed = (now_s > p.session_start_unix_s) ? (now_s - p.session_start_unix_s) : 0;
+            int hrs = static_cast<int>(elapsed / 3600);
+            int mins = static_cast<int>((elapsed % 3600) / 60);
+            int secs = static_cast<int>(elapsed % 60);
+            char buf[64];
+            if (hrs > 0) {
+                std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hrs, mins, secs);
+            } else {
+                std::snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
+            }
+            ad.time_text = (lang == 1) ? (std::string(buf) + " decorrido") :
+                           (lang == 2) ? (std::string(buf) + " прошло") :
+                                         (std::string(buf) + " elapsed");
+        }
+        ad.large_image = is_custom_app ? "app_icon" : "https://store.playstation.com/store/api/chihiro/00_09_000/titlecontainer/US/en/999/CUSA03173_00/image";
+        ad.large_text = "Bloodborne (BBPort)";
+        ad.small_image = "app_icon";
+        ad.small_text = "BBport Shadowy Edition";
+        ad.has_party = false;
+        return ad;
+    }
+
+    // --- Line 1: Details (Hunter, Level, Deaths) ---
+    std::string hunter_part;
+    const bool show_name = s.discord_rpc_show_name.load(std::memory_order_relaxed);
+    const bool show_lvl = s.discord_rpc_show_level.load(std::memory_order_relaxed);
+    if (show_name && !p.hunter_name.empty()) {
+        hunter_part = p.hunter_name;
+        if (show_lvl && p.level > 0) {
+            hunter_part += " (Nv. " + std::to_string(p.level) + ")";
+        }
+    } else if (show_lvl && p.level > 0) {
+        hunter_part = (lang == 1) ? ("Nv. " + std::to_string(p.level)) :
+                      (lang == 2) ? ("Ур. " + std::to_string(p.level)) :
+                                    ("Lv. " + std::to_string(p.level));
+    }
+
+    std::string deaths_part;
+    const bool show_deaths = s.discord_rpc_show_deaths.load(std::memory_order_relaxed) &&
+                             (s.discord_rpc_deaths_mode.load(std::memory_order_relaxed) != 0);
+    if (show_deaths) {
+        deaths_part = (lang == 1) ? ("Mortes: " + std::to_string(p.session_deaths)) :
+                      (lang == 2) ? ("Смерти: " + std::to_string(p.session_deaths)) :
+                                    ("Deaths: " + std::to_string(p.session_deaths));
+    }
+
+    if (!hunter_part.empty() && !deaths_part.empty()) {
+        ad.details = hunter_part + " • " + deaths_part;
+    } else if (!hunter_part.empty()) {
+        ad.details = hunter_part;
+    } else if (!deaths_part.empty()) {
+        ad.details = deaths_part;
+    } else if (s.discord_rpc_show_area.load(std::memory_order_relaxed)) {
+        ad.details = (lang == 1) ? p.map_name_pt : (lang == 2) ? p.map_name_ru : p.map_name_en;
+    } else {
+        ad.details = (lang == 1) ? "Caçador" : (lang == 2) ? "Охотник" : "Hunter";
+    }
+
+    // --- Line 2: State (Boss, Co-op/Party, or Solo) ---
+    const bool show_boss = s.discord_rpc_show_boss.load(std::memory_order_relaxed);
+    const bool show_party = s.discord_rpc_show_party.load(std::memory_order_relaxed);
+
+    if (show_boss && !p.boss_name.empty()) {
+        ad.state = (lang == 1) ? "Lutando: " + p.boss_name : (lang == 2) ? "Бой: " + p.boss_name : "Fighting: " + p.boss_name;
+    } else if (show_party && p.coop_role == 1) {
+        if (p.npc_hunters_count > 0 && p.player_hunters_count == 0) {
+            char buf[64];
+            if (lang == 1) std::snprintf(buf, sizeof(buf), "Co-op: Anfitrião (+%d NPC%s)", p.npc_hunters_count, p.npc_hunters_count > 1 ? "s" : "");
+            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Кооп: Хост (+%d NPC)", p.npc_hunters_count);
+            else std::snprintf(buf, sizeof(buf), "Co-op: Host (+%d NPC%s)", p.npc_hunters_count, p.npc_hunters_count > 1 ? "s" : "");
+            ad.state = buf;
+        } else if (p.player_hunters_count > 0 && p.npc_hunters_count > 0) {
+            char buf[64];
+            if (lang == 1) std::snprintf(buf, sizeof(buf), "Co-op (+%d Jog, +%d NPC)", p.player_hunters_count, p.npc_hunters_count);
+            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Кооп (+%d игр, +%d NPC)", p.player_hunters_count, p.npc_hunters_count);
+            else std::snprintf(buf, sizeof(buf), "Co-op (+%d Pl, +%d NPC)", p.player_hunters_count, p.npc_hunters_count);
+            ad.state = buf;
+        } else if (p.hunters_count > 1) {
+            char buf[64];
+            int extra = p.hunters_count - 1;
+            if (lang == 1) std::snprintf(buf, sizeof(buf), "Co-op: Anfitrião (+%d)", extra);
+            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Кооп: Хост (+%d)", extra);
+            else std::snprintf(buf, sizeof(buf), "Co-op: Host (+%d)", extra);
+            ad.state = buf;
+        } else {
+            ad.state = (lang == 1) ? "Co-op: Anfitrião" : (lang == 2) ? "Кооп: Хост" : "Co-op: Host";
+        }
+    } else if (show_party && p.coop_role == 2) {
+        ad.state = (lang == 1) ? "Co-op: Convidado" : (lang == 2) ? "Кооп: Гость" : "Co-op: Guest";
+    } else if (show_party && p.invaders_count > 0) {
+        ad.state = (lang == 1) ? "Invadido!" : (lang == 2) ? "Вторжение!" : "Invaded!";
+    } else {
+        ad.state = (lang == 1) ? "Jogando Solo" : (lang == 2) ? "Одиночная игра" : "Playing Solo";
+    }
+
+    // --- Timestamps ---
+    if (s.discord_rpc_show_time.load(std::memory_order_relaxed) && p.session_start_unix_s > 0) {
+        const auto now_s = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        int64_t elapsed = (now_s > p.session_start_unix_s) ? (now_s - p.session_start_unix_s) : 0;
+        int hrs = static_cast<int>(elapsed / 3600);
+        int mins = static_cast<int>((elapsed % 3600) / 60);
+        int secs = static_cast<int>(elapsed % 60);
+        char buf[64];
+        if (hrs > 0) {
+            std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hrs, mins, secs);
+        } else {
+            std::snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
+        }
+        ad.time_text = (lang == 1) ? (std::string(buf) + " decorrido") :
+                       (lang == 2) ? (std::string(buf) + " прошло") :
+                                     (std::string(buf) + " elapsed");
+    }
+
+    // --- Assets ---
+    const bool show_area = s.discord_rpc_show_area.load(std::memory_order_relaxed);
+    if (is_custom_app) {
+        ad.large_image = show_area ? GetMapAssetKey(p.map_name_en) : "app_icon";
+        std::string area_text;
+        if (show_area) {
+            area_text = (lang == 1) ? p.map_name_pt : (lang == 2) ? p.map_name_ru : p.map_name_en;
+        }
+        if (area_text.empty()) {
+            area_text = "Bloodborne (BBPort)";
+        }
+        ad.large_text = area_text;
+        ad.small_image = "app_icon";
+        ad.small_text = "BBport Shadowy Edition";
+    } else {
+        ad.large_image = "https://store.playstation.com/store/api/chihiro/00_09_000/titlecontainer/US/en/999/CUSA03173_00/image";
+        ad.large_text = show_area ? ((lang == 1) ? p.map_name_pt : (lang == 2) ? p.map_name_ru : p.map_name_en) : "Bloodborne (BBPort)";
+        if (ad.large_text.empty()) ad.large_text = "Bloodborne (BBPort)";
+        ad.small_image = "hunter";
+        ad.small_text = "BBport Shadowy Edition";
+    }
+
+    // --- Party ---
+    if (show_party) {
+        ad.has_party = true;
+        ad.party_size = p.hunters_count > 0 ? p.hunters_count : 1;
+        ad.party_max = p.max_hunters > 0 ? p.max_hunters : 3;
+        ad.party_text = "(" + std::to_string(ad.party_size) + (lang == 1 ? " de " : lang == 2 ? " из " : " of ") + std::to_string(ad.party_max) + ")";
+    } else {
+        ad.has_party = false;
+    }
+
+    if (ad.details.size() > 127) ad.details.resize(127);
+    if (ad.state.size() > 127) ad.state.resize(127);
+
+    return ad;
+}
+
 std::string BuildActivityJson(const BbGameData::PresenceSnapshot& p, int lang) {
     const auto& s = BbSettings::Get();
     int pid = 0;
@@ -325,96 +488,33 @@ std::string BuildActivityJson(const BbGameData::PresenceSnapshot& p, int lang) {
     pid = static_cast<int>(getpid());
 #endif
 
-    const std::string& cid = s.discord_client_id;
-    const bool is_custom_app = (!cid.empty() && cid != kClientId);
-
-    if (!p.in_game) {
-        const std::string menu_title = (lang == 1) ? "Menu Principal" : (lang == 2) ? "Главное меню" : "Main Menu";
-        const std::string menu_state = (lang == 1) ? "No Menu Principal" : (lang == 2) ? "В главном меню" : "In Main Menu";
-        std::string json = "{";
-        json += "\"cmd\":\"SET_ACTIVITY\",";
-        json += "\"args\":{";
-        json += "\"pid\":" + std::to_string(pid) + ",";
-        json += "\"activity\":{";
-        json += "\"details\":\"" + EscapeJsonString(menu_title) + "\",";
-        json += "\"state\":\"" + EscapeJsonString(menu_state) + "\",";
-        if (s.discord_rpc_show_time && p.session_start_unix_s > 0) {
-            json += "\"timestamps\":{\"start\":" + std::to_string(p.session_start_unix_s) + "},";
-        }
-        json += "\"assets\":{";
-        if (is_custom_app) {
-            json += "\"large_image\":\"app_icon\",";
-        } else {
-            json += "\"large_image\":\"https://store.playstation.com/store/api/chihiro/00_09_000/titlecontainer/US/en/999/CUSA03173_00/image\",";
-        }
-        json += "\"large_text\":\"Bloodborne (BBPort)\",";
-        json += "\"small_image\":\"app_icon\",";
-        json += "\"small_text\":\"BBport Shadowy Edition\"";
-        json += "}";
-        json += "}},\"nonce\":\"1\"}";
-        return json;
-    }
-
-    std::string details;
-    if (s.discord_rpc_show_character && !p.hunter_name.empty()) {
-        details = p.hunter_name;
-        if (p.level > 0) {
-            details += " (Nv. " + std::to_string(p.level) + ")";
-        }
-    } else if (s.discord_rpc_show_area) {
-        details = (lang == 1) ? p.map_name_pt : (lang == 2) ? p.map_name_ru : p.map_name_en;
-    } else {
-        details = (lang == 1) ? "Caçador" : (lang == 2) ? "Охотник" : "Hunter";
-    }
-
-    std::string state;
-    if (!p.boss_name.empty()) {
-        state = (lang == 1) ? "Lutando: " + p.boss_name : (lang == 2) ? "Бой: " + p.boss_name : "Fighting: " + p.boss_name;
-    } else if (p.coop_role == 1) {
-        state = (lang == 1) ? "Co-op: Anfitrião" : (lang == 2) ? "Кооп: Хост" : "Co-op: Host";
-    } else if (p.coop_role == 2) {
-        state = (lang == 1) ? "Co-op: Convidado" : (lang == 2) ? "Кооп: Гость" : "Co-op: Guest";
-    } else {
-        state = (lang == 1) ? "Jogando Solo" : (lang == 2) ? "Одиночная игра" : "Playing Solo";
-    }
+    ActivityDisplay ad = FormatActivity(p, s, lang);
 
     std::string json = "{";
     json += "\"cmd\":\"SET_ACTIVITY\",";
     json += "\"args\":{";
     json += "\"pid\":" + std::to_string(pid) + ",";
     json += "\"activity\":{";
-    json += "\"details\":\"" + EscapeJsonString(details) + "\",";
-    json += "\"state\":\"" + EscapeJsonString(state) + "\",";
+    json += "\"details\":\"" + EscapeJsonString(ad.details) + "\",";
+    json += "\"state\":\"" + EscapeJsonString(ad.state) + "\",";
 
-    if (s.discord_rpc_show_time && p.session_start_unix_s > 0) {
+    if (s.discord_rpc_show_time.load(std::memory_order_relaxed) && p.session_start_unix_s > 0) {
         json += "\"timestamps\":{\"start\":" + std::to_string(p.session_start_unix_s) + "},";
     }
 
     json += "\"assets\":{";
-    if (is_custom_app) {
-        const std::string map_key = GetMapAssetKey(p.map_name_en);
-        std::string area_text = (lang == 1) ? p.map_name_pt : (lang == 2) ? p.map_name_ru : p.map_name_en;
-        if (area_text.empty()) {
-            area_text = "Bloodborne (BBPort)";
-        }
-        json += "\"large_image\":\"" + EscapeJsonString(map_key) + "\",";
-        json += "\"large_text\":\"" + EscapeJsonString(area_text) + "\",";
-        json += "\"small_image\":\"app_icon\",";
-        json += "\"small_text\":\"BBport Shadowy Edition\"";
-    } else {
-        json += "\"large_image\":\"https://store.playstation.com/store/api/chihiro/00_09_000/titlecontainer/US/en/999/CUSA03173_00/image\",";
-        json += "\"large_text\":\"Bloodborne (BBPort)\",";
-        json += "\"small_image\":\"hunter\",";
-        json += "\"small_text\":\"BBport Shadowy Edition\"";
-    }
+    json += "\"large_image\":\"" + EscapeJsonString(ad.large_image) + "\",";
+    json += "\"large_text\":\"" + EscapeJsonString(ad.large_text) + "\",";
+    json += "\"small_image\":\"" + EscapeJsonString(ad.small_image) + "\",";
+    json += "\"small_text\":\"" + EscapeJsonString(ad.small_text) + "\"";
     json += "}";
 
-    const int party_size = p.hunters_count > 0 ? p.hunters_count : 1;
-    const int party_max = 3;
-    json += ",\"party\":{";
-    json += "\"id\":\"ae488379-351d-4a4f-ad32-2b9b01c91657\",";
-    json += "\"size\":[" + std::to_string(party_size) + "," + std::to_string(party_max) + "]";
-    json += "}";
+    if (ad.has_party) {
+        json += ",\"party\":{";
+        json += "\"id\":\"ae488379-351d-4a4f-ad32-2b9b01c91657\",";
+        json += "\"size\":[" + std::to_string(ad.party_size) + "," + std::to_string(ad.party_max) + "]";
+        json += "}";
+    }
 
     json += "}},\"nonce\":\"1\"}";
     return json;
@@ -597,6 +697,12 @@ const char* GetStatusText(int lang) {
         return (lang == 1) ? "● Conectado ao Discord" : (lang == 2) ? "● Подключено к Discord" : "● Connected to Discord";
     }
     return (lang == 1) ? "○ Procurando Discord..." : (lang == 2) ? "○ Поиск Discord..." : "○ Searching for Discord...";
+}
+
+ActivityDisplay GetCurrentActivityDisplay(int lang) {
+    const auto& s = BbSettings::Get();
+    BbGameData::PresenceSnapshot p = BbGameData::GetSnapshot();
+    return FormatActivity(p, s, lang);
 }
 
 } // namespace BbDiscordRpc

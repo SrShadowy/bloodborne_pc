@@ -22,7 +22,10 @@ void RenderRawMouseCameraControls(BbSettings::Values& s, int lang, bool& dirty);
 // Renders the customizable Info HUD (OSD) section.
 void RenderInfoHudSection(BbSettings::Values& s, int lang, bool& dirty);
 
-// Renders the Discord Rich Presence (RPC) configuration section.
+// Renders the Discord Rich Presence (RPC) configuration section in settings menu.
 void RenderDiscordRpcSection(BbSettings::Values& s, int lang, bool& dirty);
+
+// Renders the standalone Discord Rich Presence configuration window.
+void RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty);
 
 } // namespace BbOverlaySections

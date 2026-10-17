@@ -81,14 +81,31 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.info_hud_show_name = i != 0;
     } else if (key == "info_hud_show_coop") {
         v.info_hud_show_coop = i != 0;
+    } else if (key == "info_hud_show_deaths") {
+        v.info_hud_show_deaths = i != 0;
     } else if (key == "discord_rpc") {
         v.discord_rpc = i != 0;
     } else if (key == "discord_rpc_show_character") {
         v.discord_rpc_show_character = i != 0;
+        v.discord_rpc_show_name = i != 0;
+        v.discord_rpc_show_level = i != 0;
+    } else if (key == "discord_rpc_show_name") {
+        v.discord_rpc_show_name = i != 0;
+    } else if (key == "discord_rpc_show_level") {
+        v.discord_rpc_show_level = i != 0;
+    } else if (key == "discord_rpc_show_deaths") {
+        v.discord_rpc_show_deaths = i != 0;
+    } else if (key == "discord_rpc_deaths_mode") {
+        v.discord_rpc_deaths_mode = i;
+        v.discord_rpc_show_deaths = i != 0;
     } else if (key == "discord_rpc_show_area") {
         v.discord_rpc_show_area = i != 0;
     } else if (key == "discord_rpc_show_time") {
         v.discord_rpc_show_time = i != 0;
+    } else if (key == "discord_rpc_show_party") {
+        v.discord_rpc_show_party = i != 0;
+    } else if (key == "discord_rpc_show_boss") {
+        v.discord_rpc_show_boss = i != 0;
     } else if (key == "discord_client_id") {
         if (!value.empty()) {
             v.discord_client_id = value;
@@ -458,10 +475,16 @@ void Save() {
     put("info_hud_show_map", flag(v.info_hud_show_map));
     put("info_hud_show_name", flag(v.info_hud_show_name));
     put("info_hud_show_coop", flag(v.info_hud_show_coop));
+    put("info_hud_show_deaths", flag(v.info_hud_show_deaths));
     put("discord_rpc", flag(v.discord_rpc));
-    put("discord_rpc_show_character", flag(v.discord_rpc_show_character));
+    put("discord_rpc_show_character", flag(v.discord_rpc_show_name && v.discord_rpc_show_level));
+    put("discord_rpc_show_name", flag(v.discord_rpc_show_name));
+    put("discord_rpc_show_level", flag(v.discord_rpc_show_level));
+    put("discord_rpc_show_deaths", flag(v.discord_rpc_show_deaths));
     put("discord_rpc_show_area", flag(v.discord_rpc_show_area));
     put("discord_rpc_show_time", flag(v.discord_rpc_show_time));
+    put("discord_rpc_show_party", flag(v.discord_rpc_show_party));
+    put("discord_rpc_show_boss", flag(v.discord_rpc_show_boss));
     put("discord_client_id", v.discord_client_id);
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));

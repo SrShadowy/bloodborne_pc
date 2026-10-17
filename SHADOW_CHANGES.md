@@ -1247,3 +1247,94 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
 - **Corrections Implemented**:
   - Dereference `GameDataMan + 0x94` directly for `playtime_ms`.
   - Guard against regression using `std::max(mem_seconds, g_cached_save_seconds)`, ensuring that even if guest memory is uninitialized or reading zero, the save file's accurate total time (e.g. 15h 25m) is preserved.
+
+---
+
+## 49. Detection of Summoned NPC Hunters & WorldChrMan Phantoms
+- **User Problem Statement**:
+  - When summoning an NPC hunter using the Old Hunter Bell (e.g. *"Antigo Caçador Antal, o Desertor"*, Henriett, Valtr, Damian, Yamamura, etc.), the Info HUD OSD continued to show `Rede: Solo` and Discord Rich Presence remained at `Jogando Solo` / Party: 1 of 3.
+- **Root Cause Analysis**:
+  - `GetCoopState` was previously querying only `kMatchingState` (`0x05540290`). `MatchingState` is strictly populated during active PSN / BBSC network multiplayer sessions. Offline or local summons (like NPC Hunters) do not generate a network session (`session_state == 0`), causing the system to mistakenly classify the player as `Solo`.
+  - **Engineering Solution**:
+  - Integrated `WorldChrMan` (`CandidateLocalStatePointerOffset = 0x0553E878`) as the authoritative source of truth for all spawned character entities in the world:
+    - `[img + 0x0553E878]` points to `WorldChrMan`.
+    - `+0x60`: Local player `PlayerIns*` (with `+0x78` indicating character type: `0` for host, `1` for guest).
+    - `+0x30` / `+0x38`: Remote network player array (used for BBSC online multiplayer injection).
+    - `+0x850 + block*8`: Array of world character blocks (`ChrIns*`, stride 56 bytes / `0x38`), where local map entities (including summoned offline NPC hunters like Antal, Henriett, Valtr) are physically spawned!
+  - For each character entry `chr`:
+    - Tracks processed addresses in a `seen` set to avoid duplicates and safely skip `local`.
+    - Checks alive status: reads `modules = *(chr + 0x3B0)`, `data = *(modules + 0x20)`, and current HP `hp = *(data + 0xF8)`. Discards dead or despawned phantoms (`hp <= 0`).
+    - Validates death flag at `[[chr + 0x58] + 0x114]` bit 0.
+    - Inspects character type `char_type = *(chr + 0x78)`:
+      - Cooperator ally: `char_type == 1` (strictly white phantom, eliminating false positives from ambient dialogue/friendly NPCs that have team 19).
+        - If online (`session_state == 3 || session_state == 6`), checks `IsValidMemberId(chr + 0x3D8)` to distinguish remote human players from offline/local NPC Hunters.
+        - If offline (`session_state == 0`) or without network member ID, categorizes as an **NPC Hunter summon** (`npc_hunters_count`).
+      - Invaders / Adversaries: `char_type == 2 || char_type == 12` (`invaders_count`).
+      - Remote host: `local_type == 1 && char_type == 0` (when local player is a guest).
+  - Dynamic status formatting (`FormatCoopStatus`):
+    - Host with NPC summon: `"Anfitrião (+1 NPC)"` / `"Anfitrião (+2 NPCs)"`.
+    - Host with human players: `"Anfitrião (+1 Caçador)"` / `"Anfitrião (+2 Caçadores)"`.
+    - Host with mixed allies: `"Anfitrião (+1 Jog., +1 NPC)"`.
+    - Host invaded: Appends `"[! 1 Invasor]"` in warning red.
+    - Guest: `"Convidado (Co-op)"`.
+    - Solo (or invaded solo): `"Solo"` or `"Invadido (1 Invasor)"`.
+  - Harmonized across Discord Rich Presence (`bbport_discord_rpc.cpp`) and the Info HUD (`bbport_info_hud.cpp`), ensuring accurate party sizes (e.g. `2 of 3`) and real-time HP-aware ally tracking.
+
+---
+
+## 50. Dynamic In-Game Death Counter with Save Slot Persistence & F10 Controls
+- **User Request**: *"consegue fazer um contador de mortes também :3?"*
+- **Architecture & Implementation Details**:
+  - **State-Machine Death Detection (`gpu/shim/rpc/bbport_game_data.cpp`)**:
+    - Continuously inspects the local player character (`kWorldChrMan + 0x60`) across three distinct authoritative engine indicators:
+      - Current health (`[[local + 0x3B0] + 0x20] + 0xF8 <= 0`).
+      - Local entity death flag (`[[local + 0x58] + 0x114]` bit 0).
+      - Global player death signal (`[kGlobalState + 0x1522] != 0`).
+    - Implemented a resilient edge-detection state machine (`g_player_was_alive -> is_dead`) with a 4-second debouncing window, completely eliminating false positives from warp transitions (lamp, Bold Hunter's Mark, death animation repeat ticks, or quitting to the title screen).
+  - **Save Slot Persistence (`bbport_deaths.ini`)**:
+    - Deaths are automatically tracked per character slot (`slot_0` to `slot_9`) inside the active save directory (`user/savedata/.../bbport_deaths.ini`), traveling with the player's saves.
+    - Synchronized with `NotifySaveSlotOpened` and `RefreshSaveCharacterInfo()`, auto-loading the matching death tally whenever characters or slots are switched.
+  - **Info HUD Display (`gpu/shim/bbport_info_hud.cpp`)**:
+    - Renders a clean, stylish line in the OSD:
+      - PT: `Mortes: X (Sessão: Y)`
+      - EN: `Deaths: X (Session: Y)`
+      - RU: `Смерти: X (Сессия: Y)`
+    - Formats as just `Mortes: X` if total equals session (e.g. first session), and subtly tints the number reddish when deaths have occurred in the current session.
+  - **Settings & Controls (`gpu/shim/bbport_settings.h`, `.cpp`, `bbport_overlay_sections.cpp`)**:
+    - Added `info_hud_show_deaths` setting persisted in `bbport.ini`.
+    - Added UI checkbox and a "Zerar Contador de Mortes" / "Reset Death Counter" button in the in-game F10 configuration overlay.
+    - Hooked `BbGameData::Tick()` into `BbOverlay::RenderFrame` for continuous 100ms background state tracking.
+
+---
+
+## 51. Dedicated Discord Rich Presence ImGui Window & Granular Privacy/Customization Controls
+- **User Request**: *"consegue fazer uma janela aparte do imgui para configurar esse discord rich present ? poem alguns campos para personalizar ou não, tipo Caçador Nome, Nivel, Morte total ou Mortes da sessão e porai vai, tempo de sessão, mostrar grupo ou não, mostrar mapa, se ta enfrentando boss e etc"* & *"eo total das mortes não ta aparecendo so da sessão"*
+- **Architecture & Implementation Details**:
+  - **Standalone ImGui Configuration Window (`gpu/shim/bbport_overlay_sections.cpp` & `bbport_overlay.cpp`)**:
+    - Created `RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty)` opened via a prominent button `[⚙️ Configurar Presença do Discord (Janela Dedicada)]` in the main F10 menu or via the toggle `s.discord_rpc_window_open`.
+    - Features a dedicated, non-collapsible floating window with its own close button (`[X]` or `Fechar Janela`).
+    - Organized into clear thematic sections: **Caçador & Personagem**, **Mundo & Combate**, **Sessão & Multijogador**, and **Prévia em Tempo Real no Discord**.
+  - **Granular Customization Options (`gpu/shim/bbport_settings.h`, `.cpp`)**:
+    - `discord_rpc_show_name` (bool, default `true`): Toggles character name in presence details.
+    - `discord_rpc_show_level` (bool, default `true`): Toggles character level (`Nv. X`) in presence details.
+    - `discord_rpc_deaths_mode` (int, default `1`): Dropdown selector for death counts in Discord:
+      - `0`: Disabled (no deaths shown)
+      - `1`: Total Deaths (`Mortes: X`)
+      - `2`: Session Deaths (`Mortes (Sessão): Y`)
+      - `3`: Both (`Mortes: X (Sessão: Y)`)
+    - `discord_rpc_show_area` (bool, default `true`): Toggles map art and location name. When disabled, falls back to generic app icon and hides location.
+    - `discord_rpc_show_boss` (bool, default `true`): Toggles boss encounter status (`Lutando: Nome do Chefe`). When disabled, displays standard co-op or solo hunt status.
+    - `discord_rpc_show_time` (bool, default `true`): Toggles elapsed playtime timer.
+    - `discord_rpc_show_party` (bool, default `true`): Toggles multiplayer group size (`(1 de 3)`) and co-op/invasion details. When disabled, omits the Discord `party` payload completely for total privacy.
+    - Full persistence implemented in `bbport.ini`.
+  - **Real-Time Discord Profile Preview Card (`gpu/shim/rpc/bbport_discord_rpc.cpp`, `.h`)**:
+    - Unified activity string formatting into `BbDiscordRpc::FormatActivity(...)` and exposed `BbDiscordRpc::GetCurrentActivityDisplay(int lang)`.
+    - Renders an authentic Discord dark-themed activity card widget (`JOGANDO UM JOGO`, game title, details, state, party count, and elapsed time) inside the ImGui window that updates live as the user toggles settings.
+  - **Death Counter Streamlining & Session Death Tracking (`gpu/shim/rpc/bbport_game_data.cpp`, `bbport_info_hud.cpp`)**:
+    - Per user decision (*"se as mortes totais não são do save então pode remover as mortes totais"*), removed the artificial `bbport_deaths.ini` file and "total deaths" concept since Bloodborne's game save does not track deaths natively.
+    - Simplified death tracking to purely and reliably measure the player's session deaths:
+      - Info HUD: cleanly displays `Mortes: X` (subtly tinted red when > 0).
+      - Discord RPC: includes `• Mortes: X` when `discord_rpc_show_deaths` is enabled.
+      - Dedicated ImGui Window: simple checkbox `Exibir Contador de Mortes` and single button `[ Resetar Contador de Mortes ]`.
+
+

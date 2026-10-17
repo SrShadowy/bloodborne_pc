@@ -24,6 +24,7 @@ namespace {
 // Memory offsets relative to guest image base (CUSA03173 1.09 eboot)
 constexpr uintptr_t kGameDataMan = 0x0553B130;
 constexpr uintptr_t kCurrentMapList = 0x0553B148;
+constexpr uintptr_t kWorldChrMan = 0x0553E878;
 constexpr uintptr_t kMatchingState = 0x05540290;
 constexpr uintptr_t kGlobalState = 0x05556678;
 constexpr uintptr_t kBossGauge = 0x05562878;
@@ -36,6 +37,12 @@ std::chrono::steady_clock::time_point g_last_save_read{};
 std::string g_cached_char_name;
 uint32_t g_cached_char_level = 0;
 uint32_t g_cached_save_seconds = 0;
+
+std::atomic<uint32_t> g_session_deaths{0};
+bool g_player_was_alive = false;
+std::chrono::steady_clock::time_point g_last_death_time{};
+
+void CheckPlayerDeath(uintptr_t img, bool in_game);
 
 struct MapEntry {
     int id;
@@ -274,6 +281,69 @@ void RefreshSaveCharacterInfo() {
     }
 }
 
+void CheckPlayerDeath(uintptr_t img, bool in_game) {
+    if (!img || !in_game) {
+        g_player_was_alive = false;
+        return;
+    }
+
+    uintptr_t world_chr = 0;
+    if (!BbMenuPointer::SafeRead(img + kWorldChrMan, &world_chr, sizeof(world_chr)) || world_chr < 0x10000) {
+        g_player_was_alive = false;
+        return;
+    }
+
+    uintptr_t local = 0;
+    if (!BbMenuPointer::SafeRead(world_chr + 0x60, &local, sizeof(local)) || local < 0x10000) {
+        g_player_was_alive = false;
+        return;
+    }
+
+    uintptr_t modules = 0;
+    if (!BbMenuPointer::SafeRead(local + 0x3B0, &modules, sizeof(modules)) || modules < 0x10000) {
+        return;
+    }
+    uintptr_t data = 0;
+    if (!BbMenuPointer::SafeRead(modules + 0x20, &data, sizeof(data)) || data < 0x10000) {
+        return;
+    }
+    int32_t hp = 0;
+    if (!BbMenuPointer::SafeRead(data + 0xF8, &hp, sizeof(hp))) {
+        return;
+    }
+
+    uint16_t dead_flag = 0;
+    uintptr_t control = 0;
+    if (BbMenuPointer::SafeRead(local + 0x58, &control, sizeof(control)) && control >= 0x10000) {
+        BbMenuPointer::SafeRead(control + 0x114, &dead_flag, sizeof(dead_flag));
+    }
+
+    uint8_t global_dead = 0;
+    uintptr_t global = 0;
+    if (BbMenuPointer::SafeRead(img + kGlobalState, &global, sizeof(global)) && global >= 0x10000) {
+        BbMenuPointer::SafeRead(global + 0x1522, &global_dead, sizeof(global_dead));
+    }
+
+    const bool is_dead = (hp <= 0) || ((dead_flag & 1) != 0) || (global_dead != 0);
+    const bool is_alive = (hp > 0) && ((dead_flag & 1) == 0) && (global_dead == 0);
+
+    const auto now = std::chrono::steady_clock::now();
+
+    if (is_alive) {
+        g_player_was_alive = true;
+    } else if (is_dead && g_player_was_alive) {
+        if (g_last_death_time.time_since_epoch().count() == 0 ||
+            (now - g_last_death_time) > std::chrono::seconds(4)) {
+            g_last_death_time = now;
+            g_session_deaths.fetch_add(1, std::memory_order_relaxed);
+
+            std::printf("[BBPort] Player died! Session deaths: %u\n", g_session_deaths.load());
+            std::fflush(stdout);
+        }
+        g_player_was_alive = false;
+    }
+}
+
 std::string GetCurrentBossName(int lang) {
     const uintptr_t img = bbgpu_get_guest_image_base();
     if (!img) return "";
@@ -380,36 +450,204 @@ void ResolveMapNames(uint32_t packed, std::string& pt, std::string& en, std::str
     ru = buf;
 }
 
-void GetCoopState(int& role, int& hunters, int& max_hunters) {
+void GetCoopState(int& role, int& hunters, int& max_hunters,
+                  int& npc_count, int& player_count, int& invader_count) {
     role = 0;
     hunters = 1;
-    max_hunters = 3;
+    npc_count = 0;
+    player_count = 0;
+    invader_count = 0;
+
+    const char* five = std::getenv("SHADPS4_BBSC_FIVE_HUNTERS");
+    max_hunters = (five && (std::strcmp(five, "1") == 0 || std::strcmp(five, "true") == 0)) ? 5 : 3;
 
     const uintptr_t img = bbgpu_get_guest_image_base();
     if (!img) return;
 
+    int32_t session_state = 0;
     uintptr_t matching = 0;
     if (BbMenuPointer::SafeRead(img + kMatchingState, &matching, sizeof(matching)) && matching >= 0x10000) {
-        int32_t session_state = 0;
-        if (BbMenuPointer::SafeRead(matching + 0x124, &session_state, sizeof(session_state))) {
-            if (session_state == 3) role = 1;      // Host
-            else if (session_state == 6) role = 2; // Guest
-        }
+        BbMenuPointer::SafeRead(matching + 0x124, &session_state, sizeof(session_state));
     }
 
-    if (role != 0) {
-        uintptr_t global = 0, population = 0;
-        if (BbMenuPointer::SafeRead(img + kGlobalState, &global, sizeof(global)) && global >= 0x10000) {
-            if (BbMenuPointer::SafeRead(global + 0x16F8, &population, sizeof(population)) && population >= 0x10000) {
-                int32_t coop = 0;
-                if (BbMenuPointer::SafeRead(population + 0x08, &coop, sizeof(coop))) {
-                    if (coop > 0 && coop <= 4) {
-                        hunters = static_cast<int>(coop) + 1;
+    uintptr_t world_chr = 0;
+    int32_t local_type = 0;
+    int active_coop_npc = 0;
+    int active_coop_player = 0;
+    int active_invaders = 0;
+    int active_host = 0;
+
+    if (BbMenuPointer::SafeRead(img + kWorldChrMan, &world_chr, sizeof(world_chr)) && world_chr >= 0x10000) {
+        uintptr_t local = 0;
+        BbMenuPointer::SafeRead(world_chr + 0x60, &local, sizeof(local));
+        if (local >= 0x10000) {
+            BbMenuPointer::SafeRead(local + 0x78, &local_type, sizeof(local_type));
+        }
+
+        std::vector<uintptr_t> seen;
+        seen.reserve(32);
+        if (local >= 0x10000) {
+            seen.push_back(local);
+        }
+
+        auto process_chr = [&](uintptr_t chr) {
+            if (chr < 0x10000) return;
+            for (uintptr_t s : seen) {
+                if (s == chr) return;
+            }
+            seen.push_back(chr);
+
+            // HP via [[chr+0x3B0]+0x20]+0xF8
+            uintptr_t modules = 0;
+            if (!BbMenuPointer::SafeRead(chr + 0x3B0, &modules, sizeof(modules)) || modules < 0x10000) {
+                return;
+            }
+            uintptr_t data = 0;
+            if (!BbMenuPointer::SafeRead(modules + 0x20, &data, sizeof(data)) || data < 0x10000) {
+                return;
+            }
+            int32_t hp = 0;
+            if (!BbMenuPointer::SafeRead(data + 0xF8, &hp, sizeof(hp)) || hp <= 0) {
+                return;
+            }
+
+            // Death flag at [[chr+0x58]+0x114] bit 0
+            uintptr_t control = 0;
+            if (BbMenuPointer::SafeRead(chr + 0x58, &control, sizeof(control)) && control >= 0x10000) {
+                uint16_t dead_flag = 0;
+                if (BbMenuPointer::SafeRead(control + 0x114, &dead_flag, sizeof(dead_flag)) && (dead_flag & 1) != 0) {
+                    return;
+                }
+            }
+
+            // Character type at chr + 0x78:
+            // 0 = host / normal world entity, 1 = co-op phantom (summoned helper), 2/12 = invader
+            int32_t char_type = -1;
+            BbMenuPointer::SafeRead(chr + 0x78, &char_type, sizeof(char_type));
+
+            const bool is_coop = (char_type == 1);
+            const bool is_invader = (char_type == 2 || char_type == 12);
+            const bool is_remote_host = (local_type == 1 && char_type == 0);
+
+            if (is_coop) {
+                bool is_net = false;
+                if (session_state == 3 || session_state == 6) {
+                    uintptr_t lock = 0;
+                    if (BbMenuPointer::SafeRead(chr + 0x3D8 + 0x08, &lock, sizeof(lock)) && lock >= 0x10000) {
+                        uintptr_t vtable = 0;
+                        if (BbMenuPointer::SafeRead(lock, &vtable, sizeof(vtable)) && vtable >= 0x10000) {
+                            uintptr_t fn = 0;
+                            if (BbMenuPointer::SafeRead(vtable + 0x30, &fn, sizeof(fn)) && fn >= 0x10000) {
+                                is_net = true;
+                            }
+                        }
                     }
+                }
+                if (is_net) {
+                    ++active_coop_player;
+                } else {
+                    ++active_coop_npc;
+                }
+            } else if (is_invader) {
+                ++active_invaders;
+            } else if (is_remote_host) {
+                ++active_host;
+            }
+        };
+
+        // 1. Scan network player array at world_chr + 0x38 (stride 0x38)
+        int32_t count = 0;
+        uintptr_t entries = 0;
+        BbMenuPointer::SafeRead(world_chr + 0x30, &count, sizeof(count));
+        BbMenuPointer::SafeRead(world_chr + 0x38, &entries, sizeof(entries));
+        if (count > 0 && count <= 64 && entries >= 0x10000) {
+            for (int32_t i = 0; i < count; ++i) {
+                uintptr_t chr = 0;
+                if (BbMenuPointer::SafeRead(entries + static_cast<size_t>(i) * 0x38, &chr, sizeof(chr))) {
+                    process_chr(chr);
+                }
+            }
+        }
+
+        // 2. Scan world character blocks at world_chr + 0x850 + b * 8 (where summoned NPC hunters live)
+        uintptr_t blocks_info = 0;
+        int32_t block_count = 64;
+        if (BbMenuPointer::SafeRead(world_chr + 0x08, &blocks_info, sizeof(blocks_info)) && blocks_info >= 0x10000) {
+            int32_t b_cnt = 0;
+            if (BbMenuPointer::SafeRead(blocks_info + 0x18, &b_cnt, sizeof(b_cnt)) && b_cnt >= 0 && b_cnt < 64) {
+                block_count = std::min(64, b_cnt + 4);
+            }
+        }
+        for (int32_t b = 0; b < block_count; ++b) {
+            uintptr_t block = 0;
+            if (!BbMenuPointer::SafeRead(world_chr + 0x850 + static_cast<size_t>(b) * 8, &block, sizeof(block)) || block < 0x10000) {
+                continue;
+            }
+            int32_t b_chr_count = 0;
+            uintptr_t b_chr_entries = 0;
+            if (!BbMenuPointer::SafeRead(block + 0, &b_chr_count, sizeof(b_chr_count)) || b_chr_count <= 0 || b_chr_count > 0x3FFF ||
+                !BbMenuPointer::SafeRead(block + 8, &b_chr_entries, sizeof(b_chr_entries)) || b_chr_entries < 0x10000) {
+                continue;
+            }
+            for (int32_t i = 0; i < b_chr_count; ++i) {
+                uintptr_t chr = 0;
+                if (BbMenuPointer::SafeRead(b_chr_entries + static_cast<size_t>(i) * 0x38, &chr, sizeof(chr))) {
+                    process_chr(chr);
                 }
             }
         }
     }
+
+    // Fallback for online network session if population has entries not yet spawned
+    if (active_coop_player == 0 && session_state == 3) {
+        uintptr_t global = 0, population = 0;
+        if (BbMenuPointer::SafeRead(img + kGlobalState, &global, sizeof(global)) && global >= 0x10000) {
+            if (BbMenuPointer::SafeRead(global + 0x16F8, &population, sizeof(population)) && population >= 0x10000) {
+                int32_t coop = 0;
+                if (BbMenuPointer::SafeRead(population + 0x08, &coop, sizeof(coop)) && coop > 0 && coop <= 4) {
+                    active_coop_player = coop;
+                }
+            }
+        }
+    }
+
+    npc_count = active_coop_npc;
+    player_count = active_coop_player;
+    invader_count = active_invaders;
+
+    if (local_type == 1 || session_state == 6) {
+        role = 2; // Guest
+        hunters = std::max(2, 1 + active_coop_npc + active_coop_player + (active_host > 0 ? 1 : 1));
+    } else {
+        int total_allies = active_coop_npc + active_coop_player;
+        if (total_allies > 0) {
+            role = 1; // Host
+            hunters = 1 + total_allies;
+        } else if (session_state == 3) {
+            role = 1; // Host (waiting online)
+            hunters = 1;
+        } else {
+            role = 0; // Solo
+            hunters = 1;
+        }
+    }
+
+    static int last_logged_npc = -1;
+    static int last_logged_player = -1;
+    static int last_logged_invaders = -1;
+    if (active_coop_npc != last_logged_npc || active_coop_player != last_logged_player || active_invaders != last_logged_invaders) {
+        last_logged_npc = active_coop_npc;
+        last_logged_player = active_coop_player;
+        last_logged_invaders = active_invaders;
+        std::printf("[BBPort] Co-op state: %d NPC(s), %d player(s), %d invader(s), role=%d\n",
+                    active_coop_npc, active_coop_player, active_invaders, role);
+        std::fflush(stdout);
+    }
+}
+
+void GetCoopState(int& role, int& hunters, int& max_hunters) {
+    int dummy_npc = 0, dummy_player = 0, dummy_inv = 0;
+    GetCoopState(role, hunters, max_hunters, dummy_npc, dummy_player, dummy_inv);
 }
 
 } // namespace
@@ -420,12 +658,34 @@ void Init() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+void Tick() {
+    static auto last_tick = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (last_tick.time_since_epoch().count() != 0 && (now - last_tick) < std::chrono::milliseconds(100)) {
+        return;
+    }
+    last_tick = now;
+
+    const uintptr_t img = bbgpu_get_guest_image_base();
+    if (!img) return;
+
+    uint32_t packed = 0;
+    const bool in_game = GetPackedMap(packed);
+    CheckPlayerDeath(img, in_game);
+}
+
 void NotifySaveSlotOpened(int slot) {
     if (slot >= 0 && slot < 10) {
         g_active_slot.store(slot, std::memory_order_relaxed);
         g_last_save_read = {};
         RefreshSaveCharacterInfo();
     }
+}
+
+void ResetDeathCounter(bool /*reset_total*/) {
+    g_session_deaths.store(0, std::memory_order_relaxed);
+    std::printf("[BBPort] Death counter reset: session=0\n");
+    std::fflush(stdout);
 }
 
 uint32_t GetInGamePlaytimeSeconds() {
@@ -459,25 +719,61 @@ std::string GetCurrentMapName(int lang) {
     return (lang == 1) ? pt : (lang == 2) ? ru : en;
 }
 
-std::string GetCoopStatus(int lang) {
-    int role = 0, hunters = 1, max_hunters = 3;
-    GetCoopState(role, hunters, max_hunters);
-
-    if (role == 1) {
-        int coop = hunters - 1;
-        if (coop > 0) {
+std::string FormatCoopStatus(const PresenceSnapshot& snap, int lang) {
+    std::string base;
+    if (snap.coop_role == 1) {
+        if (snap.npc_hunters_count > 0 && snap.player_hunters_count == 0) {
             char buf[64];
-            if (lang == 1) std::snprintf(buf, sizeof(buf), "Anfitrião (+%d Caçador%s)", coop, coop > 1 ? "es" : "");
-            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Хост (+%d)", coop);
-            else std::snprintf(buf, sizeof(buf), "Host (+%d Hunter%s)", coop, coop > 1 ? "s" : "");
+            int n = snap.npc_hunters_count;
+            if (lang == 1) std::snprintf(buf, sizeof(buf), "Anfitrião (+%d NPC%s)", n, n > 1 ? "s" : "");
+            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Хост (+%d NPC)", n);
+            else std::snprintf(buf, sizeof(buf), "Host (+%d NPC%s)", n, n > 1 ? "s" : "");
+            base = buf;
+        } else if (snap.player_hunters_count > 0 && snap.npc_hunters_count > 0) {
+            char buf[64];
+            if (lang == 1) std::snprintf(buf, sizeof(buf), "Anfitrião (+%d Jog., +%d NPC)", snap.player_hunters_count, snap.npc_hunters_count);
+            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Хост (+%d Игрок, +%d NPC)", snap.player_hunters_count, snap.npc_hunters_count);
+            else std::snprintf(buf, sizeof(buf), "Host (+%d Player, +%d NPC)", snap.player_hunters_count, snap.npc_hunters_count);
+            base = buf;
+        } else {
+            int coop = snap.hunters_count - 1;
+            if (coop > 0) {
+                char buf[64];
+                if (lang == 1) std::snprintf(buf, sizeof(buf), "Anfitrião (+%d Caçador%s)", coop, coop > 1 ? "es" : "");
+                else if (lang == 2) std::snprintf(buf, sizeof(buf), "Хост (+%d)", coop);
+                else std::snprintf(buf, sizeof(buf), "Host (+%d Hunter%s)", coop, coop > 1 ? "s" : "");
+                base = buf;
+            } else {
+                base = (lang == 1) ? "Anfitrião (Host)" : (lang == 2) ? "Хост" : "Host";
+            }
+        }
+    } else if (snap.coop_role == 2) {
+        base = (lang == 1) ? "Convidado (Co-op)" : (lang == 2) ? "Гость (Кооп)" : "Guest (Co-op)";
+    } else {
+        if (snap.invaders_count > 0) {
+            char buf[64];
+            int inv = snap.invaders_count;
+            if (lang == 1) std::snprintf(buf, sizeof(buf), "Invadido (%d Invasor%s)", inv, inv > 1 ? "es" : "");
+            else if (lang == 2) std::snprintf(buf, sizeof(buf), "Вторжение (%d)", inv);
+            else std::snprintf(buf, sizeof(buf), "Invaded (%d Invader%s)", inv, inv > 1 ? "s" : "");
             return std::string(buf);
         }
-        return (lang == 1) ? "Anfitrião (Host)" : (lang == 2) ? "Хост" : "Host";
-    } else if (role == 2) {
-        return (lang == 1) ? "Convidado (Co-op)" : (lang == 2) ? "Гость (Кооп)" : "Guest (Co-op)";
+        return (lang == 1) ? "Solo" : (lang == 2) ? "Одиночная" : "Solo";
     }
 
-    return (lang == 1) ? "Solo" : (lang == 2) ? "Одиночная" : "Solo";
+    if (snap.invaders_count > 0) {
+        char buf[32];
+        int inv = snap.invaders_count;
+        if (lang == 1) std::snprintf(buf, sizeof(buf), " [! %d Invasor%s]", inv, inv > 1 ? "es" : "");
+        else if (lang == 2) std::snprintf(buf, sizeof(buf), " [! %d Вторженец]", inv);
+        else std::snprintf(buf, sizeof(buf), " [! %d Invader%s]", inv, inv > 1 ? "s" : "");
+        base += buf;
+    }
+    return base;
+}
+
+std::string GetCoopStatus(int lang) {
+    return FormatCoopStatus(GetSnapshot(), lang);
 }
 
 PresenceSnapshot GetSnapshot() {
@@ -506,7 +802,14 @@ PresenceSnapshot GetSnapshot() {
 
     const int lang = BbSettings::Get().menu_language.load();
     data.boss_name = GetCurrentBossName(lang);
-    GetCoopState(data.coop_role, data.hunters_count, data.max_hunters);
+    GetCoopState(data.coop_role, data.hunters_count, data.max_hunters,
+                 data.npc_hunters_count, data.player_hunters_count, data.invaders_count);
+
+    const uintptr_t img = bbgpu_get_guest_image_base();
+    CheckPlayerDeath(img, data.in_game);
+    data.session_deaths = g_session_deaths.load(std::memory_order_relaxed);
+    data.total_deaths = data.session_deaths;
+
     return data;
 }
 

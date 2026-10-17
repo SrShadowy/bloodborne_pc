@@ -7,6 +7,7 @@
 #include "bbport_discord_rpc.h"
 #include "bbport_strings.h"
 #include "common/path_util.h"
+#include "rpc/bbport_game_data.h"
 
 #include <imgui.h>
 
@@ -223,6 +224,23 @@ void RenderInfoHudSection(BbSettings::Values& s, int lang, bool& dirty) {
                                          "Co-op Status (Online)";
     Checkbox(lbl_coop, s.info_hud_show_coop, dirty);
 
+    const char* lbl_deaths = (lang == 1) ? "Contador de Mortes (Sessão)" :
+                             (lang == 2) ? "Счётчик смертей (Сессия)" :
+                                           "Death Counter (Session)";
+    Checkbox(lbl_deaths, s.info_hud_show_deaths, dirty);
+
+    ImGui::Spacing();
+    const char* btn_reset_deaths = (lang == 1) ? "Zerar Contador de Mortes" :
+                                   (lang == 2) ? "Сбросить счётчик смертей" :
+                                                 "Reset Death Counter";
+    if (ImGui::Button(btn_reset_deaths)) {
+        BbGameData::ResetDeathCounter();
+    }
+    const char* hint_reset = (lang == 1) ? "Zera o contador de mortes da sessão atual." :
+                             (lang == 2) ? "Сбрасывает счётчик смертей текущей сессии." :
+                                           "Resets current session deaths.";
+    Hint(hint_reset);
+
     ImGui::EndDisabled();
 }
 
@@ -258,22 +276,212 @@ void RenderDiscordRpcSection(BbSettings::Values& s, int lang, bool& dirty) {
 
     ImGui::BeginDisabled(!rpc_enabled);
 
-    const char* lbl_char = (lang == 1) ? "Exibir Nome e Nível do Personagem" :
-                           (lang == 2) ? "Показывать имя и уровень охотника" :
-                                         "Show Character Name & Level";
-    Checkbox(lbl_char, s.discord_rpc_show_character, dirty);
-
-    const char* lbl_area = (lang == 1) ? "Exibir Mapa / Área Atual" :
-                           (lang == 2) ? "Показывать локацию / босса" :
-                                         "Show Current Map / Area";
-    Checkbox(lbl_area, s.discord_rpc_show_area, dirty);
-
-    const char* lbl_time = (lang == 1) ? "Exibir Tempo de Sessão" :
-                           (lang == 2) ? "Показывать время сессии" :
-                                         "Show Elapsed Session Time";
-    Checkbox(lbl_time, s.discord_rpc_show_time, dirty);
+    const char* btn_label = (lang == 1) ? "Configurar Presença do Discord (Janela Dedicada)###btn_open_drpc_win" :
+                            (lang == 2) ? "Настроить статус Discord (Отдельное окно)###btn_open_drpc_win" :
+                                          "Configure Discord Presence (Dedicated Window)###btn_open_drpc_win";
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.36f, 0.68f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.46f, 0.82f, 1.0f));
+    if (ImGui::Button(btn_label, ImVec2(-1, 0))) {
+        s.discord_rpc_window_open = true;
+        dirty = true;
+    }
+    ImGui::PopStyleColor(2);
+    Hint((lang == 1) ? "Abre janela com personalização granular (Nome, Nível, Mortes, Chefe, Grupo, Mapa, Tempo) e prévia em tempo real." :
+         (lang == 2) ? "Открывает окно с тонкими настройками и живым предпросмотром статуса." :
+                       "Opens dedicated window with granular options (Name, Level, Deaths, Boss, Party, Map, Time) and live preview.");
 
     ImGui::EndDisabled();
+}
+
+void RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty) {
+    if (!s.discord_rpc_window_open.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    bool open = true;
+    const char* win_title = (lang == 1) ? "Configuração do Discord Rich Presence###discord_rpc_window" :
+                            (lang == 2) ? "Настройки Discord Rich Presence###discord_rpc_window" :
+                                          "Discord Rich Presence Settings###discord_rpc_window";
+
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 580.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(win_title, &open, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        if (!open) {
+            s.discord_rpc_window_open = false;
+            dirty = true;
+        }
+        return;
+    }
+    if (!open) {
+        s.discord_rpc_window_open = false;
+        dirty = true;
+        ImGui::End();
+        return;
+    }
+
+    // Status & Master Toggle
+    const bool is_connected = BbDiscordRpc::IsConnected();
+    const bool rpc_enabled = s.discord_rpc.load(std::memory_order_relaxed);
+    const char* status_str = BbDiscordRpc::GetStatusText(lang);
+
+    ImVec4 status_col;
+    if (!rpc_enabled) {
+        status_col = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+    } else if (is_connected) {
+        status_col = ImVec4(0.3f, 1.0f, 0.4f, 1.0f);
+    } else {
+        status_col = ImVec4(1.0f, 0.75f, 0.2f, 1.0f);
+    }
+
+    ImGui::TextColored(status_col, "%s", status_str);
+    ImGui::SameLine(0.0f, 20.0f);
+    Checkbox((lang == 1) ? "Ativar Presença" : (lang == 2) ? "Включить статус" : "Enable Presence", s.discord_rpc, dirty);
+
+    ImGui::Separator();
+
+    ImGui::BeginDisabled(!rpc_enabled);
+
+    // Section 1: Caçador & Personagem
+    ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "%s",
+                       (lang == 1) ? "Caçador & Personagem" : (lang == 2) ? "Охотник и персонаж" : "Hunter & Character");
+
+    Checkbox((lang == 1) ? "Exibir Nome do Caçador" : (lang == 2) ? "Показывать имя охотника" : "Show Hunter Name",
+             s.discord_rpc_show_name, dirty);
+    Hint((lang == 1) ? "Exibe o nome do seu caçador do slot de save atual na linha de detalhes." :
+         (lang == 2) ? "Показывает имя вашего охотника из текущего слота." :
+                       "Displays your character's name from active save slot in details line.");
+
+    Checkbox((lang == 1) ? "Exibir Nível do Caçador" : (lang == 2) ? "Показывать уровень охотника" : "Show Hunter Level",
+             s.discord_rpc_show_level, dirty);
+    Hint((lang == 1) ? "Exibe o nível atual do seu caçador (ex: Nv. 120)." :
+         (lang == 2) ? "Показывает уровень вашего охотника (напр. Ур. 120)." :
+                       "Displays hunter level (e.g. Lv. 120).");
+
+    // Section 2: Contador de Mortes
+    Checkbox((lang == 1) ? "Exibir Contador de Mortes" : (lang == 2) ? "Показывать счётчик смертей" : "Show Death Counter",
+             s.discord_rpc_show_deaths, dirty);
+    Hint((lang == 1) ? "Inclui a contagem de mortes da sessão atual na linha de detalhes do Discord." :
+         (lang == 2) ? "Добавляет счетчик смертей текущей сессии в строку статуса Discord." :
+                       "Appends session death counter to the details line in Discord.");
+
+    ImGui::Spacing();
+
+    // Section 3: Mundo & Combate
+    ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "%s",
+                       (lang == 1) ? "Mundo & Combate" : (lang == 2) ? "Мир и сражения" : "World & Combat");
+
+    Checkbox((lang == 1) ? "Exibir Mapa / Área Atual" : (lang == 2) ? "Показывать текущую локацию" : "Show Current Map / Area",
+             s.discord_rpc_show_area, dirty);
+    Hint((lang == 1) ? "Exibe o nome da área e imagem correspondente no Discord." :
+         (lang == 2) ? "Показывает название области и изображение локации." :
+                       "Displays map area name and corresponding art in Discord.");
+
+    Checkbox((lang == 1) ? "Exibir Combate contra Chefe" : (lang == 2) ? "Показывать бой с боссом" : "Show Boss Encounters",
+             s.discord_rpc_show_boss, dirty);
+    Hint((lang == 1) ? "Mostra 'Lutando: <Nome do Chefe>' na linha de estado quando em combate de chefe." :
+         (lang == 2) ? "Показывает 'Бой: <Имя босса>' во время битвы с боссом." :
+                       "Shows 'Fighting: <Boss Name>' during active boss battles.");
+
+    ImGui::Spacing();
+
+    // Section 4: Sessão & Multijogador
+    ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "%s",
+                       (lang == 1) ? "Sessão & Multijogador" : (lang == 2) ? "Сессия и мультиплеер" : "Session & Multiplayer");
+
+    Checkbox((lang == 1) ? "Exibir Tempo de Sessão" : (lang == 2) ? "Показывать время сессии" : "Show Elapsed Session Time",
+             s.discord_rpc_show_time, dirty);
+    Hint((lang == 1) ? "Mostra o cronômetro com tempo decorrido desde o início da sessão." :
+         (lang == 2) ? "Показывает таймер с начала игровой сессии." :
+                       "Displays timestamp counter since game launch.");
+
+    Checkbox((lang == 1) ? "Exibir Grupo & Co-op (NPCs / Jogadores)" : (lang == 2) ? "Показывать группу и кооп" : "Show Party & Co-op",
+             s.discord_rpc_show_party, dirty);
+    Hint((lang == 1) ? "Mostra tamanho do grupo (1 de 3), ajudantes NPC invocados e invasões." :
+         (lang == 2) ? "Показывает размер группы (1 из 3), призванных NPC и вторжения." :
+                       "Displays party size (1 of 3), summoned NPC helpers, and invasions.");
+
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    // Section 5: Live Discord Profile Preview Card!
+    ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "%s",
+                       (lang == 1) ? "Prévia em Tempo Real no Discord" :
+                       (lang == 2) ? "Предпросмотр профиля Discord в реальном времени" :
+                                     "Real-time Discord Profile Preview");
+
+    BbDiscordRpc::ActivityDisplay act = BbDiscordRpc::GetCurrentActivityDisplay(lang);
+
+    // Styled box resembling Discord's activity widget
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.13f, 0.15f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 10.0f));
+
+    if (ImGui::BeginChild("##discord_preview_card", ImVec2(0, 115.0f), true)) {
+        ImGui::TextColored(ImVec4(0.70f, 0.72f, 0.75f, 1.0f), "%s",
+                           (lang == 1) ? "JOGANDO UM JOGO" : (lang == 2) ? "ИГРАЕТ В ИГРУ" : "PLAYING A GAME");
+
+        ImVec2 icon_pos = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(icon_pos, ImVec2(icon_pos.x + 50.0f, icon_pos.y + 50.0f), IM_COL32(35, 38, 44, 255), 8.0f);
+        dl->AddRect(icon_pos, ImVec2(icon_pos.x + 50.0f, icon_pos.y + 50.0f), IM_COL32(88, 101, 242, 220), 8.0f, 0, 1.5f);
+        dl->AddText(ImVec2(icon_pos.x + 14.0f, icon_pos.y + 16.0f), IM_COL32(235, 237, 239, 255), "BB");
+
+        ImGui::Dummy(ImVec2(58.0f, 52.0f));
+        ImGui::SameLine();
+
+        ImGui::BeginGroup();
+        // Game title
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "Bloodborne (BBPort)");
+
+        // Details line
+        if (!act.details.empty()) {
+            ImGui::TextColored(ImVec4(0.88f, 0.90f, 0.92f, 1.0f), "%s", act.details.c_str());
+        }
+
+        // State + Party line
+        if (!act.state.empty() || act.has_party) {
+            std::string st = act.state;
+            if (act.has_party && !act.party_text.empty()) {
+                st += " " + act.party_text;
+            }
+            ImGui::TextColored(ImVec4(0.72f, 0.74f, 0.78f, 1.0f), "%s", st.c_str());
+        }
+
+        // Timestamps line
+        if (!act.time_text.empty()) {
+            ImGui::TextColored(ImVec4(0.72f, 0.74f, 0.78f, 1.0f), "%s", act.time_text.c_str());
+        }
+        ImGui::EndGroup();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+
+    ImGui::Spacing();
+
+    // Section 6: Current Stats & Quick Reset Button
+    BbGameData::PresenceSnapshot snap = BbGameData::GetSnapshot();
+    ImGui::TextDisabled((lang == 1) ? "Mortes na Sessão Atual: %u" :
+                        (lang == 2) ? "Смертей в текущей сессии: %u" :
+                                      "Current Session Deaths: %u",
+                        snap.session_deaths);
+
+    ImGui::Spacing();
+    if (ImGui::Button((lang == 1) ? "Fechar Janela" : (lang == 2) ? "Закрыть окно" : "Close Window", ImVec2(120.0f, 0))) {
+        s.discord_rpc_window_open = false;
+        dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button((lang == 1) ? "Resetar Contador de Mortes" : (lang == 2) ? "Сбросить счётчик смертей" : "Reset Death Counter")) {
+        BbGameData::ResetDeathCounter();
+    }
+    Hint((lang == 1) ? "Zera o contador de mortes da sessão atual." :
+         (lang == 2) ? "Сбрасывает счётчик смертей текущей сессии." :
+                       "Resets the death counter for the current gaming session.");
+
+    ImGui::End();
 }
 
 #undef S

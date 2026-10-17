@@ -19,6 +19,7 @@
 #include "bbport_discord_rpc.h"
 #include "bbport_info_hud.h"
 #include "bbport_settings.h"
+#include "rpc/bbport_game_data.h"
 #include "bbport_strings.h"
 #include "ui_manager.h"
 #include "ui_strings.h"
@@ -875,6 +876,9 @@ void Menu() {
 
     // Render the separate Memory Operations & Reverse Engineering window
     UI::UiManager::Render();
+
+    // Render the separate Discord Rich Presence configuration window
+    BbOverlaySections::RenderDiscordRpcWindow(s, lang, dirty);
 }
 
 void FpsCounter() {
@@ -1524,6 +1528,8 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
         style.FontScaleMain = scale;
         base_scale = scale;
     }
+
+    BbGameData::Tick();
 
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
