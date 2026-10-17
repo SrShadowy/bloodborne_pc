@@ -324,7 +324,9 @@ def build_standalone_launcher(staging_dir, force_rebuild=False):
         str(launcher_src_dir / "bbport_launcher.py"),
     ]
     try:
-        run_command(pyi_cmd)
+        ret = run_command(pyi_cmd, check=False)
+        if ret != 0:
+            raise RuntimeError(f"PyInstaller exited with code {ret}")
         built_file = dist_dir / "bbport-launcher"
         if not built_file.is_file():
             raise RuntimeError(f"PyInstaller failed to create {built_file}")
