@@ -52,36 +52,12 @@ void ViewHexGrid::RenderHexGridView(uintptr_t& cur_addr, float height, bool stan
             cur_addr = ResolveHexAddress(std::strtoull(addr_buf, nullptr, 16));
         }
         ImGui::SameLine();
-        if (ImGui::Button("Go##hex_mv")) {
-            cur_addr = ResolveHexAddress(std::strtoull(addr_buf, nullptr, 16));
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Paste##hex_mv")) {
-            const char* clip = SDL_GetClipboardText();
-            if (clip && clip[0]) cur_addr = ResolveHexAddress(std::strtoull(clip, nullptr, 16));
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("<<##hpgup_mv") && cur_addr >= 256) cur_addr -= 256;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("Back 256 bytes", "Voltar 256 bytes", "Назад 256 байт"));
-
-        ImGui::SameLine();
-        if (ImGui::Button("<##hstepup_mv") && cur_addr >= 16) cur_addr -= 16;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("Back 16 bytes (1 line)", "Voltar 16 bytes (1 linha)", "Назад 16 байт"));
-
-        ImGui::SameLine();
-        if (ImGui::Button(">##hstepdn_mv")) cur_addr += 16;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("Forward 16 bytes (1 line)", "Avancar 16 bytes (1 linha)", "Вперед 16 байт"));
-
-        ImGui::SameLine();
-        if (ImGui::Button(">>##hpgdn_mv")) cur_addr += 256;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L("Forward 256 bytes", "Avancar 256 bytes", "Вперед 256 байт"));
-
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
         if (ImGui::SmallButton("eboot##mv")) cur_addr = ResolveHexAddress(0x00400000);
+        ImGui::SetItemTooltip("%s", L("Jump to eboot base (0x00400000)", "Pular para a base do eboot (0x00400000)", "Перейти к eboot"));
+
         ImGui::SameLine();
         if (ImGui::SmallButton("Heap##mv")) cur_addr = 0x1000000000ULL;
+        ImGui::SetItemTooltip("%s", L("Jump to main heap (0x1000000000)", "Pular para o heap principal (0x1000000000)", "Перейти к куче"));
     }
 
     const char* child_id = standalone ? "HexChildMV" : "HexChildTab";
@@ -133,7 +109,9 @@ void ViewHexGrid::RenderHexGridView(uintptr_t& cur_addr, float height, bool stan
                 s_has_selection = true;
             }
 
-            if (ImGui::BeginPopupContextItem()) {
+            char hex_pop_id[32];
+            std::snprintf(hex_pop_id, sizeof(hex_pop_id), "##hex_row_%08llx", static_cast<unsigned long long>(row_addr));
+            if (ImGui::BeginPopupContextItem(hex_pop_id)) {
                 s_selected_addr = row_addr;
                 s_has_selection = true;
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "0x%012llx", static_cast<unsigned long long>(row_addr));

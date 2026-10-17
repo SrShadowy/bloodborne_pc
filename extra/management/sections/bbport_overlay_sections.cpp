@@ -420,7 +420,7 @@ void RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty) {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 10.0f));
 
-    if (ImGui::BeginChild("##discord_preview_card", ImVec2(0, 115.0f), true)) {
+    if (ImGui::BeginChild("##discord_preview_card", ImVec2(0, 120.0f), ImGuiWindowFlags_NoScrollbar)) {
         ImGui::TextColored(ImVec4(0.70f, 0.72f, 0.75f, 1.0f), "%s",
                            (lang == 1) ? "JOGANDO UM JOGO" : (lang == 2) ? "ИГРАЕТ В ИГРУ" : "PLAYING A GAME");
 

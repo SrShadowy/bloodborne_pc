@@ -453,10 +453,49 @@ bool BreakpointManager::OnSignalTrap(uintptr_t rip, pid_t tid, siginfo_t* info, 
     // 2. Check for software breakpoints (INT3 hit)
     const uintptr_t bp_addr = rip ? (rip - 1) : 0;
     if (bp_addr && HasBreakpoint(bp_addr)) {
-        if (auto_pause_on_hit.load(std::memory_order_relaxed)) {
-            game_paused.store(true, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto& bp_entry : breakpoints) {
+            if (bp_entry.address == bp_addr && bp_entry.enabled) {
+                // Restore original instruction byte so the CPU can execute it
+                MemoryScanner::WriteMemory(bp_addr, &bp_entry.original_byte, 1);
+#if defined(__x86_64__)
+                // Rewind RIP back to the instruction start (INT3 leaves RIP at bp_addr + 1)
+                ctx->uc_mcontext.gregs[REG_RIP] = bp_addr;
+#endif
+                RawHitEvent ev{};
+                ev.rip = bp_addr;
+                ev.fault_addr = bp_addr;
+                ev.thread_id = tid;
+                ev.timestamp = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count());
+#if defined(__x86_64__)
+                CpuRegisters regs{};
+                regs.rax = ctx->uc_mcontext.gregs[REG_RAX];
+                regs.rbx = ctx->uc_mcontext.gregs[REG_RBX];
+                regs.rcx = ctx->uc_mcontext.gregs[REG_RCX];
+                regs.rdx = ctx->uc_mcontext.gregs[REG_RDX];
+                regs.rsi = ctx->uc_mcontext.gregs[REG_RSI];
+                regs.rdi = ctx->uc_mcontext.gregs[REG_RDI];
+                regs.rbp = ctx->uc_mcontext.gregs[REG_RBP];
+                regs.rsp = ctx->uc_mcontext.gregs[REG_RSP];
+                regs.r8  = ctx->uc_mcontext.gregs[REG_R8];
+                regs.r9  = ctx->uc_mcontext.gregs[REG_R9];
+                regs.r10 = ctx->uc_mcontext.gregs[REG_R10];
+                regs.r11 = ctx->uc_mcontext.gregs[REG_R11];
+                regs.r12 = ctx->uc_mcontext.gregs[REG_R12];
+                regs.r13 = ctx->uc_mcontext.gregs[REG_R13];
+                regs.r14 = ctx->uc_mcontext.gregs[REG_R14];
+                regs.r15 = ctx->uc_mcontext.gregs[REG_R15];
+                regs.rip = bp_addr;
+                regs.rflags = ctx->uc_mcontext.gregs[REG_EFL];
+                regs.valid = true;
+                ev.registers = regs;
+#endif
+                PushRawHit(ev);
+                return true;
+            }
         }
-        return true;
     }
 
     return false;

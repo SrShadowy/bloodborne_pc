@@ -49,15 +49,20 @@ void ViewRegisters::RenderRegistersTable(const Debugger::CpuRegisters& regs, boo
     }
 
     auto RenderRegItem = [](const char* name, uint64_t val, bool is_rip = false) {
+        ImGui::PushID(name);
         char label[48];
         std::snprintf(label, sizeof(label), "%s: 0x%016llx", name, static_cast<unsigned long long>(val));
         if (is_rip) {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", label);
-        } else {
-            ImGui::TextUnformatted(label);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        }
+        ImGui::Selectable(label, false, ImGuiSelectableFlags_None);
+        if (is_rip) {
+            ImGui::PopStyleColor();
         }
 
-        if (ImGui::BeginPopupContextItem()) {
+        char pop_id[32];
+        std::snprintf(pop_id, sizeof(pop_id), "##pop_%s", name);
+        if (ImGui::BeginPopupContextItem(pop_id)) {
             ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s: 0x%016llx", name, static_cast<unsigned long long>(val));
             ImGui::Separator();
             char val_str[32];
@@ -84,6 +89,7 @@ void ViewRegisters::RenderRegistersTable(const Debugger::CpuRegisters& regs, boo
                                 "Botao direito para copiar ou seguir no Hex/Disasm",
                                 "ПКМ для копирования или перехода"));
         }
+        ImGui::PopID();
     };
 
     if (ImGui::BeginTable("RegTable", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
@@ -116,12 +122,23 @@ void ViewRegisters::RenderRegistersTable(const Debugger::CpuRegisters& regs, boo
         RenderRegItem("RIP", regs.rip, true);
 
         ImGui::TableSetColumnIndex(1);
+        ImGui::PushID("RFL");
         char rfl_label[32];
         std::snprintf(rfl_label, sizeof(rfl_label), "RFL: 0x%08llx", static_cast<unsigned long long>(regs.rflags));
-        ImGui::TextUnformatted(rfl_label);
+        ImGui::Selectable(rfl_label, false, ImGuiSelectableFlags_None);
+        if (ImGui::BeginPopupContextItem("##pop_rfl")) {
+            char rfl_val_str[32];
+            std::snprintf(rfl_val_str, sizeof(rfl_val_str), "0x%08llx", static_cast<unsigned long long>(regs.rflags));
+            if (ImGui::MenuItem(L("Copy Value", "Copiar Valor", "Копировать значение"))) {
+                SetClipboardSafe(rfl_val_str);
+                UiManager::SetStatus("RFLAGS copiado");
+            }
+            ImGui::EndPopup();
+        }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("RFLAGS: 0x%08llx", static_cast<unsigned long long>(regs.rflags));
         }
+        ImGui::PopID();
 
         ImGui::TableSetColumnIndex(2);
         static double s_last_copy_regs_time = 0.0;

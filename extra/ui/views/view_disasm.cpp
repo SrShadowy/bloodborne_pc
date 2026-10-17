@@ -140,32 +140,21 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
         cur_addr = ToRuntime(std::strtoull(addr_buf, nullptr, 16));
     }
     ImGui::SameLine();
-    if (ImGui::Button(standalone ? "Go##mv" : "Go##disasm")) {
-        cur_addr = ToRuntime(std::strtoull(addr_buf, nullptr, 16));
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(standalone ? "Paste##mv" : "Paste##disasm")) {
-        const char* clip = SDL_GetClipboardText();
-        if (clip && clip[0]) cur_addr = ToRuntime(std::strtoull(clip, nullptr, 16));
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(standalone ? "RIP##mv" : "Jump to RIP")) {
+    if (ImGui::SmallButton(standalone ? "RIP##mv" : "Jump to RIP")) {
         const uintptr_t rip = bp.GetLastHitRip();
         if (rip) cur_addr = rip;
     }
+    ImGui::SetItemTooltip("%s", L("Jump to the address of the latest captured execution/write",
+                                  "Pular para o endereco da ultima execucao/escrita capturada",
+                                  "Перейти к адресу последнего события"));
 
     ImGui::SameLine();
-    if (ImGui::Button(standalone ? "<<##dpgup_mv" : "<<##dpgup")) { for (int i = 0; i < 16; ++i) cur_addr = FindPreviousInstruction(cur_addr); }
-    ImGui::SetItemTooltip("%s", L("Scroll back 16 instructions", "Recuar 16 instrucoes", "Назад на 16 инструкций"));
-    ImGui::SameLine();
-    if (ImGui::Button(standalone ? "<##dinstup_mv" : "<##dinstup")) cur_addr = FindPreviousInstruction(cur_addr);
-    ImGui::SetItemTooltip("%s", L("Scroll back 1 instruction", "Recuar 1 instrucao", "Назад на 1 инструкцию"));
-    ImGui::SameLine();
-    if (ImGui::Button(standalone ? ">##dinstdn_mv" : ">##dinstdn")) cur_addr = FindNextInstruction(cur_addr);
-    ImGui::SetItemTooltip("%s", L("Advance 1 instruction", "Avancar 1 instrucao", "Вперед на 1 инструкцию"));
-    ImGui::SameLine();
-    if (ImGui::Button(standalone ? ">>##dpgdn_mv" : ">>##dpgdn")) { for (int i = 0; i < 16; ++i) cur_addr = FindNextInstruction(cur_addr); }
-    ImGui::SetItemTooltip("%s", L("Advance 16 instructions", "Avancar 16 instrucoes", "Вперед на 16 инструкций"));
+    if (ImGui::SmallButton(standalone ? "eboot##mv_d" : "eboot##disasm")) {
+        cur_addr = ToRuntime(0x00400000ULL);
+    }
+    ImGui::SetItemTooltip("%s", L("Jump to game executable base (0x00400000)",
+                                  "Pular para a base do executavel do jogo (0x00400000)",
+                                  "Перейти к базе исполняемого файла игры (0x00400000)"));
 
     ImGui::SameLine();
     ImGui::Checkbox(L("Symbols", "Simbolos", "Символы"), &s_disasm_show_symbols);
@@ -213,12 +202,10 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
     }
 
     const char* table_id = standalone ? "DisasmTableMV" : "DisasmTable";
-    if (ImGui::BeginTable(table_id, 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, height))) {
-        ImGui::TableSetupColumn("BP", ImGuiTableColumnFlags_WidthFixed, 36.0f);
-        ImGui::TableSetupColumn(L("Address", "Endereco", "Адрес"), ImGuiTableColumnFlags_WidthFixed, 150.0f);
-        ImGui::TableSetupColumn(L("Bytes", "Bytes", "Байты"), ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    if (ImGui::BeginTable(table_id, 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, height))) {
+        ImGui::TableSetupColumn(L("Address", "Endereco", "Адрес"), ImGuiTableColumnFlags_WidthFixed, 160.0f);
+        ImGui::TableSetupColumn(L("Bytes", "Bytes", "Байты"), ImGuiTableColumnFlags_WidthFixed, 130.0f);
         ImGui::TableSetupColumn(L("Instruction", "Instrucao", "Инструкция"), ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn(L("Actions", "Acoes", "Действия"), ImGuiTableColumnFlags_WidthFixed, 175.0f);
         ImGui::TableHeadersRow();
 
         uintptr_t cur_pc = cur_addr;
@@ -237,13 +224,16 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
                 const bool is_selected_bad = (s_selected_disasm_addr != 0 && cur_pc == s_selected_disasm_addr);
                 ImGui::TableNextRow();
                 if (is_selected_bad) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImColor(25, 75, 140, 210));
-                ImGui::TableSetColumnIndex(0); ImGui::TextDisabled(" . ");
-                ImGui::TableSetColumnIndex(1);
+
+                ImGui::TableSetColumnIndex(0);
                 char bad_pc_str[32];
                 std::snprintf(bad_pc_str, sizeof(bad_pc_str), "0x%012llx", static_cast<unsigned long long>(cur_pc));
                 ImGui::Text("%s", bad_pc_str);
-                ImGui::TableSetColumnIndex(2); ImGui::TextDisabled("%02X", code_chunk[offset]);
-                ImGui::TableSetColumnIndex(3);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextDisabled("%02X", code_chunk[offset]);
+
+                ImGui::TableSetColumnIndex(2);
                 char db_str[32];
                 std::snprintf(db_str, sizeof(db_str), "db 0x%02X##db_%08llx", code_chunk[offset], static_cast<unsigned long long>(cur_pc));
                 if (ImGui::Selectable(db_str, is_selected_bad, ImGuiSelectableFlags_SpanAllColumns)) {
@@ -252,7 +242,6 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
                     std::snprintf(bad_line, sizeof(bad_line), "%s  %02X  db 0x%02X", bad_pc_str, code_chunk[offset], code_chunk[offset]);
                     s_selected_line_copy = bad_line;
                 }
-                ImGui::TableSetColumnIndex(4);
                 offset += 1; cur_pc += 1; inst_count++;
                 continue;
             }
@@ -272,17 +261,6 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImColor(20, 60, 40, 180));
             }
 
-            ImGui::TableSetColumnIndex(0);
-            ImGui::PushID(static_cast<int>(offset));
-            if (has_bp) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
-                if (ImGui::Selectable("[●]", false, ImGuiSelectableFlags_None, ImVec2(24, 0))) bp.RemoveBreakpoint(cur_pc);
-                ImGui::PopStyleColor();
-            } else {
-                if (ImGui::Selectable(" . ", false, ImGuiSelectableFlags_None, ImVec2(24, 0))) bp.AddBreakpoint(cur_pc, "Disasm BP");
-            }
-            ImGui::PopID();
-
             std::string raw_text = Common::Decoder::Instance()->disassembleInst(inst, operands, cur_pc);
             std::string text = s_disasm_show_symbols ? Debugger::SymbolManager::Get().AnnotateInstruction(raw_text, cur_pc) : raw_text;
 
@@ -298,9 +276,10 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
             char full_line_buf[384];
             std::snprintf(full_line_buf, sizeof(full_line_buf), "%s  %-24s  %s", pc_str, bytes_str, text.c_str());
 
-            ImGui::TableSetColumnIndex(1);
+            // Column 0: Address & Symbol Name
+            ImGui::TableSetColumnIndex(0);
             std::string exact_sym = s_disasm_show_symbols ? Debugger::SymbolManager::Get().GetExactName(cur_pc) : "";
-            const char* prefix = is_rip ? "=> " : (is_selected ? ">  " : (is_patched ? "*  " : "   "));
+            const char* prefix = is_rip ? "=> " : (is_selected ? ">  " : (is_patched ? "*  " : (has_bp ? "●  " : "   ")));
 
             if (is_rip) {
                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s%s", prefix, pc_str);
@@ -308,6 +287,8 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
                 ImGui::TextColored(ImVec4(0.4f, 1.0f, 1.0f, 1.0f), "%s%s", prefix, pc_str);
             } else if (is_patched) {
                 ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "%s%s", prefix, pc_str);
+            } else if (has_bp) {
+                ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s%s", prefix, pc_str);
             } else if (!exact_sym.empty()) {
                 ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s<%s>", prefix, exact_sym.c_str());
             } else {
@@ -317,19 +298,24 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
             if (ImGui::IsItemHovered()) {
                 std::string resolved_sym = Debugger::SymbolManager::Get().Resolve(cur_pc, true, 0x1000);
                 if (!resolved_sym.empty()) {
-                    ImGui::SetTooltip("%s (0x%012llx)\nDouble-click to patch bytes", resolved_sym.c_str(), static_cast<unsigned long long>(cur_pc));
+                    ImGui::SetTooltip("%s (0x%012llx)\n%s", resolved_sym.c_str(), static_cast<unsigned long long>(cur_pc),
+                                      L("Double-click to patch bytes | Right-click for options",
+                                        "Clique duplo para editar bytes | Botao direito p/ opcoes",
+                                        "Двойной клик: патч | ПКМ: меню"));
                 } else {
-                    ImGui::SetTooltip("0x%012llx\nDouble-click to patch bytes", static_cast<unsigned long long>(cur_pc));
+                    ImGui::SetTooltip("0x%012llx\n%s", static_cast<unsigned long long>(cur_pc),
+                                      L("Double-click to patch bytes | Right-click for options",
+                                        "Clique duplo para editar bytes | Botao direito p/ opcoes",
+                                        "Двойной клик: патч | ПКМ: меню"));
                 }
             }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                ModalPatchInst::Open(cur_pc, inst_len, code_chunk + offset, raw_text);
-            }
 
-            ImGui::TableSetColumnIndex(2);
+            // Column 1: Bytes
+            ImGui::TableSetColumnIndex(1);
             ImGui::TextDisabled("%s", bytes_str);
 
-            ImGui::TableSetColumnIndex(3);
+            // Column 2: Instruction
+            ImGui::TableSetColumnIndex(2);
             char row_label[256];
             std::snprintf(row_label, sizeof(row_label), "%s##row_%08llx", text.c_str(), static_cast<unsigned long long>(cur_pc));
             bool row_selected = is_selected;
@@ -469,17 +455,6 @@ void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool 
                 }
                 ImGui::EndPopup();
             }
-
-            ImGui::TableSetColumnIndex(4);
-            ImGui::PushID(static_cast<int>(cur_pc & 0xFFFF));
-            if (ImGui::SmallButton(L("Edit", "Editar", "Правка"))) ModalPatchInst::Open(cur_pc, inst_len, code_chunk + offset, raw_text);
-            ImGui::SameLine();
-            if (is_patched) {
-                if (ImGui::SmallButton(L("Restore", "Restaurar", "Вернуть"))) ViewDisasm::RestoreInstruction(cur_pc);
-            } else {
-                if (ImGui::SmallButton("NOP")) ViewDisasm::NopInstruction(cur_pc);
-            }
-            ImGui::PopID();
 
             offset += inst_len; cur_pc += inst_len; inst_count++;
         }

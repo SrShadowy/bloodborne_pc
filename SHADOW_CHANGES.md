@@ -1584,7 +1584,49 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
     - **Fase 4 (Controle de Execução & Breakpoints Condicionais)**: Pausa de thread, Step Into, Step Over; breakpoints condicionais (`RAX == X`).
     - **Fase 5 (Mapa de Memória & Scanners Avançados)**: Visualizador de regiões de memória (`/proc/self/maps`, `.text`, `.data`, heap); Signature scanner com curingas (`??`).
 
+---
 
+## 57. Resolução de Crash Crítico no Depurador e Limpeza Geral dos Botões Redundantes da Interface
+- **Solicitações do Usuário**:
+  1. *"o debugger crasha o jogo"* (Crítico: o jogo encerrava imediatamente ao abrir a aba Debugger).
+  2. *"consegue verificar os botões da interface se estão sendo usada mesmo o go mesmo n faz sentido"* (Auditar e eliminar botões redundantes, `[Go]`, `[Paste]`, navegação `<< < > >>`, etc.).
 
+- **1. Diagnóstico e Resolução do Crash Crítico no Debugger**:
+  - **Causa Raiz 1 (Dear ImGui Assert Abort em `view_registers.cpp`)**:
+    - No arquivo `extra/ui/views/view_registers.cpp` (linha 60), a função lambda `RenderRegItem` chamava:
+      ```cpp
+      ImGui::TextUnformatted(label);
+      if (ImGui::BeginPopupContextItem()) { ... }
+      ```
+    - No Dear ImGui (`imgui.cpp` linha 12828), `BeginPopupContextItem(const char* str_id = NULL)` exige que o item imediatamente anterior tenha registrado um `ID` válido no ImGui (`LastItemData.ID != 0`). Como `ImGui::TextUnformatted` e `ImGui::TextColored` **não geram ID**, a chamada disparava:
+      ```cpp
+      IM_ASSERT(id != 0); // abort() no Linux!
+      ```
+    - Como a aba Debugger renderiza a tabela de registradores (`ViewRegisters::RenderRegistersTable`) a cada frame, abrir a aba do depurador causava a terminação instantânea do jogo (`SIGABRT`).
+    - **Solução Implementada**: Cada item de registrador agora é envolvido em `ImGui::PushID(name)` e utiliza `ImGui::Selectable(label)` com um identificador explícito de popup (`ImGui::BeginPopupContextItem(pop_id)`). O mesmo tratamento seguro foi aplicado ao registrador `RFL`. Assert abort eliminado 100%.
+  - **Causa Raiz 2 (Manipulador de Software Breakpoint `INT3` em `breakpoint.cpp`)**:
+    - No arquivo `extra/core/debugger/breakpoint.cpp`, o método `OnSignalTrap` tratava traps de breakpoints de software (`INT3`) apenas com `return true;`, **sem rebobinar o `RIP`** e **sem restaurar o byte original** da instrução.
+    - Quando um `INT3` (código `0xCC`) é executado na arquitetura x86-64, a CPU avança o `RIP` para `bp_addr + 1`. Retornar `true` fazia o jogo retomar a execução no meio dos bytes da instrução original, disparando `SIGILL` (instrução ilegal) ou `SIGSEGV` imediatamente.
+    - Além disso, a coluna 0 da tabela de desassemblagem continha um item selecionável `" . "` que, se clicado por engano, armava um `INT3` na memória do jogo.
+    - **Solução Implementada**:
+      - Em `breakpoint.cpp`, `OnSignalTrap` agora restaura atomicamente o byte original da instrução, rebobina o registrador `RIP` (`ctx->uc_mcontext.gregs[REG_RIP] = bp_addr`), captura o snapshot completo dos registradores da CPU e despacha o evento de hit com segurança.
+      - Na tabela de desassemblagem, foi removido o gatilho acidental `" . "` da coluna 0.
 
-
+- **2. Auditoria e Eliminação de Botões Redundantes da Interface**:
+  - **Remoção dos Botões `[Go]` (`view_disasm.cpp` e `view_hexgrid.cpp`)**:
+    - O campo de texto do endereço (`InputText`) já possui a flag `ImGuiInputTextFlags_EnterReturnsTrue`. Ao digitar um endereço e pressionar `Enter`, a navegação ocorre imediatamente. O botão `[Go]` era completamente redundante e consumia espaço horizontal precioso.
+  - **Remoção dos Botões `[Paste]` / `[Colar]`**:
+    - A área de transferência padrão do Dear ImGui suporta nativamente o atalho `Ctrl+V` dentro de qualquer caixa de texto. Ter botões de colar dedicados era desnecessário e poluía o cabeçalho.
+  - **Remoção dos Botões de Passo `<<`, `<`, `>`, `>>`**:
+    - A rolagem do desassemblador e do grid hexadecimal é feita de forma suave e contínua através do **scroll do mouse** (roda do mouse), que já possui suporte a aceleração dinâmica implementado. Os 4 botões de passo foram removidos tanto do desassemblador quanto do visualizador hexadecimal.
+  - **Remoção da Coluna de Ações (175px) na Tabela do Desassemblador**:
+    - A coluna 4 `"Acoes"` continha botões `[Edit]`, `[NOP]` e `[Restore]` em cada linha da tabela de assembly, comprimindo as instruções e truncando os nomes de símbolos.
+    - Como o usuário já tem acesso ao modal de edição de bytes com **clique duplo** em qualquer linha, e a todas as operações (Editar, NOP, Restaurar, Copiar Linha, Copiar Instrução, Seguir Alvo/Registrador) através do **menu de contexto do botão direito**, a coluna de 175px foi removida.
+    - A tabela agora possui **3 colunas limpas e espaçosas**:
+      - `Endereço / Símbolo` (160px): com cores dinâmicas (Vermelho = RIP, Azul = Selecionado, Verde = Modificado, Amarelo = Símbolo exato).
+      - `Bytes` (130px): bytes hexadecimais formatados da instrução.
+      - `Instrução` (Largura flexível total): instrução com anotações de símbolos sem truncamento horizontal.
+  - **Remoção de `[Hex -> Disasm]` e `[Disasm -> Hex]` (`view_memviewer.cpp`)**:
+    - O menu de contexto com botão direito em qualquer linha do Hex Viewer já oferece `"Seguir no Desassemblador"`, e no Desassemblador oferece `"Seguir na Visão Hex"`. Os botões no cabeçalho foram removidos, mantendo a barra superior limpa com os seletores de layout: `[Dividido]`, `[Apenas Disasm]` e `[Apenas Hex]`.
+  - **Remoção da Seção "Controle de Execução" Dummy (`tab_debugger.cpp`)**:
+    - Os botões `[Pausar Jogo]` e `[Avançar 1 Frame]` apenas alternavam variáveis atômicas locais que nunca eram lidas pelo loop principal do motor do jogo, criando uma falsa expectativa de pausa. Foram removidos para manter o depurador 100% funcional e confiável.

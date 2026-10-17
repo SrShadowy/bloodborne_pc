@@ -42,30 +42,7 @@ void TabDebugger::Render() {
                          "Отладчик, дизассемблер и точки останова"));
     ImGui::Separator();
 
-    // 1. Execution Control
-    ImGui::Text("%s", L("Execution Control:", "Controle de Execucao:", "Управление выполнением:"));
-    ImGui::SameLine();
-    const bool paused = bp.IsPaused();
-    const char* pause_btn = paused ? L("Resume Game", "Retomar Jogo", "Возобновить")
-                                   : L("Pause Game", "Pausar Jogo", "Пауза");
-
-    if (paused) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.45f, 0.15f, 0.90f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.55f, 0.20f, 1.0f));
-    }
-    if (ImGui::Button(pause_btn, ImVec2(130, 26))) bp.SetPaused(!paused);
-    if (paused) ImGui::PopStyleColor(2);
-
-    ImGui::SameLine();
-    if (ImGui::Button(L("Step 1 Frame", "Avancar 1 Frame", "Кадр вперед"), ImVec2(130, 26))) bp.StepFrame();
-    ImGui::SameLine();
-    bool auto_pause = bp.GetAutoPauseOnHit();
-    if (ImGui::Checkbox(L("Auto-pause game on hit", "Pausar jogo ao detectar escrita", "Пауза при записи"), &auto_pause)) {
-        bp.SetAutoPauseOnHit(auto_pause);
-    }
-    ImGui::Spacing();
-
-    // 2. Memory Write Watchpoint
+    // 1. Memory Write Watchpoint
     ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "%s",
                        L("Write Watchpoint ('Find What Writes to this Address'):",
                          "Watchpoint de Escrita ('Quem Escreve Neste Endereco?'):",
@@ -257,17 +234,15 @@ void TabDebugger::Render() {
     ImGui::Spacing();
     ImGui::Separator();
 
-    // 6. Software Breakpoints List
+    // 5. Software Breakpoints List
     ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "%s",
                        L("Software Breakpoints (Code Execution):",
                          "Breakpoints de Codigo (Software Breakpoints):",
                          "Точки останова кода (Software Breakpoints):"));
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::InputText("##bp_addr_input", bp_addr_input, sizeof(bp_addr_input));
-    ImGui::SameLine();
-    if (ImGui::Button(L("Paste##bp", "Colar##bp", "Вставить##bp"))) {
-        const char* clip = SDL_GetClipboardText();
-        if (clip && clip[0]) std::snprintf(bp_addr_input, sizeof(bp_addr_input), "%s", clip);
+    if (ImGui::InputText("##bp_addr_input", bp_addr_input, sizeof(bp_addr_input), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        const uintptr_t addr = std::strtoull(bp_addr_input, nullptr, 16);
+        bp.AddBreakpoint(addr, "BP manual");
     }
     ImGui::SameLine();
     if (ImGui::Button(L("Add Breakpoint", "Adicionar Breakpoint", "Добавить"))) {

@@ -91,26 +91,6 @@ void ViewMemViewer::Render() {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    if (ImGui::SmallButton(L("Hex -> Disasm", "Hex -> Disasm", "Hex -> Дизасм"))) {
-        s_memview_disasm_addr = s_memview_hex_addr;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", L("Set Disassembler address to match current Hex address",
-                                  "Ajustar endereco do Desassemblador para o mesmo do Hex",
-                                  "Синхронизировать адрес дизассемблера с шестнадцатеричным"));
-    }
-    ImGui::SameLine();
-    if (ImGui::SmallButton(L("Disasm -> Hex", "Disasm -> Hex", "Дизасм -> Hex"))) {
-        s_memview_hex_addr = s_memview_disasm_addr;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", L("Set Hex address to match current Disassembler address",
-                                  "Ajustar endereco do Hex para o mesmo do Desassemblador",
-                                  "Синхронизировать адрес Hex с адресом дизассемблера"));
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
     const bool is_split = (s_memviewer_mode == MemViewerMode::Split);
     const bool is_disasm = (s_memviewer_mode == MemViewerMode::DisasmOnly);
     const bool is_hex = (s_memviewer_mode == MemViewerMode::HexOnly);
