@@ -410,7 +410,7 @@ std::string BuildActivityJson(const BbGameData::PresenceSnapshot& p, int lang) {
     json += "}";
 
     const int party_size = p.hunters_count > 0 ? p.hunters_count : 1;
-    const int party_max = 5;
+    const int party_max = 3;
     json += ",\"party\":{";
     json += "\"id\":\"ae488379-351d-4a4f-ad32-2b9b01c91657\",";
     json += "\"size\":[" + std::to_string(party_size) + "," + std::to_string(party_max) + "]";
