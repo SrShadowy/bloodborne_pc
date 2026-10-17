@@ -278,9 +278,9 @@ void RenderDiscordRpcSection(BbSettings::Values& s, int lang, bool& dirty) {
 
     ImGui::BeginDisabled(!rpc_enabled);
 
-    const char* btn_label = (lang == 1) ? "Configurar Presença do Discord (Janela Dedicada)###btn_open_drpc_win" :
-                            (lang == 2) ? "Настроить статус Discord (Отдельное окно)###btn_open_drpc_win" :
-                                          "Configure Discord Presence (Dedicated Window)###btn_open_drpc_win";
+    const char* btn_label = (lang == 1) ? "Configurar Presença do Discord###btn_open_drpc_win" :
+                            (lang == 2) ? "Настроить статус Discord###btn_open_drpc_win" :
+                                          "Configure Discord Presence###btn_open_drpc_win";
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.36f, 0.68f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.46f, 0.82f, 1.0f));
     if (ImGui::Button(btn_label, ImVec2(-1, 0))) {

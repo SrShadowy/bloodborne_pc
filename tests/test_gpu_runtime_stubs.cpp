@@ -29,6 +29,7 @@ int runtime_memory_write_backing(uintptr_t addr, const void* data, uint64_t size
     }
     return -1;
 }
+int runtime_memory_is_mapped(uintptr_t, uint64_t) { return 0; }
 void runtime_memory_read_backing(uintptr_t, void*, uint64_t) { std::abort(); }
 const uint64_t* runtime_memory_generation() { static const uint64_t generation = 0; return &generation; }
 void runtime_memory_note_write(uintptr_t, uint64_t) { std::abort(); }
@@ -53,6 +54,7 @@ int runtime_pad_prompt_device() { return 0; }
 unsigned runtime_pad_prompt_generation() { return 0; }
 int runtime_pad_mouse_look() { return 0; }
 int runtime_pad_prompt(const char*, int, char*, int) { return 0; }
+int runtime_pad_is_nintendo() { return 0; }
 int runtime_file_host_path(const char*, char*, size_t) { return -1; }
 void runtime_re_watch(uint64_t) {}
 }

@@ -33,6 +33,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "extra/management/prompts/bbport_pad_hook.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -205,41 +206,13 @@ static uint8_t stick_axis(int axis,int16_t raw) {
 static uint16_t touch_axis(float v, int max) {
     return (uint16_t)(v<=0.0f ? 0 : v>=1.0f ? max : (int)(v*max+0.5f));
 }
-/* fork: capacitive touch linger + upstream two-finger support. */
-static struct {
-    int side;              /* 0 = left, 1 = right, -1 = none */
-    uint8_t touch_id;      /* tracking ID (1..127) */
-    uint64_t linger_until; /* monotonic timestamp (us) for capacitive touch linger */
-} synthetic_touch = {-1, 1, 0};
-
 static void touch_click(PadData *d, int right) {
-    d->buttons|=BTN_TOUCHPAD;
-    const uint16_t x=right ? 1440 : 480;
-    for (int i=0;i<d->touch_count;++i) if (d->touches[i].x==x) return;
-    if (d->touch_count<2) d->touches[d->touch_count++]=(PadTouch){.x=x,.y=471,.id=synthetic_touch.touch_id};
+    extra_pad_touch_click(d->touches, &d->touch_count, &d->buttons, right);
 }
 
 static void update_synthetic_touch(PadData *d, int req_left, int req_right) {
-    const uint64_t now = now_us();
-    if (req_right || req_left) {
-        const int side = req_right ? 1 : 0;
-        if (synthetic_touch.side != side || now >= synthetic_touch.linger_until) {
-            synthetic_touch.touch_id = (uint8_t)((synthetic_touch.touch_id % 127) + 1);
-        }
-        synthetic_touch.side = side;
-        synthetic_touch.linger_until = now + 150000; /* 150ms capacitive touch linger */
-        d->buttons |= BTN_TOUCHPAD;
-        d->touch_count = 1;
-        d->touches[0] = (PadTouch){.x = side ? 1440 : 480, .y = 471, .id = synthetic_touch.touch_id};
-    } else if (synthetic_touch.side >= 0 && now < synthetic_touch.linger_until) {
-        /* Physical button/key released: click button clears, but capacitive touch lingers */
-        d->buttons &= ~BTN_TOUCHPAD;
-        d->touch_count = 1;
-        d->touches[0] = (PadTouch){.x = synthetic_touch.side ? 1440 : 480, .y = 471, .id = synthetic_touch.touch_id};
-    } else {
-        synthetic_touch.side = -1;
-    }
-} // end update_synthetic_touch
+    extra_pad_update_synthetic_touch(d->touches, &d->touch_count, &d->buttons, req_left, req_right, now_us());
+}
 
 /* BB_GAMEPAD (the launcher's controller choice): its SDL GUID, or part of its name. Issue #15:
  * wheels and other controllers connected for good came first. */
@@ -357,6 +330,7 @@ __attribute__((weak)) int bbgpu_mouse_camera_take_target_switch(uint8_t *out_rx,
 __attribute__((weak)) int bbgpu_menu_pointer_in_menu(void);
 __attribute__((weak)) uint32_t bbgpu_menu_confirm_button(void);
 __attribute__((weak)) uint32_t bbgpu_menu_pointer_step_pad(uint32_t current_buttons, uint8_t lx, uint8_t ly);
+__attribute__((weak)) int bbgpu_get_prompt_layout(void);
 typedef struct { int key_count, pad_count; int keys[MAX_BIND]; int mods[MAX_BIND]; int pad[MAX_BIND]; } Binding;
 static Binding bindings[IN_COUNT];
 static int bindings_ready;
@@ -632,24 +606,46 @@ static void apply_mouse_look(PadData *d, double dx, double dy, uint64_t now, int
 static int prompt_device=-1;
 static SDL_GamepadType prompt_pad_type=SDL_GAMEPAD_TYPE_UNKNOWN;
 static unsigned prompt_generation=1;
+static int cached_prompt_layout=-1;
+
+int runtime_pad_is_nintendo(void) {
+    const int cur_layout = bbgpu_get_prompt_layout ? bbgpu_get_prompt_layout() : 0;
+    const SDL_GamepadType type = __atomic_load_n(&prompt_pad_type, __ATOMIC_RELAXED);
+    return extra_pad_check_nintendo_active(cur_layout, type);
+}
+
 static void prompt_note(SDL_Gamepad *g, int pad_active, int keyboard_active) {
-    int device=prompt_device;
-    const SDL_GamepadType type=g ? SDL_GetGamepadType(g) : SDL_GAMEPAD_TYPE_UNKNOWN;
-    const int playstation=type==SDL_GAMEPAD_TYPE_PS3 || type==SDL_GAMEPAD_TYPE_PS4 || type==SDL_GAMEPAD_TYPE_PS5;
-    if (keyboard_active) device=2;
-    else if (g && (pad_active || device<0)) device=playstation ? 0 : 1;
-    else if (device<0) device=2;
-    if (device!=prompt_device || (device!=2 && type!=prompt_pad_type)) {
-        prompt_device=device;
-        if (device!=2) prompt_pad_type=type;
-        __atomic_add_fetch(&prompt_generation,1,__ATOMIC_RELAXED);
+    const int cur_layout = bbgpu_get_prompt_layout ? bbgpu_get_prompt_layout() : 0;
+    if (cur_layout != cached_prompt_layout) {
+        cached_prompt_layout = cur_layout;
+        __atomic_add_fetch(&prompt_generation, 1, __ATOMIC_RELAXED);
+    }
+
+    int device = prompt_device;
+    SDL_GamepadType type = g ? SDL_GetGamepadType(g) : SDL_GAMEPAD_TYPE_UNKNOWN;
+    extra_pad_process_prompt_type(g, &device, &type, pad_active, keyboard_active);
+
+    if (device != prompt_device || (device != 2 && type != prompt_pad_type)) {
+        prompt_device = device;
+        if (device != 2) prompt_pad_type = type;
+        __atomic_add_fetch(&prompt_generation, 1, __ATOMIC_RELAXED);
     }
 }
 static int stick_moved(uint8_t v) { return v<128-48 || v>128+48; }
 int runtime_pad_prompt_device(void) {
-    return __atomic_load_n(&prompt_device,__ATOMIC_RELAXED);
+    if (bbgpu_get_prompt_layout) {
+        return extra_pad_override_device(bbgpu_get_prompt_layout(), __atomic_load_n(&prompt_device, __ATOMIC_RELAXED));
+    }
+    return __atomic_load_n(&prompt_device, __ATOMIC_RELAXED);
 }
 unsigned runtime_pad_prompt_generation(void) {
+    if (bbgpu_get_prompt_layout) {
+        const int cur_layout = bbgpu_get_prompt_layout();
+        if (cur_layout != cached_prompt_layout) {
+            cached_prompt_layout = cur_layout;
+            __atomic_add_fetch(&prompt_generation, 1, __ATOMIC_RELAXED);
+        }
+    }
     return __atomic_load_n(&prompt_generation,__ATOMIC_RELAXED);
 }
 /* Mouse look on (bbport.ini mouse_look): the right stick's prompt is the mouse. */
@@ -686,10 +682,11 @@ int runtime_pad_prompt(const char *name, int prefer_mouse, char *label, int size
     if (input<0) return 0;
     pthread_mutex_lock(&lock);
     if (!bindings_ready) { load_bindings(); bindings_ready=1; }
-    const int device=prompt_device;
+    const int cur_layout = bbgpu_get_prompt_layout ? bbgpu_get_prompt_layout() : 0;
+    const int device = extra_pad_override_device(cur_layout, prompt_device);
     const Binding b=bindings[input];
     const int look=mouse_look;
-    const SDL_GamepadType type=prompt_pad_type;
+    SDL_GamepadType type = extra_pad_override_type(cur_layout, prompt_pad_type);
     pthread_mutex_unlock(&lock);
     if (device==2) {
         int key=-1, mouse=-1, key_mod=-1, mouse_mod=-1;
@@ -719,22 +716,17 @@ int runtime_pad_prompt(const char *name, int prefer_mouse, char *label, int size
         return 'K';
     }
     if (device!=1) return 0; /* a PlayStation pad: the game's own icons */
-    const int nintendo=type==SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO ||
-                       type==SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
-                       type==SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT ||
-                       type==SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR;
+    const int nintendo = extra_pad_check_nintendo_active(cur_layout, type);
     if (input>=IN_MOVE_UP) { snprintf(label,size,"%s",input<IN_LOOK_UP ? "LS" : "RS"); return 'C'; }
     if (b.pad_count==0) return 0;
     const int button=b.pad[0];
     switch (button) {
     case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_EAST:
     case SDL_GAMEPAD_BUTTON_WEST: case SDL_GAMEPAD_BUTTON_NORTH: {
-        static const char *const by_position[]={"A","B","X","Y"};
-        const SDL_GamepadButtonLabel l=SDL_GetGamepadButtonLabelForType(type,(SDL_GamepadButton)button);
-        const char *text=l==SDL_GAMEPAD_BUTTON_LABEL_A ? "A" : l==SDL_GAMEPAD_BUTTON_LABEL_B ? "B"
-                        : l==SDL_GAMEPAD_BUTTON_LABEL_X ? "X" : l==SDL_GAMEPAD_BUTTON_LABEL_Y ? "Y"
-                        : by_position[button-SDL_GAMEPAD_BUTTON_SOUTH];
-        snprintf(label,size,"%s",text);
+        if (extra_pad_resolve_button(button, nintendo, label, size)) {
+            return 'F';
+        }
+        snprintf(label, size, "A");
         return 'F';
     }
     case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: snprintf(label,size,"%s",nintendo ? "L" : "LB"); return 'S';
@@ -979,8 +971,7 @@ static void sample_host(PadData *d) {
     bbgpu_mouse_take(&mouse_dx,&mouse_dy,&wheel_up,&wheel_down);
     const int captured=bbgpu_mouse_captured();
     if (bbgpu_overlay_captures_input()) {
-        synthetic_touch.side = -1;
-        synthetic_touch.linger_until = 0;
+        extra_pad_reset_synthetic_touch();
         apply_mouse_look(d,0,0,d->timestamp,0);
         return; /* menu open: neutral input */
     }
@@ -1018,22 +1009,7 @@ static void sample_host(PadData *d) {
             }
         }
         /* fork: direct sensor readout + upstream motion pipeline. */
-        if (SDL_GamepadSensorEnabled(g, SDL_SENSOR_ACCEL)) {
-            float accel[3] = {0};
-            if (SDL_GetGamepadSensorData(g, SDL_SENSOR_ACCEL, accel, 3)) {
-                d->acceleration[0] = accel[0] / 9.80665f;
-                d->acceleration[1] = accel[1] / 9.80665f;
-                d->acceleration[2] = accel[2] / 9.80665f;
-            }
-        }
-        if (SDL_GamepadSensorEnabled(g, SDL_SENSOR_GYRO)) {
-            float gyro[3] = {0};
-            if (SDL_GetGamepadSensorData(g, SDL_SENSOR_GYRO, gyro, 3)) {
-                d->angular_velocity[0] = gyro[0] * (180.0f / 3.141592653589793f);
-                d->angular_velocity[1] = gyro[1] * (180.0f / 3.141592653589793f);
-                d->angular_velocity[2] = gyro[2] * (180.0f / 3.141592653589793f);
-            }
-        }
+        extra_pad_read_sensors(g, d->acceleration, d->angular_velocity);
         if (motion_on()) motion_from_pad(d,g,motion_dt);
         if (k && key_down(k,IN_TOUCHPAD)) req_touch_left = 1;
         if (k && key_down(k,IN_TOUCHPAD_RIGHT)) req_touch_right = 1;
@@ -1118,8 +1094,7 @@ static void read_inject(void) {
     }
     fclose(f);
     if (!injected.buttons && injected.touch_side < 0) {
-        synthetic_touch.side = -1;
-        synthetic_touch.linger_until = 0;
+        extra_pad_reset_synthetic_touch();
     }
     printf("Runtime: pad file: buttons 0x%x sticks %d %d %d %d\n",injected.buttons,
            injected.stick[0],injected.stick[1],injected.stick[2],injected.stick[3]);

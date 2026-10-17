@@ -18,6 +18,7 @@
 #include <unordered_set>
 
 #include "bbport_sections.h"
+#include "bbport_shader_tracker.h"
 #include "bbport_toggles.h"
 #include "buffers/buffer_cache.h"
 #include "common/hash.h"
@@ -70,9 +71,13 @@ void AddCompileTime(std::chrono::steady_clock::time_point start) {
 
 struct CompileTimer {
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    CompileTimer() {
+        BbShaderTracker::OnCompileStart();
+    }
     ~CompileTimer() {
         AddCompileTime(start);
         ++g_bb_compiles;
+        BbShaderTracker::OnCompileEnd();
     }
 };
 
