@@ -22,6 +22,7 @@
 #include "core/libraries/np/np_signaling/np_signaling_stubs.h"
 #include "shadnet.pb.h"
 #include "shadnet/client.h"
+#include "extra/hosts/hosts_hooks.h" // [extra]
 
 namespace Libraries::Np::NpMatching2 {
 
@@ -740,6 +741,7 @@ bool IsMmClientRunning() {
 }
 
 void MmContextStart(OrbisNpMatching2ContextId ctx_id) {
+    if (Extra::Hosts::HookMmContextStart(ctx_id)) return; // [extra]
     shadnet::ContextStartRequest req;
     req.set_ctx_id(ctx_id);
     MmSubmitRequest(ctx_id, 0, ORBIS_NP_MATCHING2_CONTEXT_EVENT_STARTED, MmCommand::ContextStart,
@@ -750,6 +752,7 @@ void MmContextStart(OrbisNpMatching2ContextId ctx_id) {
 }
 
 s32 MmContextStop(OrbisNpMatching2ContextId ctx_id) {
+    if (s32 res; Extra::Hosts::HookMmContextStop(ctx_id, &res)) return res; // [extra]
     shadnet::ContextStopRequest req;
     req.set_ctx_id(ctx_id);
     return MmSubmitRequest(ctx_id, 0, ORBIS_NP_MATCHING2_CONTEXT_EVENT_STOPPED,
@@ -837,6 +840,7 @@ s32 MmSubmitRequest(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId 
 
 s32 MmCreateJoinRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                      const OrbisNpMatching2CreateJoinRoomRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmCreateJoinRoom(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::CreateRoomRequest req;
     req.set_req_id(req_id);
     req.set_max_slots(request.maxSlot);
@@ -889,6 +893,7 @@ s32 MmCreateJoinRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId
 
 s32 MmCreateJoinRoomA(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                       const OrbisNpMatching2CreateJoinRoomRequestA& request) {
+    if (s32 res; Extra::Hosts::HookMmCreateJoinRoomA(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::CreateRoomRequest req;
     req.set_req_id(req_id);
     req.set_max_slots(request.maxSlot);
@@ -941,6 +946,7 @@ s32 MmCreateJoinRoomA(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestI
 
 s32 MmJoinRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                const OrbisNpMatching2JoinRoomRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmJoinRoom(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::JoinRoomRequest req;
     req.set_room_id(request.roomId);
     req.set_req_id(req_id);
@@ -964,6 +970,7 @@ s32 MmJoinRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_i
 
 s32 MmJoinRoomA(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                 const OrbisNpMatching2JoinRoomRequestA& request) {
+    if (s32 res; Extra::Hosts::HookMmJoinRoomA(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::JoinRoomRequest req;
     req.set_room_id(request.roomId);
     req.set_req_id(req_id);
@@ -987,6 +994,7 @@ s32 MmJoinRoomA(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_
 
 s32 MmLeaveRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                 const OrbisNpMatching2LeaveRoomRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmLeaveRoom(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::LeaveRoomRequest req;
     req.set_room_id(request.roomId);
     req.set_req_id(req_id);
@@ -996,6 +1004,7 @@ s32 MmLeaveRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_
 
 s32 MmGetWorldInfoList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                        const OrbisNpMatching2GetWorldInfoListRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmGetWorldInfoList(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::GetWorldInfoListRequest req;
     req.set_server_id(request.serverId);
     return MmSubmitRequest(ctx_id, req_id, ORBIS_NP_MATCHING2_REQUEST_EVENT_GET_WORLD_INFO_LIST,
@@ -1004,6 +1013,7 @@ s32 MmGetWorldInfoList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Request
 
 s32 MmSearchRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                  const OrbisNpMatching2SearchRoomRequest& request, bool a_variant) {
+    if (s32 res; Extra::Hosts::HookMmSearchRoom(ctx_id, req_id, request, a_variant, &res)) return res; // [extra]
     shadnet::SearchRoomRequest req;
     req.set_world_id(request.worldId);
     req.set_lobby_id(request.lobbyId);
@@ -1046,6 +1056,7 @@ s32 MmSearchRoom(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req
 s32 MmGetRoomDataExternalList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                               const OrbisNpMatching2GetRoomDataExternalListRequest& request,
                               bool a_variant) {
+    if (s32 res; Extra::Hosts::HookMmGetRoomDataExternalList(ctx_id, req_id, request, a_variant, &res)) return res; // [extra]
     shadnet::GetRoomDataExternalListRequest req;
     for (u64 i = 0; i < request.roomIdNum; ++i) {
         req.add_room_ids(request.roomId[i]);
@@ -1065,6 +1076,7 @@ s32 MmGetRoomDataExternalList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2
 s32 MmGetRoomMemberDataExternalList(
     OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
     const OrbisNpMatching2GetRoomMemberDataExternalListRequest& request, bool a_variant) {
+    if (s32 res; Extra::Hosts::HookMmGetRoomMemberDataExternalList(ctx_id, req_id, request, a_variant, &res)) return res; // [extra]
     shadnet::GetRoomMemberDataExternalListRequest req;
     req.set_room_id(request.roomId);
     LOG_DEBUG(Lib_NpMatching2, "getRoomMemberDataExternalList room={}", request.roomId);
@@ -1077,6 +1089,7 @@ s32 MmGetRoomMemberDataExternalList(
 
 s32 MmGetUserInfoList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                       const OrbisNpMatching2GetUserInfoListRequest& request, bool a_variant) {
+    if (s32 res; Extra::Hosts::HookMmGetUserInfoList(ctx_id, req_id, request, a_variant, &res)) return res; // [extra]
     shadnet::GetUserInfoListRequest req;
     for (u64 i = 0; i < request.npIdNum; ++i) {
         req.add_npids(request.npId[i].handle.data);
@@ -1093,6 +1106,7 @@ s32 MmGetUserInfoList(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestI
 
 s32 MmSetUserInfo(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                   const OrbisNpMatching2SetUserInfoRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmSetUserInfo(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::SetUserInfoRequest req;
     req.set_server_id(request.serverId);
     for (u64 i = 0; request.userBinAttr && i < request.userBinAttrs; ++i) {
@@ -1106,6 +1120,7 @@ s32 MmSetUserInfo(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId re
 
 s32 MmSendRoomMessage(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                       const OrbisNpMatching2SendRoomMessageRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmSendRoomMessage(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::SendRoomMessageRequest req;
     req.set_room_id(request.roomId);
     req.set_cast_type(request.castType);
@@ -1130,6 +1145,7 @@ s32 MmSendRoomMessage(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestI
 
 s32 MmSetRoomDataInternal(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                           const OrbisNpMatching2SetRoomDataInternalRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmSetRoomDataInternal(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::SetRoomDataInternalRequest req;
     req.set_req_id(req_id);
     req.set_room_id(request.roomId);
@@ -1148,6 +1164,7 @@ s32 MmSetRoomDataInternal(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Requ
 
 s32 MmSetRoomDataExternal(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                           const OrbisNpMatching2SetRoomDataExternalRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmSetRoomDataExternal(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::SetRoomDataExternalRequest req;
     req.set_req_id(req_id);
     req.set_room_id(request.roomId);
@@ -1166,6 +1183,7 @@ s32 MmSetRoomDataExternal(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Requ
 
 s32 MmKickoutRoomMember(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2RequestId req_id,
                         const OrbisNpMatching2KickoutRoomMemberRequest& request) {
+    if (s32 res; Extra::Hosts::HookMmKickoutRoomMember(ctx_id, req_id, request, &res)) return res; // [extra]
     shadnet::KickoutRoomMemberRequest req;
     req.set_req_id(req_id);
     req.set_room_id(request.roomId);
@@ -1176,16 +1194,19 @@ s32 MmKickoutRoomMember(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Reques
 }
 
 u32 GetMmServerAddr() {
+    if (u32 addr; Extra::Hosts::HookGetServerAddr(&addr)) return addr; // [extra]
     std::lock_guard lock(g_mm.mutex);
     return g_mm.server_addr;
 }
 
 u16 GetMmServerUdpPort() {
+    if (u16 port; Extra::Hosts::HookGetServerUdpPort(&port)) return port; // [extra]
     std::lock_guard lock(g_mm.mutex);
     return g_mm.server_udp_port;
 }
 
 bool RequestSignalingInfos(std::string_view target_online_id, u32* out_addr, u16* out_port) {
+    if (Extra::Hosts::HookRequestSignalingInfos(target_online_id, out_addr, out_port)) return true; // [extra]
     if (!out_addr || !out_port) {
         return false;
     }

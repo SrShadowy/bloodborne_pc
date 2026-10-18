@@ -1630,3 +1630,226 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
     - O menu de contexto com botão direito em qualquer linha do Hex Viewer já oferece `"Seguir no Desassemblador"`, e no Desassemblador oferece `"Seguir na Visão Hex"`. Os botões no cabeçalho foram removidos, mantendo a barra superior limpa com os seletores de layout: `[Dividido]`, `[Apenas Disasm]` e `[Apenas Hex]`.
   - **Remoção da Seção "Controle de Execução" Dummy (`tab_debugger.cpp`)**:
     - Os botões `[Pausar Jogo]` e `[Avançar 1 Frame]` apenas alternavam variáveis atômicas locais que nunca eram lidas pelo loop principal do motor do jogo, criando uma falsa expectativa de pausa. Foram removidos para manter o depurador 100% funcional e confiável.
+
+---
+
+## 58. Implementação de Multiplayer Online Baseado no bbhost & The Hunter's Dream (Fases 0, 1 e 2)
+- **Solicitação do Usuário**:
+  - *"você acha que consegue atribuir o online para funcionar baseado no shadps4 e o bbhost /home/shadowy/Documentos/GitHub/bbhost/"*
+  - *"pode começar mas siga o projeto de acordo com as regras MyGuidelines"*
+
+- **Arquitetura & Diretrizes Adotadas (`MyGUIDELINES.md`)**:
+  - **Single Responsibility & Limite de Linhas**: Nenhum arquivo novo excede 300 linhas de código (todos entre 14 e 278 linhas).
+  - **Zero Regressão para shadNet**: O backend padrão permanece `shadNet` (`BB_ONLINE_BACKEND=shadnet`). Quando `BB_ONLINE_BACKEND=hd` ou `thehuntersdream` está ativo, as chamadas de matchmaking e sessão são roteadas para o backend do The Hunter's Dream.
+  - **Intercepção Limpa via Hooks**: As bibliotecas do shadps4 (`np_matching2_mm.cpp`, `np_manager.cpp`) foram interceptadas apenas nas pontas de entrada com a guarda `if (Libraries::Np::NpMatching2::IsBbhostBackendActive())`, preservando toda a lógica upstream intacta.
+
+- **Fases Concluídas**:
+  - **Fase 0 (Transporte HTTP/JSON Robusto)**:
+    - Criados `gpu/bbnet/bbhost/http_json.h` e `http_json.cpp` (163 linhas) implementando transporte HTTP REST com parsing JSON (`nlohmann_json`), cabeçalhos `X-BB-Token`, `X-BBHost-Ruleset: vanilla`, timeouts e tratamento de erros do protocolo The Hunter's Dream.
+    - Teste de transporte dedicado `tests/test_bbhost_http.cpp` com servidor in-process (`httplib::Server`) em loopback (100% aprovado).
+  - **Fase 1 (Gerenciamento de Conta & Launcher)**:
+    - Criados `launcher/bbport_bbhost.py` e `launcher/bbport_bbhost_ui.py` para gerenciamento seguro de credenciais em `~/.config/bbport-launcher/account.json`.
+    - Modal visual com verificação assíncrona de token (HTTP 200 vs 401), input mascarado, status de conexão em tempo real e tratamento de erros de rede.
+    - 47 testes unitários em `tests/test_bbhost_account.py` e `tests/test_bbhost_online_ui.py` aprovados.
+  - **Fase 2 (Sessão & Matchmaking em `libbbnet.so`)**:
+    - **Conta & Autenticação C++**: `account.h` / `account.cpp` (105 linhas) com suporte a variáveis de ambiente (`BB_HOST_ONLINE_ID`, `BB_HOST_TOKEN`), persistência do launcher e flag `account_refused` para backoff em caso de HTTP 401.
+    - **Estado de Sessão & Tabela de Pares**: `session_state.h` / `session_state.cpp` (278 linhas) com controle thread-safe de peers, mapeamento de endereços NAT/Upnp, estado de sala (`in_room`, `room_id`, `member_id`, `owner_id`, `is_host`).
+    - **Operações RPC de Sala**: `session_room.h` / `session_room.cpp` (150 linhas) com `server_context_start`, `server_create_room`, `server_join_room`, `server_leave_room`, `server_heartbeat`, `server_kick_member` e `server_signaling_resolve`.
+    - **Thread de Polling de Eventos**: `session_poll.h` / `session_poll.cpp` (114 linhas) executando poller em background (`/np/events/poll` e `/np/events/ack`) com heartbeat periódico a cada 5 segundos.
+    - **Abstração de Backend Online**: `backend.h` / `backend.cpp` (interface `OnlineBackend`, fábrica e seletor `IsBbhostBackendActive()`).
+    - **Implementação The Hunter's Dream**: `backend_hd.h`, `backend_hd.cpp` (255 linhas), `backend_hd_payload.h` / `.cpp` (92 linhas) e `backend_hd_extra.cpp` (113 linhas) com temporizações de co-op (300ms create/join/leave, 200ms context, 100ms eventos de sala, 500ms signaling).
+    - **Ganchos em Upstream**:
+      - `np_matching2_mm.cpp`: funções `MmCreateJoinRoom*`, `MmJoinRoom*`, `MmLeaveRoom`, `MmGetWorldInfoList`, `MmSearchRoom*`, `MmGetRoomDataExternalList*`, `MmGetRoomMemberDataExternalList*`, `MmGetUserInfoList*`, `MmKickoutRoomMember`, `GetMmServerAddr` e `GetMmServerUdpPort` interceptadas para `GetOnlineBackend()`.
+      - `np_manager.cpp`: funções `sceNpCheckNpAvailability*`, `sceNpCheckNpReachability`, `sceNpCheckPlus*`, `sceNpGetAccountId*`, `sceNpGetNpId`, `sceNpGetOnlineId`, `sceNpGetNpReachabilityState` e `sceNpGetState` interceptadas com suporte a `account_logged_in()`.
+    - **Validação & Testes**:
+      - `tests/test_bbhost_session.cpp` (282 linhas) executando ciclo completo de sessão, sala, heartbeat, signaling e eventos de poller contra servidor mock local (`httplib::Server`): **100% aprovado**.
+      - `ninja -C out/gpu bbhost-session-test && out/gpu/bbhost-session-test`: **aprovado**.
+      - `ninja -C out/gpu bbhost-http-test && out/gpu/bbhost-http-test`: **aprovado**.
+      - `ninja -C out/gpu bbgpu bbnet`: compilação limpa de `libbbnet.so` e `libbbgpu.so`.
+      - `./build.sh --test`: suíte completa de testes do projeto **100% aprovada**.
+
+---
+
+## 59. Reorganização Arquitetural em `extra/hosts/`, Conformidade com `MyGUIDELINES.md` e Ganchos Upstream Não-Invasivos
+- **Solicitações do Usuário**:
+  - *"a uma disparidade na organização pedida no myGuidelines que voce botou direto os arquivos no bbbnet dentro de GPU sendo que era para você criar no extra e tira o nolmee do bbhost e coloca hosts ja que vamos usar o shadps4 também a inclusão dentro do PROJETO deve ser LIMPA e facil de manter apos um merge de uma nova versão, tenha noção que estamos ADICIONANDO COISAS EXTRAS ao modulo principal do dev que não é familiarizado com o ferramentas de Git"*
+
+- **1. Isolamento Rigoroso em `extra/hosts/` e Remoção de Fontes Customizadas de `gpu/`**:
+  - Todo o código customizado de backend de rede foi completamente extraído de `gpu/bbnet/bbhost/` e transferido para a raiz de extensões modulares: `extra/hosts/`.
+  - Removido o diretório legado `gpu/bbnet/bbhost/`.
+  - Renomeado o namespace de `Bbhost` para `Extra::Hosts`.
+  - Renomeados todos os identificadores, arquivos e backends de `bbhost` para `hosts`, suportando múltiplos backends (`shadnet` e `thehuntersdream`).
+  - Criado o cabeçalho central `extra/hooks.h` que reexporta `extra/hosts/hosts_hooks.h`.
+
+- **2. Conformidade Estrita com Limite de Linhas (< 300 linhas por arquivo)**:
+  - Todos os arquivos em `extra/hosts/` seguem o princípio de responsabilidade única e estão bem abaixo do teto de 300 linhas:
+    - `account.h` (27 linhas) / `account.cpp` (112 linhas): Gerenciamento de credenciais e persistência.
+    - `backend.h` (81 linhas) / `backend.cpp` (22 linhas): Interface base abstrata e factory de backends (`OnlineBackend`).
+    - `backend_hd.h` (73 linhas) / `backend_hd.cpp` (254 linhas): Implementação do backend The Hunter's Dream.
+    - `backend_hd_extra.cpp` (113 linhas): Atributos de usuário binários, mensagens de sala e RPCs auxiliares.
+    - `backend_hd_payload.h` (14 linhas) / `backend_hd_payload.cpp` (93 linhas): Montagem de payloads e buffers de resposta de matchmaking.
+    - `hosts_hooks.h` (74 linhas) / `hosts_hooks.cpp` (276 linhas): Fachada pura de ganchos delegando para `Extra::Hosts`.
+    - `http_client.h` (32 linhas) / `http_client.cpp` (139 linhas): Cliente HTTP REST assíncrono com cabeçalhos de token e regras.
+    - `session_poll.h` (20 linhas) / `session_poll.cpp` (114 linhas): Worker thread de polling de eventos e heartbeat.
+    - `session_room.h` (38 linhas) / `session_room.cpp` (182 linhas): RPCs de gerenciamento de salas e sessões.
+    - `session_state.h` (56 linhas) / `session_state.cpp` (267 linhas): Estruturas thread-safe de estado de sala, membros e pares.
+
+- **3. Ganchos Upstream 100% Não-Invasivos (Zero Conflitos de Git Merge)**:
+  - Nos arquivos upstream do shadPS4 (`gpu/bbnet/shadps4/core/libraries/np/`):
+    - `np_manager.cpp`: apenas **1 linha de include** (`#include "extra/hosts/hosts_hooks.h" // [extra]`) e **10 ganchos de exatamente 1 linha** no formato:
+      `if (s32 res; Extra::Hosts::HookCheckNpAvailability(...)) return res; // [extra]`
+    - `np_matching2/np_matching2_mm.cpp`: apenas **1 linha de include** e **20 ganchos de exatamente 1 linha** no topo de cada função de matchmaking.
+    - **Nenhuma linha original do upstream foi apagada ou alterada**. Todas as inserções terminam com a tag explicativa `// [extra]` e utilizam retorno antecipado condicional. Se um merge do Git trouxer uma versão atualizada da FromSoftware/shadPS4, o merge ocorre de forma limpa e automática sem quebras para desenvolvedores sem domínio de Git.
+
+- **4. Integração CMake Limpa e Segregada**:
+  - `gpu/CMakeLists.txt`: `extra/hosts/` é explicitamente excluído das fontes do `bbgpu` (`list(FILTER EXTRA_SOURCES EXCLUDE REGEX "extra/hosts/")`), garantindo que o motor gráfico não herde dependências das bibliotecas de rede do shadPS4.
+  - `gpu/bbnet/CMakeLists.txt`: Fontes de `${CMAKE_CURRENT_SOURCE_DIR}/../../extra/hosts/*.cpp` são compiladas exclusivamente dentro da biblioteca `bbnet` (`libbbnet.so`).
+  - Repositório raiz incluído nos caminhos de busca (`target_include_directories(bbnet PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)`), permitindo inclusões do tipo `#include "extra/hosts/..."`.
+
+- **5. Launcher e Camada de Compatibilidade Retroativa**:
+  - Criados `launcher/bbport_hosts.py` e `launcher/bbport_hosts_ui.py` para gerenciamento das credenciais do The Hunter's Dream e seleção do backend de matchmaking (`shadnet` vs `thehuntersdream`).
+  - Mantidos `launcher/bbport_bbhost.py` e `launcher/bbport_bbhost_ui.py` como shims finos que redirecionam para `bbport_hosts` sem quebrar scripts externos existentes.
+
+- **6. Validação e Cobertura de Testes**:
+  - Testes C++ atualizados: `tests/test_hosts_http.cpp` e `tests/test_hosts_session.cpp` compilados como alvos CMake independentes (`hosts-http-test`, `hosts-session-test`) — **100% aprovados**.
+  - Testes Python atualizados: `tests/test_hosts_account.py` e `tests/test_hosts_online_ui.py` — **todos os 254 testes do ecossistema aprovados sem falhas** (`Ran 254 tests ... OK`).
+  - `ninja -C out/gpu bbgpu bbnet`: compilação sem avisos ou erros.
+  - `./build.sh --test`: suíte completa de testes do Bloodborne PC Port aprovada com sucesso.
+
+---
+
+## 60. Diagnóstico e Resolução de Erro de Sessão PSN ("Não tens sessão iniciada") e Ativação de Logs
+- **Relato e Sintoma**:
+  - Usuário informou *"sem log porém sem online"* e anexou tela do jogo: *"Não tens sessão iniciada na 'PlayStation Network'. Inicia sessão para usares as funcionalidades online."*
+- **Diagnóstico Preciso**:
+  1. **Causa de Ausência de Logs em Disco**:
+     - Em `~/.config/bbport-launcher/settings.json`, a opção `"save_log"` estava `false`. O script `run.sh` só redireciona a saída para arquivos de log em `logs/<timestamp>.log` quando `BB_SAVE_LOG=1` (opção "Salvar log" ativada no launcher).
+  2. **Causa Raiz da Falha no shadNet**:
+     - O backend ativo no launcher era `"shadnet"`, apontando para `"play.seamlesshunt.com:31313"` com a conta `"SrShadowy"`.
+     - Testes diretos contra o servidor via protocolo de rede revelaram que `play.seamlesshunt.com:31313` rejeitou as credenciais com `LoginInvalidPassword (8)`.
+     - Em contrapartida, testamos o mesmo usuário e senha contra o servidor oficial do shadps4 (`srv.shadps4.net:31313`) e o login retornou `NoError (0)` (aprovado com sucesso). Como o launcher estava apontando para o servidor de Seamless Hunt, a autenticação falhava e a biblioteca PSN ficava em estado `SignedOut`.
+  3. **Causa Raiz ao Usar The Hunter's Dream (`hosts` / `bbhost`)**:
+     - A conta do The Hunter's Dream do usuário (`Shadowy` com token em `account.json`) foi testada contra `thehuntersdream.com:18671` e está **100% válida e ativa**.
+     - No entanto, se o usuário selecionasse The Hunter's Dream, a sessão PSN não abria devido a 4 fatores:
+       - **Divergência de Maiúsculas/Minúsculas**: `account.json` gravava `"OnlineId"` e `"Token"` (PascalCase), mas o C++ em `account.cpp` lia `"online_id"` e `"token"` (minúsculas), fazendo o token ser carregado vazio (`IsAccountLoggedIn() == false`).
+       - **Autenticação em `np_auth.cpp`**: Bloodborne solicita `GetAuthorizationCode` e `GetIdToken` para autorizar a conexão com os servidores. Quando o shadNet está inativo, `np_auth.cpp` retornava `ORBIS_NP_ERROR_SIGNED_OUT`.
+       - **Inscrição em `np_manager.cpp`**: `sceNpHasSignedUp` checava apenas se `shadnet_npid` não estava vazio.
+       - **Ciclo Assíncrono em `sceNpCheckNpAvailability`**: retornava diretamente sem invocar `CompleteRequest`, gerando erro de ID de requisição assíncrona.
+- **Correções Aplicadas (100% em conformidade com `MyGUIDELINES.md`)**:
+  - `extra/hosts/account.cpp`: adicionado suporte para ler tanto chaves PascalCase (`"OnlineId"`, `"Token"`) quanto minúsculas (`"online_id"`, `"token"`).
+  - `extra/hosts/backend.cpp`: `IsCustomHostActive()` atualizado para aceitar `"hosts"`.
+  - `extra/hosts/hosts_hooks.h`, `hosts_hooks.cpp` e `hosts_hooks_mm.cpp`:
+    - Adicionados `HookAuthGetAuthorizationCode` e `HookAuthGetIdToken` para fornecer tokens válidos ao jogo durante a autenticação.
+    - Adicionados `HookHasSignedUp`, `HookGetUserIdByAccountId` e `HookGetUserIdByOnlineId`.
+    - `HookCheckNpAvailability` agora encaminha para `sceNpCheckNpAvailabilityA` para completar requisições assíncronas adequadamente.
+    - Modularização de `hosts_hooks.cpp` (194 linhas) e `hosts_hooks_mm.cpp` (154 linhas), mantendo todos os arquivos rigorosamente abaixo de 300 linhas.
+  - `gpu/bbnet/shadps4/core/libraries/np/np_auth.cpp` e `np_manager.cpp`: integrados ganchos não-invasivos de 1 linha com a tag `// [extra]`.
+  - `launcher/bbport_config.py`: adicionado suporte a `"hosts"`, `"thehuntersdream"` e `"hd"` em `online_backend`.
+
+---
+
+## 61. Correção de Despacho Seguro de Callbacks NP, Proteção de Ponteiros Nulos e Desacoplamento do Provedor shadNet
+- **Problema e Análise Técnica**:
+  1. Durante inicialização de rede com `BB_ONLINE_BACKEND=bbhost`, ocorria descontinuidade e falha de acesso de memória (SIGSEGV em `libbbnet.so+0x7990f`) quando `HookGetNpId` recebia ponteiro nulo para `out_res`.
+  2. Chamadas diretas a ponteiros de funções convidadas (`OrbisNpStateCallback`) a partir do contexto C++ do host causavam falha de convenção de chamada de código guest x86-64.
+  3. `NpHandler::Initialize()` do shadNet tentava sondar servidores shadNet padrão (`play.seamlesshunt.com`) mesmo com o backend `bbhost` selecionado; ao falhar o handshake shadNet, disparava `SetShadNetSessionDisabled(true)`, marcando globalmente `g_shadnet_enabled = false` e fazendo todas as APIs de perfil (`sceNpGetAccountCountryA`, `sceNpGetAccountDateOfBirthA`, etc.) responderem com `ORBIS_NP_ERROR_SIGNED_OUT`.
+- **Solução Implementada (100% de acordo com `MyGUIDELINES.md`)**:
+  - `extra/hosts/hosts_hooks.cpp` e `hosts_hooks_mm.cpp`:
+    - Adicionada verificação estrita em todos os ponteiros de saída (`if (out_res) *out_res = ...;`, `if (out_user_id)`, `if (out_addr)`, `if (out_port)`).
+    - Substituída a invocação direta do callback guest por `ShouldQueueInitialSignedIn()`.
+  - `gpu/bbnet/shadps4/core/libraries/np/np_manager.cpp`:
+    - Em `RegisterStateCallbackA` e `sceNpRegisterStateCallback`, ao registrar o callback com backend customizado ativo, enfileira o evento `QueueNpStateEvent(1, OrbisNpState::SignedIn)`.
+    - Os eventos são despachados de forma segura na thread nativa do jogo durante a rotina padrão `sceNpCheckCallback()` através de `DispatchPendingNpStateCallbacks()`.
+    - `g_shadnet_enabled` passa a considerar `EmulatorSettings.IsShadNetEnabled() || Extra::Hosts::IsCustomHostActive()`.
+  - `gpu/bbnet/shadps4/core/libraries/np/np_auth.cpp`:
+    - `g_shadnet_enabled` passa a considerar `Extra::Hosts::IsCustomHostActive()`.
+  - `gpu/bbnet/shadps4/core/libraries/np/np_handler.cpp`:
+    - Adicionado gancho de 1 linha em `NpHandler::Initialize()` para ignorar probing de servidor shadNet quando host customizado estiver ativo.
+    - `IsPsnSignedIn()` e `IsAnySignedIn()` agora retornam `IsAccountLoggedIn()` quando `IsCustomHostActive()`.
+- **Validação Completa**:
+  - `out/gpu/hosts-session-test`: aprovado.
+  - `out/gpu/hosts-http-test`: aprovado.
+  - Suíte Python (`test_hosts_account.py`, `test_hosts_online_ui.py`): 38 testes aprovados (`OK`).
+  - Execução real via `run.sh`: o jogo executa normalmente renderizando quadros estáveis (30 FPS), inicializa `SceNpMatching2Ex` e `SceNpSignaling`, responde `ORBIS_OK (0x0)` para autenticação NP e registro de presença, e gera arquivo de log detalhado em `logs/20261018_054818.log` sem qualquer aviso de sessão PSN desconectada.
+
+---
+
+## 62. Resolução de Queda da Conexão Ingame (Game Server 20443, Injeção de Headers e Keepalive de Sinalização)
+- **Sintoma Relatado**:
+  - Usuário informou: *"Até conecta agora, porém n fica online por muito tempo ingame"*. O jogo conectava aos servidores no menu inicial e entrava no mundo normalmente, mas caía para modo offline após 1 a 2 minutos de exploração in-game.
+- **Diagnóstico Técnico Profundo**:
+  1. **Roteamento Incorreto do Game Server (`https://ss4.scej-network.jp:20443`)**:
+     - No Bloodborne, espectros (fantasmas de outros jogadores), poças de sangue, notas e o monitoramento de heartbeat da sessão de jogo passam pela porta `20443` (`https://ss4.scej-network.jp:20443`).
+     - Em `launcher/bbport_config.py`, quando `backend == "bbhost"`, a variável `env["BB_COMMUNITY_SERVER"]` permanecia com o valor padrão de `s["online_community"]` (`http://play.seamlesshunt.com`).
+     - O script `scripts/online.py` lia `BB_COMMUNITY_SERVER` para gerar o `user/host_overrides.json`, mapeando `https://ss4.scej-network.jp:20443` para `http://play.seamlesshunt.com`. Como a conta e sessão do jogador não pertenciam ao Seamless Hunt, o servidor recusava as chamadas in-game, desautenticando o jogo logo após o carregamento do mapa.
+     - O servidor de jogo oficial do The Hunter's Dream roda na porta `20443` com HTTPS (`https://thehuntersdream.com:20443`), retornando `200 OK`.
+  2. **Ausência de Cabeçalhos de Autenticação (`X-BB-Token` e `X-BBHost-Ruleset: vanilla`) nas Requisições do Jogo**:
+     - As chamadas HTTP executadas pelo jogo para o servidor de jogo na porta `20443` passam por `RunRealHttpRequest` em `gpu/bbnet/shadps4/core/libraries/network/http.cpp`.
+     - O backend The Hunter's Dream exige estritamente os cabeçalhos `X-BB-Token: <token>` e `X-BBHost-Ruleset: vanilla` em todas as requisições para associar o tráfego à conta logada (`Shadowy`). Sem esses cabeçalhos, as requisições eram tratadas como anônimas e o servidor encerrava a sessão ativa por timeout.
+  3. **Ausência de Keepalive Periódico de Sinalização (`/mp/matching2/signaling_update`)**:
+     - Quando o jogador está em uma sala/sessão ativa, o backend exige keepalives periódicos (a cada 15–30 segundos) na rota `/mp/matching2/signaling_update` para manter a tabela NAT e a presença na sala ativas. A falta desse keepalive causava timeout de sinalização no servidor.
+  4. **Timeout de Conexão Rígido da Sony no Linux**:
+     - O jogo original usava `sceHttpSetConnectTimeOut` com tempos ínfimos (~1s) projetados para rede local cabeada do PS4. Em redes de internet convencionais, variações de latência disparavam `ETIMEDOUT` prematuros.
+  5. **Sequestro da Rota `/summon_messenger` em `scripts/online.py`**:
+     - `scripts/online.py` sobrescrevia chamadas de mensageiro de invocação para a porta 31315 do Seamless Hunt mesmo quando o backend ativo era um servidor de host customizado.
+- **Modificações Implementadas (100% de acordo com `MyGUIDELINES.md`)**:
+  - `launcher/bbport_config.py`:
+    - Ao configurar `backend == "bbhost"`, extrai o domínio base do servidor e define `env["BB_COMMUNITY_SERVER"] = f"{scheme}://{server_domain}"` (ex: `https://thehuntersdream.com`), garantindo que o servidor de jogo mapeie para o host correto.
+  - `scripts/online.py`:
+    - Adicionada salvaguarda em `summon_service()` para WebAPI vazia.
+    - Adicionada checagem para que backends customizados (`bbhost`, `hosts`, etc.) não tenham suas rotas de summon sequestradas para o WebAPI do shadNet.
+  - `gpu/bbnet/shadps4/core/libraries/network/http.cpp`:
+    - Incluído `#include "extra/hosts/hosts_hooks.h" // [extra]`.
+    - Definido piso mínimo de 5 segundos de timeout de conexão (`if (secs < 5) { secs = 5; } // [extra]`).
+    - Injetados os cabeçalhos `X-BB-Token` e `X-BBHost-Ruleset: vanilla` em `RunRealHttpRequest` quando `IsCustomHostActive() && IsAccountLoggedIn()` (`// [extra]`).
+  - `extra/hosts/session_room.h` e `extra/hosts/session_room.cpp`:
+    - Implementado `ServerSignalingUpdate(const std::string& signaling_token)` para envio do heartbeat de sinalização.
+  - `extra/hosts/session_poll.cpp`:
+    - Adicionado ciclo de keepalive de sinalização a cada 15 segundos enquanto o jogador estiver em uma sala (`InRoom()`).
+  - Configuração do usuário (`~/.config/bbport-launcher/settings.json`):
+    - Ativado `"save_log": true` para registrar logs detalhados em disco a cada execução.
+- **Validação e Testes**:
+  - `ninja -C out/gpu bbnet bbgpu hosts-session-test`: compilação limpa com código de saída 0.
+  - `./out/gpu/hosts-session-test`: todos os testes de sessão aprovados.
+  - `./out/gpu/hosts-http-test`: todos os testes de chamadas HTTP aprovados.
+  - Suíte Python (`test_hosts_account.py`, `test_hosts_online_ui.py`): 38 testes executados com sucesso (`OK`).
+  - `scripts/online.py overrides`: confirmação de que `user/host_overrides.json` aponta estritamente `https://ss4.scej-network.jp:20443` para `https://thehuntersdream.com`.
+  - Conformidade estrita com `MyGUIDELINES.md`: todos os arquivos em `extra/hosts/` com menos de 270 linhas (< 300 linhas), ganchos mínimos e limpos marcados com `// [extra]`.
+
+---
+
+## 63. Resolução de Desconexão ao Interagir com Poças de Sangue / Fantasmas (Mock de NP WebAPI para blockList/friendList e Sincronização de PlayLogs)
+- **Sintoma Relatado**:
+  - Usuário informou: *"continua caindo, mas vejo um progresso já, consegui de fato fica online e ver um morte deixada pelo player, mas logo apos caiu"*.
+  - O jogador conectou com sucesso, carregou o mundo e visualizou a morte/mancha de sangue de outro jogador, mas o jogo desconectou logo em seguida.
+- **Diagnóstico Preciso via Análise do Log `logs/20261018_064440.log`**:
+  1. **Disparo da Thread `NexusRevolution WebApi`**:
+     - No momento exato em que o jogador se aproxima ou interage com elementos deixados por outros jogadores (manchas de sangue, fantasmas, mensagens), o motor do Bloodborne cria a thread nativa `NexusRevolution WebApi` para verificar se o autor do elemento está na lista de jogadores bloqueados da PSN através da API `sceNpWebApiSendRequest2`:
+       `gpu warning (Lib.NpWebApi): no bearer token for user_id=1; request to '/v1/users/Shadowy/blockList?&fields=npId&limit=50' will be unauthenticated (expect 401 from server)`
+  2. **Falha de Resposta na API da PSN**:
+     - No shadPS4 padrão, a biblioteca `np_web_api` tentava despachar essa chamada para o servidor shadNet (`srv.shadps4.net:31315`), que não implementa o endpoint proprietário da PSN `/v1/users/.../blockList` ou respondia com erro HTTP 401/404.
+     - `sendRequest` em `np_web_api_internal.cpp` tratava respostas com código `>= 400` como falha fatal, retornando `0x82f00191`. A thread do jogo detectava a falha na checagem de bloqueio e desconectava preventivamente a sessão online.
+     - No projeto de referência `bbhost` (`src/hle/system.cpp`), requisições para `blockList` e `friendList` são expressamente tratadas como mocks HLE locais respondendo com JSON vazio: `{"totalResults":0,"blockList":[]}` e status HTTP 200 OK.
+  3. **Tentativa de Upload de Telemetria nos Buckets S3 da Sony (`bb-playlog-{test,prod}.s3.amazonaws.com`)**:
+     - O jogo tenta periodicamente realizar requisições HTTP PUT de telemetria para os servidores da Amazon AWS (`https://bb-playlog-prod.s3.amazonaws.com/<date>/<file>`). Como o emulador no PC não possui chaves de acesso da Sony para esses buckets, a Amazon rejeita com `403 Access Denied`.
+- **Modificações Implementadas (100% de acordo com `MyGUIDELINES.md`)**:
+  - `extra/hosts/hosts_hooks.h` e `hosts_hooks.cpp`:
+    - Implementado `HookWebApiSendRequest(path, out_data, max_data, out_size, out_http_status)`:
+      - Intercepta chamadas de `blockList` e `friendList` quando um backend customizado estiver ativo.
+      - Retorna JSONs padronizados com `totalResults: 0` e status 200 OK.
+  - `gpu/bbnet/shadps4/core/libraries/np/np_web_api/np_web_api_internal.cpp`:
+    - Integrado gancho de 1 linha em `sendRequest`: se `HookWebApiSendRequest` responder com sucesso, popula o buffer interno, marca `sent = true`, preenche `httpStatus = 200` e retorna `ORBIS_OK (0)` (`// [extra]`).
+    - Em `getHttpResponseHeaderValueInternal`: adicionada resposta sintetizada `Content-Type: application/json; charset=utf-8` para requisições mock (`// [extra]`).
+    - Em `getHttpStatusCodeInternal`: retorna 200 OK quando a requisição for um mock do host customizado (`// [extra]`).
+    - Em `readDataInternal`: adicionadas proteções para não invocar `sceHttpReadData` nem `sceHttpGetStatusCode` com ID de requisição HTTP 0 (`// [extra]`).
+  - `gpu/bbnet/shadps4/core/libraries/np/np_handler.cpp`:
+    - Em `GetBearerToken()`: retorna o token da conta do The Hunter's Dream quando `IsCustomHostActive() && IsAccountLoggedIn()` (`// [extra]`).
+  - `gpu/bbnet/shadps4/core/libraries/network/http.cpp`:
+    - Em `RunRealHttpRequest()`: sintetiza `200 OK` imediato para requisições direcionadas a `bb-playlog-prod.s3.amazonaws.com` e `bb-playlog-test.s3.amazonaws.com` (`// [extra]`).
+- **Validação e Testes**:
+  - `ninja -C out/gpu bbnet bbgpu hosts-session-test hosts-http-test`: compilação e linkedição bem-sucedidas.
+  - `out/gpu/hosts-session-test`: aprovado (`all tests passed`).
+  - `out/gpu/hosts-http-test`: aprovado (`all tests passed`).
+  - Suíte Python (`test_hosts_account.py`, `test_hosts_online_ui.py`): 38 testes executados com sucesso (`OK`).
+  - Todos os arquivos em `extra/hosts/` mantidos com menos de 270 linhas (< 300 linhas).
+

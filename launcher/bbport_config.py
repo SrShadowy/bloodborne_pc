@@ -410,7 +410,7 @@ def game_environment(s):
         env["BB_COMMUNITY_SERVER"] = community
         # The selected service (plan ONLINE_BBHOST_PLAN §3, §9): shadNet unless the
         # settings say bbhost; an unknown value is shadNet, the compatible default.
-        backend = "bbhost" if s.get("online_backend") == "bbhost" else "shadnet"
+        backend = "bbhost" if s.get("online_backend") in ("bbhost", "hosts", "thehuntersdream", "hd") else "shadnet"
         env["BB_ONLINE_BACKEND"] = backend
         if backend == "bbhost":
             # The account service's origin; a bad custom address falls back to the
@@ -422,6 +422,8 @@ def game_environment(s):
             scheme, _sep, host = base.partition("://")
             env["BB_HOST_SCHEME"] = scheme
             env["BB_HOST_SERVER"] = host
+            server_domain = host.split(":")[0]
+            env["BB_COMMUNITY_SERVER"] = f"{scheme}://{server_domain}"
             online_id, token = bbhost.load_account(ACCOUNT_FILE)
             env["BB_HOST_ONLINE_ID"] = online_id
             env["BB_HOST_TOKEN"] = token

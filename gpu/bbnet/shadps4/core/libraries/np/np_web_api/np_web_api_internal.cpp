@@ -14,9 +14,11 @@
 #include "core/libraries/kernel/process.h"
 #include "core/libraries/kernel/time.h"
 #include "core/libraries/network/http.h"
+#include "core/libraries/network/http_error.h" // [extra]
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_handler.h"
 #include "np_web_api_internal.h"
+#include "extra/hosts/hosts_hooks.h" // [extra]
 
 namespace Libraries::Np::NpWebApi {
 
@@ -769,12 +771,19 @@ s32 sendRequest(s64 requestId, s32 partIndex, const void* pData, u64 dataSize, s
     unlockContext(context);
 
     // Stubbing sceNpManagerIntGetSigninState call with a config check.
-    if (!EmulatorSettings.IsShadNetEnabled()) {
+    if (!EmulatorSettings.IsShadNetEnabled() && !Extra::Hosts::IsCustomHostActive()) { // [extra]
         releaseRequest(request);
         releaseUserContext(user_context);
         releaseContext(context);
         return ORBIS_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
     }
+
+    size_t mock_len = 0; int mock_status = 200; // [extra]
+    if (Extra::Hosts::HookWebApiSendRequest(request->userPath, request->data, sizeof(request->data), &mock_len, &mock_status)) { // [extra]
+        request->remainingData = mock_len; request->readOffset = 0; request->sent = true; setRequestState(request, 4); // [extra]
+        if (pRespInfoOption) { pRespInfoOption->httpStatus = mock_status; pRespInfoOption->responseDataSize = mock_len; } // [extra]
+        releaseRequest(request); releaseUserContext(user_context); releaseContext(context); return ORBIS_OK; // [extra]
+    } // [extra]
 
     if (request->http_request_id == 0) {
         std::string base_url = EmulatorSettings.GetShadNetWebApiServer();
@@ -1864,7 +1873,16 @@ s32 getHttpResponseHeaderValueInternal(s64 requestId, const char* pFieldName, ch
     char* block = nullptr;
     u64 blockSize = 0;
     const s32 httpReqId = getHttpRequestIdFromRequest(request);
-    const s32 err = Libraries::Http::sceHttpGetAllResponseHeaders(httpReqId, &block, &blockSize);
+    std::string mock_hdrs; // [extra]
+    s32 err = ORBIS_OK; // [extra]
+    if (httpReqId != 0) { // [extra]
+        err = Libraries::Http::sceHttpGetAllResponseHeaders(httpReqId, &block, &blockSize);
+    } else if (Extra::Hosts::IsCustomHostActive() && request->sent) { // [extra]
+        mock_hdrs = "Content-Type: application/json; charset=utf-8\r\nContent-Length: " + std::to_string(request->remainingData) + "\r\n\r\n"; // [extra]
+        block = mock_hdrs.data(); blockSize = mock_hdrs.size(); err = ORBIS_OK; // [extra]
+    } else { // [extra]
+        err = ORBIS_HTTP_ERROR_INVALID_ID; // [extra]
+    } // [extra]
 
     s32 result = ORBIS_OK;
     if (err < 0) {
@@ -1911,7 +1929,14 @@ s32 PS4_SYSV_ABI getHttpStatusCodeInternal(s64 requestId, s32* out_status_code) 
     // Query HTTP layer
     {
         int32_t httpReqId = getHttpRequestIdFromRequest(request);
-        s32 err = Libraries::Http::sceHttpGetStatusCode(httpReqId, &status_code);
+        s32 err = ORBIS_OK; // [extra]
+        if (httpReqId != 0) { // [extra]
+            err = Libraries::Http::sceHttpGetStatusCode(httpReqId, &status_code);
+        } else if (Extra::Hosts::IsCustomHostActive() && request->sent) { // [extra]
+            status_code = 200; err = ORBIS_OK; // [extra]
+        } else { // [extra]
+            err = ORBIS_HTTP_ERROR_INVALID_ID; // [extra]
+        } // [extra]
 
         if (out_status_code != nullptr)
             *out_status_code = status_code;
@@ -2009,8 +2034,7 @@ s32 PS4_SYSV_ABI readDataInternal(s64 requestId, void* pData, u64 size) {
             unlockContext(context);
 
             int32_t httpReqId = getHttpRequestIdFromRequest(request);
-            int32_t httpRead =
-                Libraries::Http::sceHttpReadData(httpReqId, (u8*)pData + offset, remainingSize);
+            int32_t httpRead = (httpReqId != 0) ? Libraries::Http::sceHttpReadData(httpReqId, (u8*)pData + offset, remainingSize) : 0; // [extra]
 
             if (httpRead < 0)
                 httpRead = 0;
@@ -2033,7 +2057,8 @@ s32 PS4_SYSV_ABI readDataInternal(s64 requestId, void* pData, u64 size) {
         // just read belongs to an error response
         if (offset > 0) {
             s32 sc = 0;
-            if (Libraries::Http::sceHttpGetStatusCode(getHttpRequestIdFromRequest(request), &sc) >=
+            const int32_t httpReqId = getHttpRequestIdFromRequest(request); // [extra]
+            if (httpReqId != 0 && Libraries::Http::sceHttpGetStatusCode(httpReqId, &sc) >= // [extra]
                     0 &&
                 sc >= 400) {
                 captureWebApiError(reinterpret_cast<const char*>(pData), offset);

@@ -14,7 +14,8 @@ add_custom_command(
             "--cpp_out=${SHADNET_PROTO_OUT}" "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shadnet/shadnet.proto")
 file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS shadps4/core/libraries/network/*.cpp
-    shadps4/core/libraries/np/*.cpp shadps4/shadnet/*.cpp bbhost/*.cpp)
+    shadps4/core/libraries/np/*.cpp shadps4/shadnet/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../extra/hosts/*.cpp)
 # BBSC, Bloodborne seamless co-op (GPL-2.0+): its game code and the
 # port's stand-ins for shadPS4's UI (bbsc_glue.cpp). Installed only for Bloodborne with BB_BBSC=1.
 list(APPEND BBNET_SOURCES shadps4/core/bloodborne_re.cpp shadps4/core/bbsc_persistence.cpp
@@ -27,7 +28,10 @@ list(FILTER BBNET_SOURCES EXCLUDE REGEX
 add_library(bbnet SHARED ${BBNET_SOURCES} "${SHADNET_PROTO_OUT}/shadnet.pb.cc" bbnet_glue.cpp)
 # The module's own headers first, then the port's utilities (common/, logging) and shim.
 target_include_directories(bbnet PRIVATE include shadps4 shadps4/shadnet "${SHADNET_PROTO_OUT}"
-    ${CMAKE_CURRENT_SOURCE_DIR} .. ../shim ../third_party/imgui ../third_party/httplib)
+    ${CMAKE_CURRENT_SOURCE_DIR} .. ../shim ../third_party/imgui ../third_party/httplib
+    ${CMAKE_CURRENT_SOURCE_DIR}/../..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../extra
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../extra/hosts)
 # The version the shadNet client reports to the server (ShadNetClient::BuildVersionString).
 set(BBPORT_VERSION "0.6-pre1")
 target_compile_definitions(bbnet PRIVATE BOOST_ASIO_STANDALONE NDEBUG

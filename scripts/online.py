@@ -72,6 +72,8 @@ def webapi_setting(webapi, server, community):
 def summon_service(webapi):
     """True when a shadNet WebAPI answers Bloodborne's summon calls: the route exists there
     (an empty request is refused with 400), where other servers answer 404."""
+    if not webapi:
+        return False
     request = urllib.request.Request(webapi.rstrip('/') + '/summon_messenger/create', data=b'',
                                      method='POST')
     try:
@@ -94,13 +96,13 @@ def write_overrides(user_dir, community, webapi):
     community = community_address(community)
     host = community.split('://', 1)[1]
     overrides = {GAME_SERVER: community}
-    if summon_service(webapi):
+    backend = os.environ.get('BB_ONLINE_BACKEND', '').strip().lower()
+    if backend not in ('bbhost', 'hosts', 'thehuntersdream', 'hd') and summon_service(webapi):
         overrides.update({f'{scheme}://{host}:{COMMUNITY_API_PORT}/summon_messenger': webapi
                           for scheme in ('https', 'http')})
         print(f'Co-op: summon signs through {webapi}', file=sys.stderr)
     else:
-        print(f'Co-op: {webapi} has no summon service; summon signs through {community}',
-              file=sys.stderr)
+        print(f'Co-op: summon signs through {community}', file=sys.stderr)
     path = user_dir / 'host_overrides.json'
     path.write_text(json.dumps(overrides, indent=2) + '\n', encoding='utf-8')
     return path

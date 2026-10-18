@@ -219,6 +219,7 @@ target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/bac
 file(GLOB_RECURSE EXTRA_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.c)
+list(FILTER EXTRA_SOURCES EXCLUDE REGEX "extra/hosts/")
 target_sources(bbgpu PRIVATE ${EXTRA_SOURCES})
 # Dear ImGui stays private to libbbgpu.so. The library is linked into bb-probe, so its exports are
 # in the global symbol scope; a Vulkan layer carrying its own Dear ImGui without -Bsymbolic
@@ -366,17 +367,31 @@ if (BB_NET)
     if (Protobuf_FOUND AND nlohmann_json_FOUND AND OpenSSL_FOUND AND ZLIB_FOUND AND
         MINIUPNPC_INCLUDE AND MINIUPNPC_LIBRARY)
         add_subdirectory(bbnet)
-        # bbhost transport test (tests/test_bbhost_http.cpp): an in-process httplib server
+        # hosts transport test (tests/test_hosts_http.cpp): an in-process httplib server
         # plays the Hunter's Dream on 127.0.0.1 — no network, no Vulkan, no game.
-        # Build it explicitly: ninja -C out/gpu bbhost-http-test && out/gpu/bbhost-http-test
-        add_executable(bbhost-http-test EXCLUDE_FROM_ALL ../tests/test_bbhost_http.cpp
-            bbnet/bbhost/http_json.cpp)
-        target_compile_options(bbhost-http-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-        target_include_directories(bbhost-http-test PRIVATE ..)
-        target_include_directories(bbhost-http-test SYSTEM PRIVATE third_party/httplib)
-        target_compile_definitions(bbhost-http-test PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
+        # Build it explicitly: ninja -C out/gpu hosts-http-test && out/gpu/hosts-http-test
+        add_executable(hosts-http-test EXCLUDE_FROM_ALL ../tests/test_hosts_http.cpp
+            ../extra/hosts/http_client.cpp)
+        target_compile_options(hosts-http-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+        target_include_directories(hosts-http-test PRIVATE .. ../extra)
+        target_include_directories(hosts-http-test SYSTEM PRIVATE third_party/httplib)
+        target_compile_definitions(hosts-http-test PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
             CPPHTTPLIB_ZLIB_SUPPORT)
-        target_link_libraries(bbhost-http-test PRIVATE nlohmann_json::nlohmann_json
+        target_link_libraries(hosts-http-test PRIVATE nlohmann_json::nlohmann_json
+            OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
+
+        add_executable(hosts-session-test EXCLUDE_FROM_ALL ../tests/test_hosts_session.cpp
+            ../extra/hosts/account.cpp
+            ../extra/hosts/http_client.cpp
+            ../extra/hosts/session_state.cpp
+            ../extra/hosts/session_room.cpp
+            ../extra/hosts/session_poll.cpp)
+        target_compile_options(hosts-session-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+        target_include_directories(hosts-session-test PRIVATE .. ../extra)
+        target_include_directories(hosts-session-test SYSTEM PRIVATE third_party/httplib)
+        target_compile_definitions(hosts-session-test PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
+            CPPHTTPLIB_ZLIB_SUPPORT)
+        target_link_libraries(hosts-session-test PRIVATE nlohmann_json::nlohmann_json
             OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
         message(STATUS "Online module: on (libbbnet.so)")
     else()

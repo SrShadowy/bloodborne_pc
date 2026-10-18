@@ -23,6 +23,7 @@
 #include "np_handler.h"
 #include "shadnet.pb.h"
 #include "shadnet/server_probe.h"
+#include "extra/hosts/hosts_hooks.h" // [extra]
 
 namespace Libraries::Np {
 
@@ -97,6 +98,7 @@ void NpHandler::Initialize() {
         LOG_WARNING(NpHandler, "Initialize called more than once");
         return;
     }
+    if (Extra::Hosts::IsCustomHostActive()) return; // [extra]
 
     if (!EmulatorSettings.IsShadNetEnabled()) {
         LOG_INFO(NpHandler, "shadNet disabled globally we are in offline mode");
@@ -426,12 +428,14 @@ void NpHandler::TryReconnect() {
 }
 
 bool NpHandler::IsPsnSignedIn(s32 user_id) const {
+    if (Extra::Hosts::IsCustomHostActive()) return Extra::Hosts::IsAccountLoggedIn(); // [extra]
     std::lock_guard lock(m_mutex_clients);
     auto it = m_clients.find(user_id);
     return it != m_clients.end() && it->second->IsAuthenticated();
 }
 
 bool NpHandler::IsAnySignedIn() const {
+    if (Extra::Hosts::IsCustomHostActive()) return Extra::Hosts::IsAccountLoggedIn(); // [extra]
     std::lock_guard lock(m_mutex_clients);
     for (auto& [_, client] : m_clients)
         if (client->IsAuthenticated())
@@ -462,6 +466,7 @@ OrbisNpAccountId NpHandler::GetAccountId(s32 user_id) const {
 }
 
 std::string NpHandler::GetBearerToken(s32 user_id) const {
+    if (Extra::Hosts::IsCustomHostActive() && Extra::Hosts::IsAccountLoggedIn()) { return Extra::Hosts::GetAccountToken(); } // [extra]
     std::lock_guard lock(m_mutex_clients);
     auto it = m_clients.find(user_id);
     return it != m_clients.end() ? it->second->GetBearerToken() : std::string{};

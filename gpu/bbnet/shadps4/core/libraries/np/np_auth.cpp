@@ -9,6 +9,7 @@
 #include "core/libraries/np/np_auth.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/system/userservice.h"
+#include "extra/hosts/hosts_hooks.h" // [extra]
 
 namespace Libraries::Np::NpAuth {
 
@@ -109,6 +110,7 @@ s32 GetAuthorizationCode(s32 req_id, const OrbisNpAuthGetAuthorizationCodeParame
     }
 
     request.state = NpAuthRequestState::Complete;
+    if (s32 res; Extra::Hosts::HookAuthGetAuthorizationCode(req_id, auth_code, issuer_id, &res)) { request.result = res; return request.async ? ORBIS_OK : res; } // [extra]
     if (!g_shadnet_enabled) {
         request.result = ORBIS_NP_ERROR_SIGNED_OUT;
         // If the request is processed in some form, and it's an async request, then it returns OK.
@@ -207,6 +209,7 @@ s32 GetIdToken(s32 req_id, const OrbisNpAuthGetIdTokenParameterA* param, s32 fla
     }
 
     request.state = NpAuthRequestState::Complete;
+    if (s32 res; Extra::Hosts::HookAuthGetIdToken(req_id, token, &res)) { request.result = res; return request.async ? ORBIS_OK : res; } // [extra]
     if (!g_shadnet_enabled) {
         request.result = ORBIS_NP_ERROR_SIGNED_OUT;
         // If the request is processed in some form, and it's an async request, then it returns OK.
@@ -364,7 +367,7 @@ s32 PS4_SYSV_ABI sceNpAuthDeleteRequest(s32 req_id) {
 }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
-    g_shadnet_enabled = EmulatorSettings.IsShadNetEnabled();
+    g_shadnet_enabled = EmulatorSettings.IsShadNetEnabled() || Extra::Hosts::IsCustomHostActive(); // [extra]
 
     LIB_FUNCTION("6bwFkosYRQg", "libSceNpAuth", 1, "libSceNpAuth", sceNpAuthCreateRequest);
     LIB_FUNCTION("N+mr7GjTvr8", "libSceNpAuth", 1, "libSceNpAuth", sceNpAuthCreateAsyncRequest);

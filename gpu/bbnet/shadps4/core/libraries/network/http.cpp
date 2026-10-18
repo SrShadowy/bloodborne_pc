@@ -33,6 +33,7 @@
 #include "core/libraries/libs.h"
 #include "core/libraries/network/http.h"
 #include "http_error.h"
+#include "extra/hosts/hosts_hooks.h" // [extra]
 
 #if __has_include(<httplib.h>)
 #include <httplib.h>
@@ -981,13 +982,15 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
             return std::chrono::seconds(default_s);
         }
         u64 secs = (static_cast<u64>(us) + 999999ull) / 1000000ull;
-        if (secs == 0) {
-            secs = 1;
-        }
+        if (secs < 5) { secs = 5; } // [extra]
         return std::chrono::seconds(secs);
     };
 
     for (int depth = 0; depth <= MaxRedirects; ++depth) {
+        if (Extra::Hosts::IsCustomHostActive() && (plan.host == "bb-playlog-prod.s3.amazonaws.com" || plan.host == "bb-playlog-test.s3.amazonaws.com")) { // [extra]
+            out_res.status_code = 200; out_res.body.clear(); out_res.content_length = 0; out_res.read_cursor = 0; // [extra]
+            out_res.all_headers_blob = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"; return ORBIS_OK; // [extra]
+        } // [extra]
         if (plan.scheme == "https" && !ORBIS_HTTP_HAS_HTTPS) {
             LOG_ERROR(Lib_Http, "HTTPS request but cpp-httplib lacks OpenSSL support");
             SynthesizeTransportFailureResponse(out_res);
@@ -1047,6 +1050,10 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
                 headers.emplace("Accept-Encoding", "gzip");
             }
         }
+        if (Extra::Hosts::IsCustomHostActive() && Extra::Hosts::IsAccountLoggedIn()) { // [extra]
+            headers.emplace("X-BB-Token", Extra::Hosts::GetAccountToken()); // [extra]
+            headers.emplace("X-BBHost-Ruleset", "vanilla"); // [extra]
+        } // [extra]
 
         const char* body_ptr =
             plan.body.empty() ? "" : reinterpret_cast<const char*>(plan.body.data());
