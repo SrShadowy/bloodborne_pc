@@ -15,7 +15,7 @@
 
 namespace UI {
 
-static char value_input[128] = "1";
+static char value_input[128] = "20";
 static int selected_type = 2; // Default u32
 static int selected_scope = 1; // Default GuestMemory (PS4 Heap)
 static int selected_comp = 0; // Default Exact
@@ -174,7 +174,19 @@ void TabScanner::Render() {
                        "%s", L("Search Results:", "Resultados da Busca:", "Результаты поиска:"));
     ImGui::SameLine();
     ImGui::TextDisabled("(%zu %s)", count, L("matches", "encontrados", "найдено"));
+    if (scanner.HasHitMatchLimit()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "[%s]",
+                           L("LIMIT REACHED (5,000,000)", "LIMITE ATINGIDO (5.000.000)", "ДОСТИГНУТ ЛИМИТ (5 000 000)"));
+    }
     ImGui::Separator();
+    if (scanner.HasHitMatchLimit()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.30f, 1.0f), "%s",
+                           L("Notice: Results were capped at 5,000,000 to prevent running out of memory. Perform a 'Next Scan' with changed values or use a more specific number.",
+                             "Aviso: Resultados limitados a 5.000.000 para evitar esgotar a memoria. Faca um 'Proximo Scan' com valor alterado ou use um numero mais especifico.",
+                             "Примечание: Результаты ограничены до 5 000 000. Выполните 'След. поиск' для фильтрации."));
+    }
     if (count == 0 && !scanner.IsScanning() && selected_scope == 0) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.35f, 1.0f), "%s",

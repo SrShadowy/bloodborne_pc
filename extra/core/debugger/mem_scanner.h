@@ -68,6 +68,7 @@ public:
     std::vector<ScanMatch> GetMatches(size_t offset, size_t limit);
 
     bool IsScanning() const { return scanning.load(std::memory_order_relaxed); }
+    bool HasHitMatchLimit() const { return match_limit_hit.load(std::memory_order_relaxed); }
     float GetProgress() const { return progress.load(std::memory_order_relaxed); }
     DataType GetCurrentType() const;
     size_t GetCurrentPatternLength() const;
@@ -97,6 +98,7 @@ private:
     std::thread scan_thread;
     std::atomic<bool> scanning{false};
     std::atomic<bool> cancel_requested{false};
+    std::atomic<bool> match_limit_hit{false};
     std::atomic<float> progress{0.0f};
 
     DataType current_type{DataType::U32};

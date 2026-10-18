@@ -37,3 +37,4 @@ patches.json
 *.dll
 MyGUIDELINES.md
 docs/FRAME_RATE_AND_SHADERS_ANALYSIS.md
+gpu/third_party/fsr-vulkan

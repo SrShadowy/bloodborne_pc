@@ -41,7 +41,13 @@ bool MemoryScanner::ReadMemory(uintptr_t addr, void* dest, size_t size) {
         return true;
     }
 
-    // 4. Last resort fallback (e.g. host memory where process_vm_readv is restricted)
+    // 4. If process_vm_readv failed with EFAULT (unmapped page), do not attempt memcpy
+    // which would trigger an unnecessary SIGSEGV exception storm.
+    if (n < 0 && errno == EFAULT) {
+        return false;
+    }
+
+    // 5. Last resort fallback (e.g. host memory where process_vm_readv is restricted)
     sigjmp_buf recover;
     if (sigsetjmp(recover, 1) != 0) {
         runtime_fault_recover = nullptr;
@@ -110,12 +116,18 @@ std::vector<MemoryRegion> MemoryScanner::QueryRegions(ScanScope scope) {
         char path[256] = {0};
         int parsed = std::sscanf(line, "%lx-%lx %4s %*x %*s %*d %255s", &start, &end, perms, path);
         if (parsed >= 3) {
-            // Must have read permissions
-            if (perms[0] != 'r') continue;
+            bool readable = (perms[0] == 'r');
+            if (!readable) {
+                // If GPU dirty tracking marked this guest page PROT_NONE, it can still be read safely via backing view
+                if (runtime_memory_is_mapped(start, 4096)) {
+                    readable = true;
+                }
+            }
+            if (!readable) continue;
 
             // Filter out device nodes and kernel mappings
             if (parsed >= 4) {
-                if (std::strncmp(path, "/dev/", 5) == 0) continue;
+                if (std::strncmp(path, "/dev/", 5) == 0 && std::strncmp(path, "/dev/shm", 8) != 0) continue;
                 if (std::strcmp(path, "[vsyscall]") == 0 || std::strcmp(path, "[vvar]") == 0) continue;
             }
 
@@ -128,15 +140,23 @@ std::vector<MemoryRegion> MemoryScanner::QueryRegions(ScanScope scope) {
                     regions.push_back({start, end});
                 }
             } else if (scope == ScanScope::GuestHeap) {
-                // PS4 user / guest space is [min_addr, 0x100000000000)
-                const uintptr_t min_addr = img_base ? img_base : 0x400000;
-                if (start >= min_addr && end <= 0x100000000000ULL) {
-                    regions.push_back({start, end});
+                // PS4 user / guest space is [0x400000, 0x100000000000)
+                // Includes non-PIE [heap], eboot.bin, PRXs, direct memory, and flexible memory
+                if (start >= 0x400000ULL && end <= 0x100000000000ULL) {
+                    if (!regions.empty() && regions.back().end == start) {
+                        regions.back().end = end;
+                    } else {
+                        regions.push_back({start, end});
+                    }
                 }
             } else {
                 // FullProcess: avoid vsyscall and kernel space
                 if (end <= 0x7fffffffffffULL) {
-                    regions.push_back({start, end});
+                    if (!regions.empty() && regions.back().end == start) {
+                        regions.back().end = end;
+                    } else {
+                        regions.push_back({start, end});
+                    }
                 }
             }
         }

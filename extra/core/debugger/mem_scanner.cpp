@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "mem_scanner.h"
+#include "mem_scanner_algo.h"
 #include "pattern_scanner.h"
 
 #include <cstdio>
@@ -67,6 +68,7 @@ void MemoryScanner::StartPatternScan(const std::string& pattern_str, ScanScope s
     }
 
     cancel_requested.store(false);
+    match_limit_hit.store(false);
     scanning.store(true);
     progress.store(0.0f);
 
@@ -82,6 +84,7 @@ void MemoryScanner::StartFirstScan(DataType type, ScanComparison comp, double va
     }
 
     cancel_requested.store(false);
+    match_limit_hit.store(false);
     scanning.store(true);
     progress.store(0.0f);
 
@@ -96,9 +99,10 @@ void MemoryScanner::DoFirstScan(DataType type, ScanComparison comp, double value
     constexpr size_t CHUNK_SIZE = 256 * 1024; // 256 KB chunks
     std::vector<uint8_t> chunk(CHUNK_SIZE);
 
-    constexpr size_t MAX_MATCHES = 300000;
+    constexpr size_t MAX_MATCHES = 5000000;
     std::vector<ScanMatch> temp_matches;
-    temp_matches.reserve(10000);
+    temp_matches.reserve(50000);
+    bool limit_hit = false;
 
     size_t total_bytes = 0;
     for (const auto& r : regions) total_bytes += (r.end - r.start);
@@ -125,13 +129,31 @@ void MemoryScanner::DoFirstScan(DataType type, ScanComparison comp, double value
                 ok = any_page_read;
             }
             if (ok) {
-                for (size_t off = 0; off + type_size <= to_read; off += type_size) {
-                    const double val = DecodeValue(type, chunk.data() + off);
-                    if (MatchesCondition(comp, type, val, val, value)) {
-                        const uint64_t raw = EncodeRaw(type, chunk.data() + off);
-                        temp_matches.push_back({cur + off, raw, raw});
-                        if (temp_matches.size() >= MAX_MATCHES) {
-                            goto done;
+                if (comp == ScanComparison::Exact) {
+                    switch (type) {
+                    case DataType::U8: ScanExactTyped<uint8_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::I8: ScanExactTyped<int8_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::U16: ScanExactTyped<uint16_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::I16: ScanExactTyped<int16_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::U32: ScanExactTyped<uint32_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::I32: ScanExactTyped<int32_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::U64: ScanExactTyped<uint64_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::I64: ScanExactTyped<int64_t>(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::Float: ScanExactFloat(chunk.data(), to_read, cur, static_cast<float>(value), temp_matches, MAX_MATCHES, limit_hit); break;
+                    case DataType::Double: ScanExactDouble(chunk.data(), to_read, cur, value, temp_matches, MAX_MATCHES, limit_hit); break;
+                    default: break;
+                    }
+                    if (limit_hit) goto done;
+                } else {
+                    for (size_t off = 0; off + type_size <= to_read; off += type_size) {
+                        const double val = DecodeValue(type, chunk.data() + off);
+                        if (MatchesCondition(comp, type, val, val, value)) {
+                            const uint64_t raw = EncodeRaw(type, chunk.data() + off);
+                            temp_matches.push_back({cur + off, raw, raw});
+                            if (temp_matches.size() >= MAX_MATCHES) {
+                                limit_hit = true;
+                                goto done;
+                            }
                         }
                     }
                 }
@@ -144,6 +166,7 @@ void MemoryScanner::DoFirstScan(DataType type, ScanComparison comp, double value
     }
 
 done:
+    match_limit_hit.store(limit_hit);
     if (!cancel_requested.load()) {
         std::lock_guard<std::mutex> lock(mutex);
         current_type = type;
@@ -260,6 +283,7 @@ void MemoryScanner::Reset() {
     }
     std::lock_guard<std::mutex> lock(mutex);
     matches.clear();
+    match_limit_hit.store(false);
     scanning.store(false);
     progress.store(0.0f);
 }

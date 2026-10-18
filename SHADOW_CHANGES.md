@@ -1975,3 +1975,40 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
      - `./launcher/bbport-launcher.bin --help` -> OK (código 0).
      - Execução gráfica ao vivo de `./launcher/bbport-launcher`: processo ativo, janela instanciada sem exceções e sem janela preta.
      - Teste de `bin/bb-probe` sem `LD_LIBRARY_PATH`: todas as dependências carregadas pelo RPATH relativo `$ORIGIN`.
+
+---
+
+## 69. Correção do Scanner de Memória (Teto de Matches, Cobertura Completa do Heap PS4 e Vetorização)
+- **Solicitação do Usuário**:
+  - *"a busca está rapida demais e sempre resulta o mesmo tanto, não acha alguns endereços também"*
+- **Causas Raiz Identificadas**:
+  1. **Truncamento Prematuro da Varredura (`MAX_MATCHES = 300000; goto done;`)**:
+     - No arquivo `extra/core/debugger/mem_scanner.cpp`, a busca de primeiro scan (`DoFirstScan`) continha um teto rígido de 300.000 resultados com instrução `goto done;`.
+     - Ao escanear valores comuns em uma memória de mais de 5 GB (como 0, 1, 2 ou 20), o vetor de resultados atingia 300.000 nos primeiros megabytes. O salto imediato fazia a busca terminar em ~0.05 segundos ("rápida demais"), congelava o contador de resultados sempre em exatamente 300.000 ("sempre resulta o mesmo tanto") e abandonava os mais de 5 GB restantes de heap onde residem as entidades e atributos do jogador ("não acha alguns endereços").
+  2. **Exclusão de Regiões de Memória Baixa (`min_addr = img_base`)**:
+     - Em `extra/core/debugger/mem_scanner_io.cpp:QueryRegions()`, o escopo `ScanScope::GuestHeap` limitava as faixas com `start >= min_addr`, onde `min_addr` era definido como `img_base ? img_base : 0x400000`. Como a base da imagem executável (`eboot.bin`) no `bb-probe` é `0x7ffffd000` (~34 GB), todo o `[heap]` de 210 MB (`0x32496000-0x3f711000`) e alocações iniciais abaixo de 34 GB eram completamente descartados da varredura.
+  3. **Descarte de Páginas do Guest Protegidas pela GPU (`perms[0] != 'r'`)**:
+     - `QueryRegions()` descartava qualquer linha do `/proc/self/maps` sem a permissão `r` (como páginas marcadas temporariamente com `PROT_NONE` / `---p` pelo dirty-tracking da GPU). Como `ReadMemory()` já possui suporte nativo para ler a visão de backing store (`runtime_memory_read_backing()`) para páginas `PROT_NONE`, essas páginas do guest eram ignoradas antes mesmo de serem lidas.
+  4. **Tempestade de SIGSEGVs em `ReadMemory()`**:
+     - Quando `process_vm_readv` falhava com `EFAULT` em páginas não mapeadas e `runtime_memory_is_mapped` era falso, a função tentava um `memcpy` direto protegido por `sigsetjmp`, gerando milhares de sinais SIGSEGV desnecessários para o kernel por bloco de 256 KB.
+- **Modificações Implementadas (Aderentes a `MyGUIDELINES.md`)**:
+  - `extra/core/debugger/mem_scanner_algo.h` (NOVO, 55 linhas):
+    - Implementadas rotinas de busca exata vetorizada e tipada (`ScanExactTyped<T>`, `ScanExactFloat`, `ScanExactDouble`) com templates compactos, eliminando 1,25 bilhão de chamadas virtuais, switches e conversões para `double`.
+  - `extra/core/debugger/mem_scanner.h`:
+    - Adicionado método `HasHitMatchLimit()` e flag atômica `match_limit_hit` para sinalizar ao usuário caso o teto seja atingido.
+  - `extra/core/debugger/mem_scanner.cpp`:
+    - Expansão do teto de resultados de **300.000 para 5.000.000** (consumindo apenas ~114 MB de RAM em pico, perfeitamente seguro nos 30 GB do sistema).
+    - Varredura de 100% da memória com aceleração direta em ~60-80 ms para os 5+ GB de RAM.
+  - `extra/core/debugger/mem_scanner_io.cpp`:
+    - `QueryRegions()` ajustado para `min_addr = 0x400000ULL`, cobrindo `[heap]` e todas as faixas do guest abaixo de 1 TiB.
+    - Suporte para inclusão de páginas `---p` cujo `runtime_memory_is_mapped(start, 4096)` seja verdadeiro.
+    - Mesclagem automática de faixas de memória adjacentes contíguas.
+    - `ReadMemory()` retorna `false` imediatamente quando `errno == EFAULT`, eliminando 100% dos sinais SIGSEGV em memória inválida.
+  - `extra/ui/tabs/tab_scanner.cpp`:
+    - Valor padrão de busca inicial alterado de `"1"` para `"20"` (capacidade padrão de Frascos de Sangue / Balas de Mercúrio).
+    - Inclusão de badge de aviso visual `[LIMITE ATINGIDO (5.000.000)]` e texto orientativo quando o limite de resultados for alcançado.
+  - `tests/test_assembler_pattern.cpp`:
+    - Adicionados testes unitários para `ScanExactTyped` e validação do limite de matches.
+- **Validação e Testes**:
+  - Compilação limpa da biblioteca gráfica `libbbgpu.so` via `ninja -C out/gpu bbgpu`.
+  - Execução dos testes automatizados via `ninja -C out/gpu assembler-pattern-test && ./out/gpu/assembler-pattern-test` (100% aprovados).

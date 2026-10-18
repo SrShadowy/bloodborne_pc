@@ -2,6 +2,7 @@
 #include "assembler.h"
 #include "pattern_scanner.h"
 #include "mem_scanner.h"
+#include "mem_scanner_algo.h"
 #include <cassert>
 #include <cstdio>
 #include <vector>
@@ -126,7 +127,34 @@ int main() {
         std::string fmt = Debugger::PatternScanner::FormatBytes(sample, sizeof(sample));
         assert(fmt == "48 89 5C 24");
     }
-    printf("[TEST] PatternScanner FormatBytes tests passed.\n");
+    // 6. Test MemoryScanner Exact typed fast-path algorithms
+    {
+        std::vector<uint32_t> buf32(1000, 0);
+        buf32[42] = 20;
+        buf32[100] = 20;
+        buf32[800] = 20;
+
+        std::vector<Debugger::ScanMatch> matches;
+        bool hit = false;
+        Debugger::ScanExactTyped<uint32_t>(reinterpret_cast<const uint8_t*>(buf32.data()),
+                                           buf32.size() * sizeof(uint32_t),
+                                           0x200000, 20.0, matches, 5000000, hit);
+        assert(matches.size() == 3);
+        assert(matches[0].address == 0x200000 + 42 * sizeof(uint32_t));
+        assert(matches[1].address == 0x200000 + 100 * sizeof(uint32_t));
+        assert(matches[2].address == 0x200000 + 800 * sizeof(uint32_t));
+        assert(!hit);
+
+        // Test limit hit
+        matches.clear();
+        hit = false;
+        Debugger::ScanExactTyped<uint32_t>(reinterpret_cast<const uint8_t*>(buf32.data()),
+                                           buf32.size() * sizeof(uint32_t),
+                                           0x200000, 20.0, matches, 2, hit);
+        assert(matches.size() == 2);
+        assert(hit);
+    }
+    printf("[TEST] MemoryScanner ScanExactTyped tests passed.\n");
 
     printf("[ALL TESTS PASSED SUCCESSFULLY!]\n");
     return 0;
