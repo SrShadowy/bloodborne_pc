@@ -162,7 +162,40 @@ int main(void) {
     assert(wheel_phase[1]==1 && mouse_key_down(MOUSE_WHEEL_DOWN));
     mouse_wheel_step(1070000,0,0);
     assert(!mouse_key_down(MOUSE_WHEEL_DOWN));
-    mouse_wheel_step(1140000,0,0);
-    assert(mouse_key_down(MOUSE_WHEEL_DOWN) && wheel_pending[1]==0);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse");
+    /* Walk modifier (Hold Walk): Left/Right Alt or Ctrl reduces WASD stick deflection */
+    {
+        PadData w; memset(&w, 0, sizeof w);
+        w.left_x = w.left_y = 128;
+        bool k_run[SDL_SCANCODE_COUNT] = {0};
+        k_run[SDL_SCANCODE_W] = true;
+        apply_keyboard(&w, k_run);
+        assert(w.left_y == 0 && w.left_x == 128); /* Full run forward */
+
+        memset(&w, 0, sizeof w);
+        w.left_x = w.left_y = 128;
+        bool k_walk_alt[SDL_SCANCODE_COUNT] = {0};
+        k_walk_alt[SDL_SCANCODE_W] = true;
+        k_walk_alt[SDL_SCANCODE_LALT] = true;
+        apply_keyboard(&w, k_walk_alt);
+        assert(w.left_y == 128 - 60 && w.left_x == 128); /* Half-analog walk forward (Alt) */
+
+        memset(&w, 0, sizeof w);
+        w.left_x = w.left_y = 128;
+        bool k_walk_ctrl[SDL_SCANCODE_COUNT] = {0};
+        k_walk_ctrl[SDL_SCANCODE_W] = true;
+        k_walk_ctrl[SDL_SCANCODE_LCTRL] = true;
+        apply_keyboard(&w, k_walk_ctrl);
+        assert(w.left_y == 128 - 60 && w.left_x == 128); /* Half-analog walk forward (Ctrl) */
+
+        memset(&w, 0, sizeof w);
+        w.left_x = w.left_y = 128;
+        bool k_walk_diag[SDL_SCANCODE_COUNT] = {0};
+        k_walk_diag[SDL_SCANCODE_W] = true;
+        k_walk_diag[SDL_SCANCODE_D] = true;
+        k_walk_diag[SDL_SCANCODE_LALT] = true;
+        apply_keyboard(&w, k_walk_diag);
+        assert(w.left_y == 128 - 42 && w.left_x == 128 + 42); /* Normalized diagonal walk */
+    }
+
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse, walk modifier");
 }

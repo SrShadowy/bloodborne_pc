@@ -202,6 +202,27 @@ static inline void extra_pad_read_sensors(SDL_Gamepad *g, float acceleration[3],
     }
 }
 
+/* Hold Walk modifier: holding Left/Right Alt or Left/Right Ctrl with movement keys
+ * sets half-analog deflection so the character walks smoothly instead of running. */
+static inline void extra_pad_apply_walk_modifier(uint8_t *left_x, uint8_t *left_y, const bool *k,
+                                                 int move_left, int move_right, int move_up, int move_down) {
+    if (!k || (!move_left && !move_right && !move_up && !move_down)) return;
+    const int walk = k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT] ||
+                     k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL];
+    if (!walk) return;
+
+    const int move_x = move_left || move_right;
+    const int move_y = move_up || move_down;
+    const int scale = (move_x && move_y) ? 42 : 60;
+
+    if (move_x) {
+        *left_x = (uint8_t)(128 + (move_right ? scale : -scale));
+    }
+    if (move_y) {
+        *left_y = (uint8_t)(128 + (move_down ? scale : -scale));
+    }
+}
+
 #ifdef __cplusplus
 }
 #endif

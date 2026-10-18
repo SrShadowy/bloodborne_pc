@@ -2012,3 +2012,36 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
 - **Validação e Testes**:
   - Compilação limpa da biblioteca gráfica `libbbgpu.so` via `ninja -C out/gpu bbgpu`.
   - Execução dos testes automatizados via `ninja -C out/gpu assembler-pattern-test && ./out/gpu/assembler-pattern-test` (100% aprovados).
+
+---
+
+## 70. Suporte à Tecla de Caminhar (Hold Walk / Meio Analógico) e Resolução de Invocação Online (BBSC / Sinos)
+- **Solicitações do Usuário**:
+  1. *"estou tentando invocar uma outra pessoa a gente usa os sinos mas ninguem consegue invocar ninguem meesmo com a senha no mundo oq pode ser?"*
+  2. *"tem como fazer isso aqui também usar o meio analogico: Tecla de Caminhar (Hold Walk): Em algumas versões e configurações padrão do PC, segurar a tecla Ctrl Esquerdo (ou Alt Esquerdo, dependendo do jogo da trilogia) junto com as teclas de direção (WASD) faz o personagem caminhar devagar."*
+- **1. Tecla de Caminhar (Hold Walk / Meio Analógico)**:
+  - **Isolamento Modular em `extra/management/prompts/bbport_pad_hook.h` (Conformidade com `MyGUIDELINES.md`)**:
+    - Criada a função inline `extra_pad_apply_walk_modifier(uint8_t *left_x, uint8_t *left_y, const bool *k, int move_left, int move_right, int move_up, int move_down)` em `extra/management/prompts/bbport_pad_hook.h`.
+    - Suporte nativo para segurar `Left Alt`, `Right Alt`, `Left Ctrl` ou `Right Ctrl` enquanto se utilizam as teclas de movimentação (`WASD`).
+    - **Deflexão Normal (sem segurar tecla)**: deflexão total máxima original mantida intacta pelo código original de upstream (`key_axis` intocado, retornando 0 ou 255 no analógico).
+    - **Deflexão de Caminhada (segurando Alt ou Ctrl)**: deflexão reduzida para a faixa de caminhada suave do motor da FromSoftware (`scale = 60` para eixos retos e `scale = 42` para diagonais, normalizando a magnitude do vetor `sqrt(42^2 + 42^2) = 59.4`).
+    - O personagem agora caminha suavemente em todas as 8 direções sem disparar animação de corrida enquanto a tecla de modificação estiver pressionada.
+  - **Hook Mínimo de 1 Linha em `src/runtime_pad.c`**:
+    - O código original de upstream (`key_axis`) foi restaurado integralmente ao original de upstream sem modificações.
+    - Adicionada apenas uma única linha de hook no final de `apply_keyboard()` devidamente etiquetada:
+      `extra_pad_apply_walk_modifier(&d->left_x, &d->left_y, k, key_down(k, IN_MOVE_LEFT), key_down(k, IN_MOVE_RIGHT), key_down(k, IN_MOVE_UP), key_down(k, IN_MOVE_DOWN)); // [extra]`
+  - **Validação de Testes**:
+    - Atualizado `tests/test_pad.c` com asserções para deflexão de corrida (`left_y == 0`), caminhada com Alt (`left_y == 128 - 60`), caminhada com Ctrl (`left_y == 128 - 60`) e caminhada diagonal normalizada (`left_y == 128 - 42`, `left_x == 128 + 42`). 100% aprovado.
+- **2. Diagnóstico & Correção das Invocações Online (Sinos / BBSC)**:
+  - **Causa Raiz Identificada**:
+    - No arquivo de configurações do launcher (`~/.config/bbport-launcher/settings.json`), o campo `online_server` estava configurado para o servidor BBSC Seamless Hunt (`play.seamlesshunt.com:31313`), porém o campo `online_webapi` continha `http://srv.shadps4.net:31315`.
+    - O endpoint `srv.shadps4.net` responde com `404 Not Found` para requisições de mensageiro de sinos de Bloodborne (`/summon_messenger/create`).
+    - Devido a isso, a verificação `summon_service()` em `scripts/online.py` falhava e **não gerava os redirecionamentos de `summon_messenger` no arquivo `user/host_overrides.json`**.
+    - Consequentemente, o jogo enviava os pacotes de toque de sino e busca de jogadores para o endereço errado, impedindo que ambos os jogadores encontrassem a sessão um do outro, mesmo com a mesma senha configurada.
+  - **Correções Aplicadas**:
+    - Ajustado `online_webapi` para `http://play.seamlesshunt.com:31315` em `~/.config/bbport-launcher/settings.json`.
+    - Regenerado `user/host_overrides.json` com os mapeamentos oficiais do serviço de mensageiro do Seamless Hunt BBSC:
+      - `"https://play.seamlesshunt.com:18671/summon_messenger": "http://play.seamlesshunt.com:31315"`
+      - `"http://play.seamlesshunt.com:18671/summon_messenger": "http://play.seamlesshunt.com:31315"`
+    - Todos os 3 serviços (`game`, `shadnet` e `webapi`) validados como `reachable`.
+

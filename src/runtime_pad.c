@@ -525,6 +525,7 @@ static void apply_keyboard(PadData *d, const bool *k) {
     d->left_y=key_axis(d->left_y,key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
     d->right_x=key_axis(d->right_x,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT));
     d->right_y=key_axis(d->right_y,key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
+    extra_pad_apply_walk_modifier(&d->left_x, &d->left_y, k, key_down(k, IN_MOVE_LEFT), key_down(k, IN_MOVE_RIGHT), key_down(k, IN_MOVE_UP), key_down(k, IN_MOVE_DOWN)); // [extra]
 }
 
 /* Mouse look: the game turns its camera at a rate set by the right stick, so the stick follows
