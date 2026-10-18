@@ -16,11 +16,20 @@ let
       exit 1
     '';
   };
+  vulkan-headers = pkgs.vulkan-headers.overrideAttrs (old: {
+    version = "1.4.363.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "KhronosGroup";
+      repo = "Vulkan-Headers";
+      rev = "vulkan-sdk-1.4.363.0";
+      hash = "sha256-E/SBlMW1oUeUT0MtWzQp0k+OSZLc9ho7g+1oTd7z7+Y=";
+    };
+  });
 in
 pkgs.mkShell {
   packages = with pkgs; [
-    gcc gnumake cmake ninja pkg-config python3 binutils
-    vulkan-headers vulkan-loader sdl3
+    gcc gnumake cmake ninja pkg-config python3 binutils gnused
+    vulkan-headers vulkan-loader sdl3 alsa-lib xorg.libXau
     # GPU library (gpu/): shadPS4 video core dependencies
     ffmpeg-headless boost fmt magic-enum robin-map xxhash vulkan-memory-allocator glslang spirv-cross xbyak zydis spirv-headers miniz libx11 libxcb xorgproto wayland
     # Online module (gpu/bbnet): shadNet client, HTTPS, UPnP

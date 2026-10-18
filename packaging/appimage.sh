@@ -33,7 +33,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 (cd "$work" && nix bundle --impure --bundler github:ralismark/nix-appimage \
     --expr "import $root/packaging {}")
-mkdir -p dist
+mkdir -p dist out/nix-roots
 install -m755 "$work/bbport.AppImage" dist/Bloodborne-bbport-x86_64.AppImage
 # A GC root for the package: nix-collect-garbage keeps it, and with it the outputs built here from
 # source (the Vulkan-only Mesa, GTK 4 without GStreamer, libadwaita, SDL3), so the next AppImage

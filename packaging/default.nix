@@ -12,7 +12,7 @@ let
   # FSR 4.1.1 models are extracted from AMD's DLLs: never in a public package. BB_PACKAGE_FSR411=1
   # (appimage.sh runs nix with --impure) bundles the local fsr4_411 for one's own devices.
   fsr411 = builtins.getEnv "BB_PACKAGE_FSR411" == "1";
-  assetDirs = [ "scripts" "patches" "fsr4_shaders" "launcher" "tools/fsr4cap" ]
+  assetDirs = [ "scripts" "patches" "fsr4_shaders" "launcher" "tools" ]
     ++ lib.optional fsr411 "fsr4_411";
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
@@ -129,6 +129,7 @@ let
       --set-default GDK_PIXBUF_MODULE_FILE ${pkgs.librsvg}/${pkgs.gdk-pixbuf.moduleDir}.cache \
       --set-default FONTCONFIG_FILE ${fontsConf} \
       --set-default LC_ALL C.UTF-8 \
+      --set-default GSK_RENDERER gl \
       --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ pkgs.libglvnd pkgs.libx11 pkgs.libxext ]} \
       --set BB_VULKANINFO ${pkgs.vulkan-tools}/bin/vulkaninfo \
       --run '[ -r "''${SSL_CERT_FILE:-}" ] || export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt; [ -d "''${SSL_CERT_DIR:-}" ] || unset SSL_CERT_DIR' \
@@ -158,8 +159,8 @@ pkgs.stdenv.mkDerivation {
     cp run.sh $d/
     cp -r scripts patches fsr4_shaders launcher $d/
     mkdir -p $d/tools
-    cp -r tools/fsr4cap $d/tools/
-    rm -rf $d/tools/fsr4cap/__pycache__
+    cp -r tools/* $d/tools/
+    rm -rf $d/tools/__pycache__ $d/tools/*/__pycache__
     mkdir -p $d/tools/fsr4cap/bin
     ln -s ${dxilSpirv}/bin/dxil-spirv $d/tools/fsr4cap/bin/dxil-spirv
     install -m644 ${fsr4capExe} $d/tools/fsr4cap/bin/fsr4cap.exe

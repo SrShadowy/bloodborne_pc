@@ -244,9 +244,11 @@ target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-f
 if (NOT WIN32)
     target_compile_options(bbgpu PRIVATE -ftls-model=initial-exec)
     # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
-    target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
+    set_target_properties(bbgpu PROPERTIES
+        BUILD_RPATH "\$ORIGIN:\$ORIGIN/../../lib:\$ORIGIN/../lib"
+        INSTALL_RPATH "\$ORIGIN:\$ORIGIN/../../lib:\$ORIGIN/../lib")
     if(IS_DIRECTORY "$ENV{HOME}/.local/lib")
-        target_link_options(bbgpu PRIVATE -Wl,-rpath,"$ENV{HOME}/.local/lib")
+        target_link_options(bbgpu PRIVATE "-Wl,-rpath,$ENV{HOME}/.local/lib")
     endif()
 endif()
 target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)

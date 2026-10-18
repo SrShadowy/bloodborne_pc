@@ -16,10 +16,16 @@ from pathlib import Path
 from bbport_assets import fsr411_problem
 from bbport_i18n import set_language, tr
 
+# Force GTK4 to use OpenGL/GL renderer instead of Vulkan for the UI, preventing black screen
+# issues when implicit Vulkan layers (e.g. LSFG) or experimental Vulkan drivers are present.
+os.environ.setdefault("GSK_RENDERER", "gl")
+
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
+import bbport_compat  # noqa: E402
+bbport_compat.apply_shims()
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 if "BB_PORT_DIR" in os.environ:
     PORT_DIR = Path(os.environ["BB_PORT_DIR"]).resolve()
@@ -77,7 +83,10 @@ class LauncherWindow(
         self.settings = load_settings()
         self.theme_mode = self.settings.get("theme_mode", "dark")
         self.apply_theme(self.theme_mode)
-        self.setup_css()
+        try:
+            self.setup_css()
+        except Exception as e:
+            print(f"[!] Warning: CSS styling setup failed: {e}", file=sys.stderr)
         set_language(self.settings.get("ui_language", ""))
         self.ini, self.ini_lines = load_ini()
         self.process = None
@@ -253,11 +262,33 @@ class LauncherWindow(
         }
         """
         provider = Gtk.CssProvider()
-        provider.load_from_data(css.encode())
+        loaded = False
+        if hasattr(provider, "load_from_string"):
+            try:
+                provider.load_from_string(css)
+                loaded = True
+            except Exception:
+                pass
+        if not loaded:
+            for attempt in [
+                lambda: provider.load_from_data(css.encode(), -1),
+                lambda: provider.load_from_data(css.encode()),
+                lambda: provider.load_from_data(css, -1),
+                lambda: provider.load_from_data(css),
+            ]:
+                try:
+                    attempt()
+                    loaded = True
+                    break
+                except Exception:
+                    continue
         display = Gdk.Display.get_default()
         if display:
-            Gtk.StyleContext.add_provider_for_display(
-                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            try:
+                Gtk.StyleContext.add_provider_for_display(
+                    display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            except Exception:
+                pass
 
     def set_gamepad_hints_visible(self, visible, pad_name=""):
         if hasattr(self, "gamepad_bar"):

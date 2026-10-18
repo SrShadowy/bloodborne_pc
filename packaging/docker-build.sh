@@ -14,9 +14,16 @@ echo "======================================================================"
 echo -e "\n[*] [1/2] Construindo/Verificando imagem Docker: $IMAGE_NAME..."
 docker build -t "$IMAGE_NAME" -f "$ROOT/packaging/Dockerfile.ubuntu22" "$ROOT"
 
-# Se houver um CMakeCache gerado fora do container (com caminhos do host), limpa-o
-if [[ -f "$ROOT/out/gpu/CMakeCache.txt" ]] && ! grep -q "/bbport" "$ROOT/out/gpu/CMakeCache.txt" 2>/dev/null; then
-    rm -rf "$ROOT/out/gpu/CMakeCache.txt" "$ROOT/out/gpu/CMakeFiles"
+# Se houver arquivos do CMake criados por root ou fora do container Ubuntu, limpa-os
+if [[ -d "$ROOT/out/gpu/CMakeFiles" && ! -w "$ROOT/out/gpu/CMakeFiles" ]]; then
+    docker run --rm -v "$ROOT:/bbport" "$IMAGE_NAME" rm -rf /bbport/out/gpu
+    mkdir -p "$ROOT/out/gpu"
+fi
+if [[ -f "$ROOT/out/gpu/CMakeCache.txt" ]]; then
+    if grep -q "/nix" "$ROOT/out/gpu/CMakeCache.txt" 2>/dev/null || ! grep -q "gcc-13" "$ROOT/out/gpu/CMakeCache.txt" 2>/dev/null; then
+        rm -rf "$ROOT/out/gpu"
+        mkdir -p "$ROOT/out/gpu"
+    fi
 fi
 
 echo -e "\n[*] [2/2] Compilando e gerando release dentro do container..."

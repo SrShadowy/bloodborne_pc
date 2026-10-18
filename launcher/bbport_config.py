@@ -350,6 +350,13 @@ def patches_dir(settings):
 def game_environment(s):
     """Environment for run.sh from the launcher settings."""
     env = dict(os.environ)
+    lib_dir = PORT_DIR / "lib"
+    bin_gpu = PORT_DIR / "bin" / "gpu"
+    if lib_dir.is_dir():
+        prefix = f"{lib_dir}:{bin_gpu}"
+        env["LD_LIBRARY_PATH"] = f"{prefix}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else prefix
+    elif bin_gpu.is_dir():
+        env["LD_LIBRARY_PATH"] = f"{bin_gpu}:{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else str(bin_gpu)
     env["BB_GAME_DIR"] = str(Path(s["game_dir"]).expanduser())
     if s["user_dir"]:
         env["BB_USER_DIR"] = s["user_dir"]

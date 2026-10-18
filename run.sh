@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
+
+# Configura busca de bibliotecas compartilhadas empacotadas (se executado via run.sh ou launcher)
+if [[ -d "$PWD/lib" ]]; then
+    export LD_LIBRARY_PATH="$PWD/lib:$PWD/bin/gpu:${LD_LIBRARY_PATH:-}"
+elif [[ -d "$PWD/bin/gpu" ]]; then
+    export LD_LIBRARY_PATH="$PWD/bin/gpu:${LD_LIBRARY_PATH:-}"
+fi
 if [[ ${1:-} == --software ]]; then
     shift
     if [[ -z ${VK_DRIVER_FILES:-} ]]; then

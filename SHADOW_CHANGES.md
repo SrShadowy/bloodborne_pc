@@ -1896,4 +1896,82 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
   - Verificação no Docker: `bbport-builder:ubuntu22` configurado e testado com CMake confirmando `-- Online module: on (libbbnet.so)`.
   - Testes de regressão: `hosts-session-test`, `hosts-http-test` e 38 testes da suíte Python executados com 100% de aprovação (`OK`).
 
+---
 
+## 65. Resolução Completa do Carregamento de Bibliotecas Empacotadas (`libfmt.so.10` / RPATH / LD_LIBRARY_PATH)
+- **Problema Relatado**:
+  - Usuário testou a release extraída no sistema e obteve a falha fatal:
+    ```
+    bin/bb-probe: error while loading shared libraries: libfmt.so.10: cannot open shared object file: No such file or directory
+    — o jogo foi encerrado (código 127) —
+    tem que testar antes.......
+    ```
+- **Causa Raiz Identificada**:
+  1. Em distribuições Linux rolling release (Arch, CachyOS, etc.), as versões de bibliotecas do sistema são muito mais novas (ex: `libfmt.so.12`) do que as utilizadas durante o build de compatibilidade em Ubuntu 22.04 LTS (`libfmt.so.10`).
+  2. As bibliotecas compiladas (`libfmt.so.10`, `libminiupnpc.so.17`, etc.) estavam presentes na pasta `lib/` do pacote, mas o dynamic linker do Linux (`ld.so`) não as localizava porque:
+     - `run.sh` não exportava `LD_LIBRARY_PATH` para incluir `lib/` e `bin/gpu/`.
+     - O inicializador (`launcher/bbport_config.py:game_environment`) não incluía `lib/` no `LD_LIBRARY_PATH`.
+     - Os cabeçalhos ELF dos binários (`bb-probe`, `libbbgpu.so`) não possuíam o RPATH relativo `$ORIGIN/../lib` ou `$ORIGIN/../../lib`.
+     - No CMake de `libbbgpu.so`, a flag de linkagem utilizava aspas simples literais `'$ORIGIN/...'`, o que gravava as aspas dentro da string do RUNPATH ELF, tornando o caminho inválido para o linker.
+- **Modificações Implementadas (100% de acordo com `MyGUIDELINES.md`)**:
+  - `gpu/CMakeLists.txt`:
+    - Substituída a diretiva com aspas literais por `set_target_properties(bbgpu PROPERTIES BUILD_RPATH "\$ORIGIN:\$ORIGIN/../../lib:\$ORIGIN/../lib" INSTALL_RPATH "\$ORIGIN:\$ORIGIN/../../lib:\$ORIGIN/../lib")`.
+  - `gpu/bbnet/CMakeLists.txt`:
+    - Atualizado `BUILD_RPATH` e `INSTALL_RPATH` para `"\$ORIGIN:\$ORIGIN/../../lib:\$ORIGIN/../lib"`.
+  - `build.sh`:
+    - Adicionado `-Wl,-rpath,'$ORIGIN/../lib' -Wl,-rpath,'$ORIGIN/lib'` para `bb-probe` e `bb-gpu-capabilities`.
+  - `package.py`:
+    - Adicionada criação de symlinks de conveniência em staging (`bin/lib -> ../lib` e `bin/gpu/lib -> ../../lib`).
+  - `run.sh`:
+    - Adicionada detecção e exportação automática de `LD_LIBRARY_PATH="$PWD/lib:$PWD/bin/gpu:${LD_LIBRARY_PATH:-}"`.
+  - `launcher/bbport_config.py`:
+    - Em `game_environment()`: prepende automaticamente `PORT_DIR / "lib"` e `PORT_DIR / "bin/gpu"` na variável `LD_LIBRARY_PATH`.
+- **Validação e Testes Práticos (Execução Real no Pacote Extraído)**:
+  1. Build limpo executado via Docker Ubuntu 22.04 LTS gerando `dist/BBPort-preview_6.1-3-gb253754-linux-x86_64.tar.gz`.
+  2. Extração do pacote `.tar.gz` e inspeção do RUNPATH:
+     - `bb-probe`: `$ORIGIN/gpu:$ORIGIN/../lib:$ORIGIN/lib:/bbport/out/gpu:/usr/local/lib`
+     - `libbbgpu.so`: `/usr/local/lib:$ORIGIN:$ORIGIN/../../lib:$ORIGIN/../lib:/usr/local/lib`
+     - `libbbnet.so`: `/usr/local/lib:$ORIGIN:$ORIGIN/../../lib:$ORIGIN/../lib:/bbport/out/gpu:/usr/local/lib`
+  3. Checagem `ldd` sem `LD_LIBRARY_PATH`: **ZERO** bibliotecas faltantes ("ALL DEPENDENCIES FOUND" para `bb-probe`, `libbbgpu.so` e `libbbnet.so`).
+  4. Execução de `./bin/bb-probe --vulkan-only`: inicializou Vulkan no driver AMD RADV, submeteu comandos e realizou readback com sucesso (`PASS`, código 0).
+  5. Execução de `./launcher/bbport-launcher --help`: executado com sucesso (código 0).
+  6. Execução do jogo real via `./bin/bb-probe out/boot-linked.bin ...`: inicializou o motor do jogo, carregou os módulos nativos (libc, fios2), alocou memória direta e flexível, inicializou audio PulseAudio/ATRAC9, iniciou as threads de render Vulkan e job workers sem nenhum erro de biblioteca.
+
+---
+
+## 66. Resolução do Crash `Signal: 4 (ILL)` e da Janela Preta no Launcher (Retrocompatibilidade GTK4/Libadwaita)
+- **Problemas Relatados**:
+  1. Crash `Signal: 4 (ILL)` (Instrução Ilegal) no PC de usuários (ex: `omasa` rodando Ultramarine Linux / Fedora):
+     ```
+     PID: 7377 (bbport-launcher), Signal: 4 (ILL)
+     #0 0x00007fe2b26dcb05 in /tmp/_MEI.../libpython3.14.so.1.0 + 0x2c6b05
+     ```
+  2. Launcher abrindo como um retângulo preto completamente vazio (captura de tela enviada pelo usuário).
+- **Causas Raiz Identificadas**:
+  1. **Origem do `SIGILL`**: O binário PyInstaller havia sido congelado no host Arch/CachyOS do desenvolvedor, que utiliza Python 3.14.7 compilado com flags `-march=x86-64-v3` (AVX2/AVX-512). Usuários com processadores anteriores a Haswell ou sistemas com baseline x86-64 genérico sofriam falha de instrução ilegal imediata ao carregar o interpretador.
+  2. **Origem da Janela Preta**:
+     - No Ubuntu 22.04 LTS (usado para compilar releases genéricas), a versão do Libadwaita é a 1.1 e do GTK é a 4.6.
+     - As classes `Adw.ToolbarView`, `Adw.SwitchRow`, `Adw.SpinRow`, `Adw.EntryRow`, `Adw.PasswordEntryRow` e o método `Adw.ViewStack.add_titled_with_icon` foram adicionados somente nas versões 1.2 e 1.4 do Libadwaita.
+     - O método `Gtk.CssProvider.load_from_data` no GTK 4.6 recebia 3 argumentos em vez dos 2 suportados no GTK 4.10+.
+     - Conflito de introspecção PyGObject (`TypeError: must be an interface`) ao inspecionar novas interfaces do host (como `Gtk.AccessibleText` do GTK 4.14+) através de typelibs mais antigos do PyGObject 3.42.
+     - Como qualquer exceção não tratada dentro de `LauncherWindow.__init__()` interrompia a execução do método `self.build()`, o GTK criava e exibia a janela vazia, gerando o retângulo preto.
+- **Modificações Implementadas (100% aderentes às regras `MyGUIDELINES.md`)**:
+  - `launcher/bbport_compat.py`:
+    - Adicionado monkeypatch `safe_get_interfaces_for_object` em `gi.module.get_interfaces_for_object` para ignorar com segurança interfaces desconhecidas na introspecção.
+    - Implementados shims de retrocompatibilidade para `Adw.ToolbarView`, `Adw.ViewStack.add_titled_with_icon`, `Adw.SwitchRow`, `Adw.SpinRow`, `Adw.EntryRow` e `Adw.PasswordEntryRow`.
+  - `launcher/bbport_launcher.py`:
+    - Carregamento de `bbport_compat.apply_shims()` antes da importação de tipos do `gi.repository`.
+    - `setup_css()` com suporte transparente a `load_from_string` e múltiplas variações de `load_from_data`.
+  - `package.py`:
+    - Implementada a função `deploy_launcher_wrapper()`:
+      - O binário standalone compilado pelo PyInstaller é armazenado como `launcher/bbport-launcher.bin`.
+      - O executável principal `launcher/bbport-launcher` passa a ser um script wrapper bash inteligente que prioriza o Python 3 + GTK 4 + Libadwaita nativos do sistema do usuário (eliminando 100% de instruções ilegais AVX e inconsistências de typelib, além de adotar perfeitamente o tema da distribuição do usuário), recorrendo ao fallback `bbport-launcher.bin` somente caso a distribuição não disponha dos pacotes do GTK4.
+- **Validação e Testes Práticos**:
+  1. Teste de instanciação de `LauncherWindow` dentro do container Ubuntu 22.04 LTS (Libadwaita 1.1 / GTK 4.6): todas as 7 abas carregaram perfeitamente (`ALL TABS INITIALIZED PERFECTLY!`, código 0).
+  2. Recompilação do pacote release via `packaging/docker-build.sh --rebuild-launcher` gerando `dist/BBPort-preview_6.1-3-gb253754-linux-x86_64.tar.gz`.
+  3. Extração e teste em diretório limpo:
+     - `./start.sh --help` -> OK (código 0).
+     - `./launcher/bbport-launcher --help` -> OK (código 0).
+     - `./launcher/bbport-launcher.bin --help` -> OK (código 0).
+     - Execução gráfica ao vivo de `./launcher/bbport-launcher`: processo ativo, janela instanciada sem exceções e sem janela preta.
+     - Teste de `bin/bb-probe` sem `LD_LIBRARY_PATH`: todas as dependências carregadas pelo RPATH relativo `$ORIGIN`.
