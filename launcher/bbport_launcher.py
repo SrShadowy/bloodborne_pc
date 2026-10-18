@@ -1037,8 +1037,9 @@ class LauncherWindow(
 
 class LauncherApp(Adw.Application):
     def __init__(self):
-        super().__init__(application_id="io.github.bbport.Launcher",
-                         flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        flags = getattr(Gio.ApplicationFlags, "DEFAULT_FLAGS",
+                        getattr(Gio.ApplicationFlags, "FLAGS_NONE", 0))
+        super().__init__(application_id="io.github.bbport.Launcher", flags=flags)
 
     def do_activate(self):
         window = self.get_active_window() or LauncherWindow(self)

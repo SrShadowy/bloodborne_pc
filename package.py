@@ -77,7 +77,7 @@ def should_bundle_library(name, path_str):
         "libvulkan.so", "libdrm.so", "libX11.so", "libxcb.so",
         "libresolv.so", "libnss", "libutil.so", "libsystemd.so"
     )
-    if name == "libbbgpu.so":
+    if name in ("libbbgpu.so", "libbbnet.so"):
         return False
 
     for p in system_prefixes:
@@ -92,6 +92,7 @@ def should_bundle_library(name, path_str):
     target_keywords = (
         "sdl3", "miniz", "zydis", "zycore", "fmt", "xxhash",
         "avcodec", "avformat", "avutil", "swscale", "swresample",
+        "miniupnpc", "protobuf", "absl", "utf8_validity",
     )
     name_lower = name.lower()
     for kw in target_keywords:
@@ -365,6 +366,13 @@ def build_and_package(args):
     bin_probe = ROOT_DIR / "out" / "bb-probe"
     bin_caps = ROOT_DIR / "out" / "bb-gpu-capabilities"
     lib_gpu = ROOT_DIR / "out" / "gpu" / "libbbgpu.so"
+    lib_net = ROOT_DIR / "out" / "gpu" / "libbbnet.so"
+    has_online = lib_net.exists() and lib_net.stat().st_size > 0
+
+    if has_online:
+        print(f"[+] Online module detected: {lib_net}")
+    else:
+        print("[!] Notice: Online module (out/gpu/libbbnet.so) not found; packaging offline-only.")
 
     missing = [str(p) for p in [bin_probe, bin_caps, lib_gpu] if not p.exists() or p.stat().st_size == 0]
     if missing:
@@ -397,11 +405,18 @@ def build_and_package(args):
     shutil.copy2(lib_gpu, pkg_bin_gpu / "libbbgpu.so")
     (pkg_bin_gpu / "libbbgpu.so").chmod(0o755)
 
+    if has_online:
+        shutil.copy2(lib_net, pkg_bin_gpu / "libbbnet.so")
+        (pkg_bin_gpu / "libbbnet.so").chmod(0o755)
+        print(f"[✓] Deployed online module: {pkg_bin_gpu / 'libbbnet.so'}")
+
     if args.strip:
-        print("[*] Stripping debug symbols (--strip-debug) from libbbgpu.so...")
+        print("[*] Stripping debug symbols (--strip-debug)...")
         try:
             subprocess.run(["strip", "--strip-debug", str(pkg_bin_gpu / "libbbgpu.so")], check=True)
             subprocess.run(["strip", "--strip-debug", str(pkg_bin / "bb-gpu-capabilities")], check=True)
+            if has_online:
+                subprocess.run(["strip", "--strip-debug", str(pkg_bin_gpu / "libbbnet.so")], check=True)
         except Exception as e:
             print(f"[!] Warning: strip failed: {e}")
 
@@ -413,6 +428,8 @@ def build_and_package(args):
 
         found_deps = {}
         queue = [bin_probe, bin_caps, lib_gpu]
+        if has_online:
+            queue.append(lib_net)
         processed = set()
         while queue:
             target = queue.pop(0)

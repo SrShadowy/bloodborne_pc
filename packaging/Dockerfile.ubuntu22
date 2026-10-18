@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxxhash-dev \
     libx11-dev libxcb1-dev libwayland-dev libxext-dev \
     libasound2-dev libpulse-dev libxcursor-dev libxinerama-dev libxi-dev libxrandr-dev libxss-dev libxxf86vm-dev libxkbcommon-dev libdrm-dev libgbm-dev libxtst-dev \
-    libzstd-dev libgl1-mesa-dev libvulkan-dev glslang-tools && \
+    libzstd-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
+    protobuf-compiler libprotobuf-dev nlohmann-json3-dev libssl-dev libminiupnpc-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Configure GCC 13 as the default compiler

@@ -26,7 +26,7 @@ docker run --rm \
     -v "$ROOT:/bbport" \
     -w /bbport \
     "$IMAGE_NAME" \
-    bash -c "bash build.sh && python3 package.py --no-build \"\$@\"" -- "$@"
+    bash -c "git config --global --add safe.directory /bbport 2>/dev/null || true; bash build.sh && python3 package.py --no-build \"\$@\"" -- "$@"
 
 echo -e "\n======================================================================"
 echo "    BUILD CONCLUÍDO COM SUCESSO!"

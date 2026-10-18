@@ -1853,3 +1853,47 @@ Comprehensive resolution of motion vector artifacts, player jitter, ghosting, an
   - Suíte Python (`test_hosts_account.py`, `test_hosts_online_ui.py`): 38 testes executados com sucesso (`OK`).
   - Todos os arquivos em `extra/hosts/` mantidos com menos de 270 linhas (< 300 linhas).
 
+---
+
+## 64. Correção e Empacotamento do Módulo Online (`libbbnet.so`) para Pacotes Distribuíveis (`package.py` e Docker)
+- **Problema Relatado**:
+  - Usuário informou: *"meu pacote para criar um pacote distribuivel não compila a lib para o online consegue melhorar \ concertar isso?"*.
+  - Os pacotes gerados para distribuição (`.tar.gz` via `package.py` ou `packaging/docker-build.sh`) não incluíam ou não compilavam a biblioteca do módulo online (`libbbnet.so`), fazendo com que o jogo em pacotes de lançamento ficasse restrito ao modo offline (*"This build has no online module (libbbnet.so): offline play only"*).
+- **Causa Raiz Identificada**:
+  1. **Omissão no script de empacotamento `package.py`**:
+     - `package.py` apenas verificava e copiava `out/bb-probe`, `out/bb-gpu-capabilities` e `out/gpu/libbbgpu.so`.
+     - `out/gpu/libbbnet.so` nunca era copiado para `staging_dir/bin/gpu/libbbnet.so`.
+     - `package.py` não inspecionava dependências dinâmicas de `libbbnet.so` via `ldd`, deixando de empacotar bibliotecas necessárias (`libminiupnpc.so`, `libprotobuf.so`, `libabsl_*.so`) na pasta `lib/`.
+     - A função `should_bundle_library` não conhecia as palavras-chave `miniupnpc`, `protobuf`, `absl`, `utf8_validity`.
+  2. **Incompatibilidade da busca CMake (`gpu/CMakeLists.txt`)**:
+     - `gpu/CMakeLists.txt` utilizava `find_package(Protobuf CONFIG QUIET)`. Em distribuições baseadas em Debian/Ubuntu (incluindo o container Ubuntu 22.04 LTS), o pacote `libprotobuf-dev` não fornece `ProtobufConfig.cmake`, mas sim o módulo padrão `FindProtobuf.cmake`. Como a busca forçava `CONFIG`, o CMake considerava o Protobuf ausente e desativava o módulo online silenciosamente (`-- Online module: off`).
+  3. **Incompatibilidade de API da biblioteca `miniupnpc` (`gpu/bbnet/shadps4/core/libraries/network/net_upnp.cpp`)**:
+     - Na versão 2.2.8+ do `miniupnpc` (API version >= 18), a função `UPNP_GetValidIGD` aceita 7 argumentos (`wan_addr`, `sizeof(wan_addr)`). Em distribuições LTS (como Ubuntu 22.04 / API version 17), a função aceita apenas 5 argumentos. A ausência de uma diretiva `#if MINIUPNPC_API_VERSION >= 18` causava erro fatal de compilação em distros base.
+  4. **Ausência de dependências no `packaging/Dockerfile.ubuntu22`**:
+     - O container Docker oficial de build portátil não continha os pacotes de desenvolvimento do Protobuf, OpenSSL, nlohmann-json e miniupnpc (`protobuf-compiler`, `libprotobuf-dev`, `nlohmann-json3-dev`, `libssl-dev`, `libminiupnpc-dev`).
+- **Modificações Implementadas (100% de acordo com `MyGUIDELINES.md`)**:
+  - `gpu/CMakeLists.txt`:
+    - Atualizada busca de `Protobuf` e `nlohmann_json` para tentar primeiramente o modo `CONFIG` e, em caso negativo, realizar fallback transparente para busca de módulo (`find_package(... QUIET)`).
+  - `gpu/bbnet/shadps4/core/libraries/network/net_upnp.cpp`:
+    - Adicionada condicional de pré-processador `// [extra]` para selecionar a assinatura correta de `UPNP_GetValidIGD` baseada em `MINIUPNPC_API_VERSION >= 18`, garantindo compilação limpa em distros modernas e LTS.
+  - `package.py`:
+    - Atualizado `should_bundle_library` para excluir `libbbnet.so` da pasta `lib/` (deve residir em `bin/gpu/`) e incluir `"miniupnpc"`, `"protobuf"`, `"absl"`, `"utf8_validity"` na lista de bibliotecas portáteis a empacotar.
+    - Em `build_and_package`:
+      - Detecta automaticamente a presença de `out/gpu/libbbnet.so`.
+      - Copia `libbbnet.so` para `bin/gpu/libbbnet.so` na área de staging com permissões `0755`.
+      - Aplica `strip --strip-debug` em `libbbnet.so` quando a flag `--strip` estiver ativa (reduzindo de 55 MB para 4 MB).
+      - Adiciona `libbbnet.so` na fila de análise de dependências do `ldd`, garantindo que todas as bibliotecas compartilhadas necessárias sejam copiadas para `lib/`.
+  - `packaging/Dockerfile.ubuntu22`:
+    - Adicionados `protobuf-compiler libprotobuf-dev nlohmann-json3-dev libssl-dev libminiupnpc-dev` na camada de dependências.
+  - `launcher/bbport_launcher.py`:
+    - Atualizada a instanciação de `LauncherApp` para usar `flags = getattr(Gio.ApplicationFlags, "DEFAULT_FLAGS", getattr(Gio.ApplicationFlags, "FLAGS_NONE", 0))`, garantindo retrocompatibilidade total com GLib < 2.74 (evitando `AttributeError: type object 'ApplicationFlags' has no attribute 'DEFAULT_FLAGS'`).
+- **Validação e Testes**:
+  - `bash build.sh`: compilação completa bem-sucedida, gerando `out/gpu/libbbnet.so` (55 MB) e `out/bb-probe`.
+  - `python3 package.py --no-build --rebuild-launcher`: recompilou com sucesso o standalone `out/bbport-launcher` e o release `dist/BBPort-*.tar.gz`.
+  - Execução de `./out/bbport-launcher --help`: executado com código 0 e interface GApplication inicializada sem erros.
+  - Verificação de staging: `bin/gpu/libbbnet.so` presente e otimizado (4.0 MB), 93 bibliotecas compartilhadas resolvidas e empacotadas em `lib/`.
+  - Verificação de `ldd`: 100% das dependências dinâmicas de `libbbnet.so` resolvidas sem nenhum "not found".
+  - Verificação no Docker: `bbport-builder:ubuntu22` configurado e testado com CMake confirmando `-- Online module: on (libbbnet.so)`.
+  - Testes de regressão: `hosts-session-test`, `hosts-http-test` e 38 testes da suíte Python executados com 100% de aprovação (`OK`).
+
+
