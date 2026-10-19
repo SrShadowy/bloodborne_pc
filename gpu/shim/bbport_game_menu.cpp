@@ -389,6 +389,10 @@ void DefineTexts() {
          "Screen-space reflections (not in the original)",
          "Reflexos em espaço de tela (não existia no original)",
          "Экранные отражения (не было в оригинале)"},
+        {"effect_bloom", "Bloom", "Bloom", "Свечение (Bloom)", // [extra]
+         "Glow around intense lights and bright surfaces (Bloom)", // [extra]
+         "Brilho intenso ao redor de luzes e superfícies claras (Bloom)", // [extra]
+         "Свечение вокруг ярких источников света (Bloom)"}, // [extra]
         {"skip_intro", "Skip intros", "Pular intros", "Пропуск заставок",
          "Skip the startup logos and intro", "Pula os logotipos e a introdução",
          "Пропуск логотипов и заставки при запуске", false},

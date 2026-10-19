@@ -209,11 +209,13 @@ void Store(std::atomic<T>& target, T value, bool changed) {
 }
 
 void Checkbox(const char* label, std::atomic<bool>& value) {
+    if (!label) label = ""; // [extra]
     bool v = value;
     Store(value, v, ImGui::Checkbox(label, &v));
 }
 
 void Slider(const char* label, std::atomic<float>& value, float lo, float hi) {
+    if (!label) label = ""; // [extra]
     float v = value;
     Store(value, v, ImGui::SliderFloat(label, &v, lo, hi, "%.2f"));
 }
@@ -1126,6 +1128,12 @@ bool HandleEvent(const SDL_Event& event) {
             SetBanner(!cur ? "HUD: Oculto (Hidden)" : "HUD: Visivel (Visible)", 2.0f);
             return true;
         }
+        if (down && !event.key.repeat && (event.key.key == SDLK_F10 || event.key.key == SDLK_PAUSE)) { // [extra]
+            bool cur = BbSettings::Get().photo_pause.load(std::memory_order_relaxed); // [extra]
+            BbSettings::Get().photo_pause.store(!cur, std::memory_order_relaxed); // [extra]
+            SetBanner(!cur ? "Mundo: Pausado (Simulation Frozen)" : "Mundo: Despausado (Resumed)", 2.0f); // [extra]
+            return true; // [extra]
+        } // [extra]
         if (!is_open) {
             return false;
         }

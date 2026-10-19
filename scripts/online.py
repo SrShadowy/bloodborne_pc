@@ -96,6 +96,7 @@ def write_overrides(user_dir, community, webapi, plain=False):
         return custom
     community = community_address(community)
     host = community.split('://', 1)[1]
+    overrides = {GAME_SERVER: community}
     backend = os.environ.get('BB_ONLINE_BACKEND', '').strip().lower()
     if plain or backend in ('bbhost', 'hosts', 'thehuntersdream', 'hd'):
         # The shadPS4 0.20 module (BB_NET_GEN=20): the game server only; summons stay on shadNet.

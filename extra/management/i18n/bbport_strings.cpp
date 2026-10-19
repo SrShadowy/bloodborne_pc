@@ -700,6 +700,7 @@ const char* EffectLabel(int effect_index, int lang) {
         {"Game's Native AA", "Anti-Aliasing Nativo do Jogo", "Собственное сглаживание игры"},
         {"Dynamic Light Shadows", "Sombras de Luzes Dinâmicas", "Тени от динамических источников"},
         {"SSR Reflections (not in base game)", "Reflexos SSR (não existia no jogo base)", "Отражения SSR (не было в игре)"},
+        {"Bloom", "Bloom (Brilho Intenso)", "Свечение (Bloom)"},
         {"Skip Intro Cutscenes", "Pular Telas Iniciais", "Пропуск заставок при запуске"},
         {"Free Camera (Cross + L3)", "Câmera Livre (Cross + L3)", "Свободная камера (Cross + L3)"},
         {"Debug Menu (requires fonts)", "Menu de Depuração (requer fontes)", "Debug menu (нужны файлы шрифтов)"},
@@ -708,15 +709,21 @@ const char* EffectLabel(int effect_index, int lang) {
         return "";
     }
     const auto& group = kEffects[effect_index];
+    const char* str = nullptr;
     switch (lang) {
     case BbSettings::LangPortuguese:
-        return group.pt_br;
+        str = group.pt_br;
+        break;
     case BbSettings::LangRussian:
-        return group.ru;
+        str = group.ru;
+        break;
     case BbSettings::LangEnglish:
     default:
-        return group.en;
+        str = group.en;
+        break;
     }
+    if (!str && group.en) str = group.en;
+    return str ? str : "";
 }
 
 } // namespace BbStrings

@@ -54,13 +54,14 @@ void RenderPhotoModeSection(BbSettings::Values& s, int lang, bool& dirty) {
     ImGui::SeparatorText(sec_title);
 
     // 1. Freeze Simulation / World
-    const char* freeze_label = (lang == 1) ? "Pausar Jogo (Congelar IA / Mundo)" :
-                               (lang == 2) ? "Пауза (Заморозить мир / ИИ)" :
-                                             "Pause Game (Freeze World / AI)";
+    const char* freeze_label = (lang == 1) ? "Pausar Jogo (Congelar IA / Mundo) (F10)" :
+                               (lang == 2) ? "Пауза (Заморозить мир / ИИ) (F10)" :
+                                             "Pause Game (Freeze World / AI) (F10)";
     const char* freeze_hint = (lang == 1) ? "Congela IA, animacoes, fisica e particulas mantendo a camera e renderizacao ativas." :
                               (lang == 2) ? "Останавливает анимации, физику и таймеры, сохраняя управление камерой." :
                                             "Freezes AI, animations, physics, and world timers while keeping camera and rendering active.";
-    Checkbox(freeze_label, s.photo_pause, dirty);
+    bool pause_changed = false;
+    Checkbox(freeze_label, s.photo_pause, pause_changed);
     Hint(freeze_hint);
 
     // 2. Hide Game HUD
@@ -70,7 +71,8 @@ void RenderPhotoModeSection(BbSettings::Values& s, int lang, bool& dirty) {
     const char* hud_hint = (lang == 1) ? "Oculta barras de vida, estamina, reticulo e legendas para enquadramento limpo." :
                            (lang == 2) ? "Скрывает полоски здоровья, прицел и диалоги для чистого снимка." :
                                          "Hides health bars, stamina, reticle, and subtitles for clean framing.";
-    Checkbox(hud_label, s.hide_hud, dirty);
+    bool hud_changed = false;
+    Checkbox(hud_label, s.hide_hud, hud_changed);
     Hint(hud_hint);
 
     ImGui::Spacing();

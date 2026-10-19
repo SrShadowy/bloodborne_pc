@@ -16,6 +16,9 @@ constexpr std::uint64_t kGameDataMan = 0x553b130;
 constexpr std::uint64_t kBlockHeapSize = 0x1f5a465;
 constexpr std::uint64_t kPageHeapSize = 0x1f5a479;
 constexpr std::uint64_t kMenuSize = 0x4736e88;
+constexpr std::uint64_t kPushBack96 = 0xb84ce0;
+constexpr std::uint64_t kHavokMemMgr = 0x54018b0;
+constexpr std::uint64_t kReserveMore = 0x419100;
 
 constexpr std::uint8_t kPlayTimeOrig[13] = {
     0xc5, 0xf2, 0x59, 0x05, 0x12, 0x67, 0xfe, 0x02, // vmulss xmm0, xmm1, [rip+0x2fe6712]
@@ -24,6 +27,10 @@ constexpr std::uint8_t kPlayTimeOrig[13] = {
 constexpr std::uint8_t kCharaStepPrologue[15] = {
     0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56,
     0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x40,
+};
+constexpr std::uint8_t kPushBack96Prologue[17] = {
+    0x55, 0x48, 0x89, 0xe5, 0x41, 0x56, 0x53, 0x48, 0x89, 0xf3,
+    0x49, 0x89, 0xfe, 0x41, 0x8b, 0x46, 0x28,
 };
 
 unsigned char* g_image = nullptr;
@@ -54,6 +61,31 @@ extern "C" void CharaStepHook() {
         const std::uint64_t none = 0;
         std::memcpy(field, &none, sizeof(none));
     }
+}
+
+// Guard against runaway raycast hit collector allocations and null pointer dereferences (SIGSEGV at 0xf00010).
+// Caps degenerate queries (e.g. from zero-length rays during world pause) to 2048 hits.
+extern "C" void PushBackSafe(std::uint8_t* array_ptr, const std::uint8_t* elem_ptr) {
+    if (!array_ptr || !elem_ptr || !g_image) return;
+    std::int32_t size = *reinterpret_cast<std::int32_t*>(array_ptr + 0x28);
+    // Cap runaway queries (prevents freezing the CPU by traversing entire map partition):
+    if (size >= 2048) return;
+
+    const std::int32_t cap = *reinterpret_cast<std::int32_t*>(array_ptr + 0x2c) & 0x3fffffff;
+    if (size >= cap) {
+        typedef void (*ReserveFn)(void* mem_mgr, void* array_buf, int elem_size);
+        auto reserve = reinterpret_cast<ReserveFn>(g_image + kReserveMore);
+        void* mem_mgr = reinterpret_cast<void*>(g_image + kHavokMemMgr);
+        reserve(mem_mgr, array_ptr + 0x20, 0x60);
+        size = *reinterpret_cast<std::int32_t*>(array_ptr + 0x28);
+    }
+
+    auto* data = *reinterpret_cast<std::uint8_t**>(array_ptr + 0x20);
+    if (!data) return; // Allocation failed, guard against null pointer write!
+
+    std::uint8_t* dst = data + static_cast<std::size_t>(size) * 96;
+    std::memcpy(dst, elem_ptr, 96);
+    *reinterpret_cast<std::int32_t*>(array_ptr + 0x28) = size + 1;
 }
 
 void MakeWritable(void* ptr, std::size_t size) {
@@ -182,8 +214,24 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     out += 5;
     WriteRel32Jump(image + kCharaStep, chara_stub, sizeof(kCharaStepPrologue));
 
+    // 3. Havok collector pushBack runaway guard stub
+    if (size > kPushBack96 + sizeof(kPushBack96Prologue) &&
+        std::memcmp(image + kPushBack96, kPushBack96Prologue, sizeof(kPushBack96Prologue)) == 0) {
+        std::uint8_t* push_stub = out;
+        static constexpr std::uint8_t kPushPrefix[] = {
+            0x48, 0xb8, // movabs rax, PushBackSafe
+        };
+        emit(kPushPrefix, sizeof(kPushPrefix));
+        emit_u64(reinterpret_cast<std::uint64_t>(&PushBackSafe));
+        static constexpr std::uint8_t kPushSuffix[] = {
+            0xff, 0xe0, // jmp rax
+        };
+        emit(kPushSuffix, sizeof(kPushSuffix));
+        WriteRel32Jump(image + kPushBack96, push_stub, sizeof(kPushBack96Prologue));
+    }
+
     mprotect(stub_page, page, PROT_READ | PROT_EXEC);
-    std::printf("[BBPort] High-FPS play-time clock, CharaId save guard & 2x heap headroom installed.\n");
+    std::printf("[BBPort] High-FPS play-time clock, CharaId save guard, Havok collector safety & 2x heap headroom installed.\n");
 }
 
 } // namespace BbEngineFixes

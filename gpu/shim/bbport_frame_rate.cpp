@@ -18,7 +18,7 @@
 #include "common/types.h"
 #include "bbport_frame_rate.h"
 #include "bbport_guest_code.h"
-#include "bbport_settings.h"
+#include "extra/hooks.h" // [extra]
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -67,17 +67,7 @@ std::atomic<int> live_limit{0};
 
 /// The pacer at the main loop's step (rdi: it): this frame's values.
 void PS4_SYSV_ABI FrameStep(u64 pacer) {
-    if (BbSettings::Get().photo_pause.load(std::memory_order_relaxed)) {
-        live->dt = 0.0f;
-        for (float& d : live->decay95) d = 1.0f;
-        live->approach30 = 0.0f;
-        live->approach10 = 0.0f;
-        live->step_down = 0.0f;
-        live->step_up = 0.0f;
-        live->decay08 = 1.0f;
-        live->cloth = 1.0f;
-        return;
-    }
+    if (Extra::PhotoPause::HandleFrameStep(reinterpret_cast<Extra::PhotoPause::LiveState*>(live))) return; // [extra]
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
     float dt = std::clamp(std::isfinite(measured) ? measured : Frame30, live->shortest, Frame30);
     // BB_FRAME_DT_SMOOTH=a (diagnostics, 0 < a < 1): the step follows the measured frame time by
@@ -310,7 +300,13 @@ int HookRunSpeed() {
     u8 expected[8];
     std::memcpy(expected, code, 8);
     Emitter e;
-    e.Bytes({0xc5, 0xfa, 0x5e, 0x45, 0x8c}); // vdivss xmm0, xmm0, [rbp - 0x74]
+    // Guard against division by zero / NaN when dt <= 0.001f (e.g. photo pause): // [extra]
+    // if ([rbp - 0x74] <= 0.001f) speed = 0.0f; else speed = distance / dt; // [extra]
+    e.Bytes({0x81, 0x7d, 0x8c, 0x6f, 0x12, 0x83, 0x3a}); // cmpl $0x3a83126f, -0x74(%rbp) // [extra]
+    e.Bytes({0x7e, 0x07});                               // jle +7 (to vxorps) // [extra]
+    e.Bytes({0xc5, 0xfa, 0x5e, 0x45, 0x8c});             // vdivss xmm0, xmm0, [rbp - 0x74] // [extra]
+    e.Bytes({0xeb, 0x04});                               // jmp +4 (to after vxorps) // [extra]
+    e.Bytes({0xc5, 0xf8, 0x57, 0xc0});                   // vxorps xmm0, xmm0, xmm0 // [extra]
     e.JmpAbs(image_base + site + 8);
     return Detour(site, expected, 8, e) ? 1 : 0;
 }
@@ -334,7 +330,7 @@ void PatchImage(unsigned char* image, std::uint64_t) {
     const char* fps = std::getenv("BB_FPS");
     const char* hooks = std::getenv("BB_FRAME_HOOKS");
     const int mode = !fps || std::strcmp(fps, "uncap") == 0 ? MaxRate : std::atoi(fps);
-    if (mode <= 30 || (hooks && hooks[0] == '0')) {
+    if (!Extra::PhotoPause::ShouldEnablePacing(mode, hooks)) { // [extra]
         return;
     }
     image_base = reinterpret_cast<u64>(image);

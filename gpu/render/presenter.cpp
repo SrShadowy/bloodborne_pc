@@ -20,6 +20,7 @@
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "extra/core/screenshot/bbport_screenshot.h"
+#include "extra/hooks.h" // [extra]
 #include "sdl_window.h"
 #include "textures/image.h"
 #include "textures/texture_cache.h"
@@ -596,22 +597,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool) {
     const bool blank = frame == &blank_frame;
     // Frame generation: the interpolated frame first, the real one half a frame later (the
     // interval between real frames, smoothed).
-    using Clock = std::chrono::steady_clock;
-    static Clock::time_point last_real{};
-    static double interval_ms = 16.667;
-    const auto now = Clock::now();
-    if (last_real.time_since_epoch().count() != 0) {
-        const double ms = std::chrono::duration<double, std::milli>(now - last_real).count();
-        if (ms > 2.0 && ms < 100.0) {
-            interval_ms = interval_ms * 0.9 + ms * 0.1;
-        }
-    }
-    last_real = now;
+    Extra::PresentPacer::OnPresentStart(); // [extra]
     // BB_FRAME_GEN_ONLY=1 (diagnostics): only the interpolated frames are shown.
     static const bool only_interp = std::getenv("BB_FRAME_GEN_ONLY") != nullptr;
     if (only_interp && !blank && frame->has_interp && frame->interp_image) {
         frame->has_interp = false;
         PresentImage(frame, frame->interp_image, true);
+        Extra::PresentPacer::OnRealFramePresented(); // [extra]
         release();
         return;
     }
@@ -621,13 +613,10 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool) {
         if (const u64 n = ++shown; n == 1 || n % 1000 == 0) {
             std::printf("Frame generation: %llu interpolated frames shown\n", (unsigned long long)n);
         }
-        if (PresentImage(frame, frame->interp_image, false)) {
-            std::this_thread::sleep_until(now + std::chrono::duration_cast<Clock::duration>(
-                                                    std::chrono::duration<double, std::milli>(
-                                                        std::clamp(interval_ms * 0.5, 1.0, 50.0))));
-        }
+        Extra::PresentPacer::SleepInterpolated(PresentImage(frame, frame->interp_image, false)); // [extra]
     }
     PresentImage(frame, {}, true);
+    Extra::PresentPacer::OnRealFramePresented(); // [extra]
     release();
 }
 

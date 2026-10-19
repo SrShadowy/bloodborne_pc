@@ -20,6 +20,15 @@ int main() {
     assert(!BbSettings::IsHotEffect(6)); // SSR resizes resources on restart.
     assert(BbSettings::IsHotEffect(7));  // Bloom still switches live.
     assert(!BbSettings::IsHotEffect(8)); // Startup intros.
+    // Verify all effect labels exist and are non-empty for all languages // [extra]
+    for (int lang : {static_cast<int>(BbSettings::MenuLanguage::English), // [extra]
+                     static_cast<int>(BbSettings::MenuLanguage::Portuguese), // [extra]
+                     static_cast<int>(BbSettings::MenuLanguage::Russian)}) { // [extra]
+        for (int e = 0; e < BbSettings::EffectCount; ++e) { // [extra]
+            const char* label = BbSettings::EffectLabel(e, lang); // [extra]
+            assert(label != nullptr && label[0] != '\0'); // [extra]
+        } // [extra]
+    } // [extra]
     char path[] = "/tmp/bbport-settings-test-XXXXXX";
     const int fd = mkstemp(path);
     assert(fd >= 0);

@@ -515,6 +515,17 @@ EN = {
     "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)":
         "Shader cache cleared: {} files ({:.1f} MB)",
     "Кэш шейдеров уже пуст": "Shader cache is already empty",
+    # Online & Upstream 0.6 additions
+    "Online ID (NPID)": "Online ID (NPID)",
+    "The Hunter's Dream": "The Hunter's Dream",
+    "Seamless Hunt (seamlesshunt.com)": "Seamless Hunt (seamlesshunt.com)",
+    "The Hunter's Dream (thehuntersdream.com)": "The Hunter's Dream (thehuntersdream.com)",
+    "Ассеты найдены (FP8 / Float8 RDNA4)": "Assets found (FP8 / Float8 RDNA4)",
+    "Вычисляет размер…": "Calculating size…",
+    "Для поиска сбоев: чтение текстур обратно в память": "For debugging crashes: read back textures into memory",
+    "Параллельная запись команд; ускоряет рендеринг при упоре в CPU": "Parallel command recording; speeds up rendering when CPU-bound",
+    "Сервер кооператива (колокола и призывы)": "Co-op server (bells and summons)",
+    "Учётная запись": "Account",
 }
 PT = {
     # Window, pages, buttons
@@ -814,6 +825,121 @@ PT = {
     "Код выдал сервер при создании аккаунта": "O servidor o deu ao criar a conta",
     "Аккаунт {}: запишите код восстановления — он больше не показывается. {}": "Conta {}: anote o código de recuperação — ele não é mais mostrado. {}",
     "Аккаунт {}: новый код восстановления — запишите. {}": "Conta {}: um novo código de recuperação — anote-o. {}",
+    # Upstream 0.6 & Online additions (PT)
+    ", основной": ", principal",
+    "DLSS {}: готово": "DLSS {}: pronto",
+    "DLSS найден (нужна видеокарта NVIDIA RTX)": "DLSS encontrado (requer GPU NVIDIA RTX)",
+    "DLSS не найден: выберите библиотеку NVIDIA ниже (и нужна сборка с мостом DLSS). Игра включит FSR 3.1":
+        "DLSS não encontrado: selecione a biblioteca NVIDIA abaixo (necessária compilação com a ponte DLSS). O jogo ativará FSR 3.1",
+    "DLSS: библиотека NVIDIA": "DLSS: biblioteca NVIDIA",
+    "Online ID (NPID)": "ID Online (NPID)",
+    "Online ID — это имя учётной записи (NPID), зарегистрированное на сервере, а не адрес email":
+        "O ID Online é o nome de usuário (NPID) registado no servidor, e não o seu e-mail",
+    "Seamless Hunt (seamlesshunt.com)": "Seamless Hunt (seamlesshunt.com)",
+    "The Hunter's Dream": "The Hunter's Dream",
+    "The Hunter's Dream (thehuntersdream.com)": "The Hunter's Dream (thehuntersdream.com)",
+    "UPnP (открыть порт на роутере автоматически)": "UPnP (abrir porta no router automaticamente)",
+    "eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой":
+        "eboot.bin não é da versão 1.09: copie o eboot.bin do dump da atualização 1.09 para a pasta do jogo substituindo o ficheiro",
+    "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":
+        "Não foi possível ler o eboot.bin como executável desencriptado de PS4: faça o dump novamente",
+    "eboot.bin с вшитым патчем 60 FPS от Lance McDonald: из-за него игра падает в меню жестов. Скопируйте чистый eboot.bin из дампа обновления 1.09 в папку игры с заменой":
+        "Este eboot.bin possui o patch de 60 FPS de Lance McDonald embutido, causando encerramento no menu de gestos: copie um eboot.bin limpo do dump da atualização 1.09 para a pasta do jogo substituindo-o",
+    "play.seamlesshunt.com:31313 — сервер Seamless Hunt (BBSC). Публичный сервер shadPS4 принимает только сборки shadPS4. Для частного сервера укажите host:port от его владельца. WebAPI: оставьте пустым, тогда берётся адрес сервера с портом 31315":
+        "play.seamlesshunt.com:31313 é o servidor do Seamless Hunt (BBSC). O servidor público do shadPS4 aceita apenas compilações do shadPS4. Para um servidor privado, insira host:porta fornecido pelo proprietário. WebAPI: deixe em branco para usar o endereço do servidor com a porta 31315",
+    "{} — библиотека DLSS для Windows; на Linux NVIDIA её не загружает. Нужна libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}":
+        "{} é a biblioteca DLSS para Windows; a NVIDIA não a carrega no Linux. É necessária a libnvidia-ngx-dlss.so.<versão> do SDK DLSS da NVIDIA: {}",
+    "Адрес WebAPI": "Endereço do WebAPI",
+    "Адрес сервера": "Endereço do servidor",
+    "Ассеты найдены (FP8 / Float8 RDNA4)": "Recursos encontrados (FP8 / Float8 RDNA4)",
+    "Бесшовный кооператив (BBSC)": "Cooperativo contínuo (BBSC)",
+    "Библиотека DLSS NVIDIA (libnvidia-ngx-dlss.so.*)": "Biblioteca DLSS da NVIDIA (libnvidia-ngx-dlss.so.*)",
+    "В папку logs в каталоге данных: для разбора рывков и вылетов":
+        "Na pasta logs do diretório de dados: para investigar encerramentos e soluços",
+    "В этой сборке нет модуля для этого пула (libbbnet20.so)":
+        "Esta compilação não possui o módulo para este pool (libbbnet20.so)",
+    "Войти через Discord": "Entrar com o Discord",
+    "Вход не выполнен": "Não ligado",
+    "Вход через Discord, как в bbhost: на сайте нужно подтвердить код. Пароль не нужен, токен хранится на этом компьютере вместе с настройками лаунчера":
+        "Início de sessão pelo Discord como no bbhost: confirme o código no site. Nenhuma palavra-passe necessária; o token é guardado neste computador com as definições do launcher",
+    "Вы вошли как {}": "Sessão iniciada como {}",
+    "Выбрать файл…": "Escolher ficheiro…",
+    "Выйти": "Terminar sessão",
+    "Выключено: игра остаётся офлайн, как раньше": "Desativado: o jogo permanece offline como antes",
+    "Выключите при Tailscale или другом VPN": "Desative ao usar Tailscale ou outra VPN",
+    "Вычисляет размер…": "A calcular tamanho…",
+    "Для поиска сбоев: чтение текстур обратно в память":
+        "Para depuração de falhas: leitura de texturas de volta para a memória",
+    "Игра сразу открывает главное меню в режиме вне сети (патч игры)":
+        "O jogo abre diretamente o menu principal offline (patch de jogo)",
+    "Играть онлайн": "Jogar online",
+    "Играть офлайн": "Jogar offline",
+    "Игровой сервер": "Servidor de jogo",
+    "Игровой сервер (сообщения, пятна крови, призраки)":
+        "Servidor de jogo (mensagens, manchas de sangue, espectros)",
+    "Из сборки: {}": "Desta compilação: {}",
+    "Имя учётной записи shadNet, не email. Зарегистрируйтесь на seamlesshunt.com или спросите владельца частного сервера. Пароль хранится на этом компьютере вместе с настройками лаунчера":
+        "Nome de utilizador da conta shadNet, não o e-mail. Registe-se em seamlesshunt.com ou solicite ao administrador de um servidor privado. A palavra-passe é guardada neste computador com as definições do launcher",
+    "Код входа: {}": "Código de início de sessão: {}",
+    "Кооператив с игроками bbhost через The Hunter's Dream; вход через Discord":
+        "Cooperativo com jogadores do bbhost via The Hunter's Dream; início de sessão pelo Discord",
+    "Монитор": "Monitor",
+    "На странице {}: 1) нажмите «Sign in with Discord to link» и войдите; 2) вернувшись на страницу, введите код в поле кода (не в «Sign in with a code from the game»). Код скопирован в буфер":
+        "Na página {}: 1) clique em «Sign in with Discord to link» e inicie sessão; 2) ao voltar à página, insira o código no campo correspondente (não em «Sign in with a code from the game»). O código foi copiado para a área de transferência",
+    "Не удалось прочитать файл": "Não foi possível ler o ficheiro",
+    "Не удалось скопировать библиотеку": "Não foi possível copiar a biblioteca",
+    "Нет: выберите libnvidia-ngx-dlss.so.* из DLSS SDK NVIDIA ({})":
+        "Nenhuma: escolha libnvidia-ngx-dlss.so.* do SDK DLSS da NVIDIA ({})",
+    "Нужен аккаунт Discord, привязанный к The Hunter's Dream":
+        "É necessária uma conta do Discord associada ao The Hunter's Dream",
+    "Нужен файл libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}":
+        "É necessário o ficheiro libnvidia-ngx-dlss.so.<versão> do SDK DLSS da NVIDIA: {}",
+    "Нужна библиотека для Linux": "É necessária uma biblioteca para Linux",
+    "Нужно обновление 1.09: скопируйте файлы дампа обновления 1.09 в папку игры с заменой (найдена версия {})":
+        "A atualização 1.09 é necessária: copie os ficheiros do dump da atualização 1.09 para a pasta do jogo substituindo os existentes (versão encontrada: {})",
+    "Онлайн": "Online",
+    "Основной": "Principal",
+    "Открыть страницу": "Abrir página",
+    "Параллельная запись команд; ускоряет рендеринг при упоре в CPU":
+        "Gravação paralela de comandos; acelera a renderização em estrangulamentos de CPU",
+    "Пароль": "Palavra-passe",
+    "Проверить": "Testar",
+    "Проверить соединение": "Testar ligação",
+    "Проверка…": "A verificar…",
+    "Проверяет кучу игры и записывает записи в её память; немного медленнее":
+        "Verifica a memória heap do jogo e regista gravações na memória; um pouco mais lento",
+    "Пропускать выбор «по сети / вне сети»": "Ignorar escolha «jogar online / offline»",
+    "Пул": "Pool",
+    "С кем играть: у всех в сессии должен быть один пул":
+        "Com quem jogar: todos na sessão precisam de usar o mesmo pool",
+    "Своя: {}": "Personalizada: {}",
+    "Сервер BBSC: бесшовный кооператив, колокола и призывы; аккаунт создаётся на сайте":
+        "Servidor BBSC: cooperativo contínuo, sinos e invocações; a conta é criada no site",
+    "Сервер shadNet": "Servidor shadNet",
+    "Сервер кооператива (колокола и призывы)": "Servidor cooperativo (sinos e invocações)",
+    "Сервис кооператива": "Serviço cooperativo",
+    "Сессия переживает смерти, лампы, смену локаций и боссов; до 5 охотников. Нужен сервер с игровым сервером BBSC, у всех игроков включено":
+        "A sessão resiste a mortes, lanternas, trocas de área e chefes; até 5 caçadores. Requer um servidor a executar o servidor de jogo BBSC, e todos os jogadores com a opção ativada",
+    "Соединение": "Ligação",
+    "Сообщения, пятна крови и призраки приходят с игрового сервера; колокола и призывы идут через сервер shadNet. По умолчанию оба — Seamless Hunt (сервер BBSC). Игра по сети совместима с версией для Windows: нужны версия игры 1.09 и тот же сервер":
+        "Mensagens, manchas de sangue e espectros vêm do servidor de jogo; sinos e invocações passam pelo servidor shadNet. Por predefinição, ambos são Seamless Hunt (servidor BBSC). O modo online é compatível com a versão para Windows: todos precisam da versão 1.09 do jogo e do mesmo servidor",
+    "У всех в сессии должны быть одна версия игры (1.09) и один сервер. Читы меняют игру и для других игроков: выключайте их при совместной игре":
+        "Todos na sessão precisam da mesma versão do jogo (1.09) e do mesmo servidor. Cheats alteram a experiência dos outros jogadores: desative-os ao jogar em conjunto",
+    "Убрать выбранную": "Remover selecionada",
+    "Учётная запись": "Conta",
+    "Учётная запись для игры онлайн указана, но «Играть онлайн» выключено":
+        "Uma conta para jogar online foi indicada, mas «Jogar online» está desativado",
+    "Файлы игры повреждены при распаковке: шейдеры не распаковываются, игра зависнет на загрузке. Распакуйте игру и обновление 1.09 заново исправленным инструментом (issue #81)":
+        "Os ficheiros do jogo foram corrompidos durante a extração: os shaders não descompactam e o jogo irá bloquear no carregamento. Extraia o jogo e a atualização 1.09 novamente com uma ferramenta corrigida (issue #81)",
+    "Эта сборка без модуля онлайна (libbbnet.so): игра только офлайн":
+        "Esta compilação não possui o módulo online (libbbnet.so): jogo apenas offline",
+    "Эта сборка без моста DLSS (libbbport_dlss.so): DLSS работать не будет":
+        "Esta compilação não possui a ponte DLSS (libbbport_dlss.so): o DLSS não funcionará",
+    "Это не библиотека DLSS": "Isto não é uma biblioteca DLSS",
+    "Это не магазинное издание Bloodborne (найдено {}): нужен Bloodborne любого региона с обновлением 1.09":
+        "Esta não é uma versão de retalho de Bloodborne (encontrado: {}): é necessário Bloodborne de qualquer região com a atualização 1.09",
+    "доступен": "acessível",
+    "недоступен": "inacessível",
 }
 
 PT_BR = {
@@ -1165,6 +1291,121 @@ PT_BR = {
     "Код выдал сервер при создании аккаунта": "O servidor o deu ao criar a conta",
     "Аккаунт {}: запишите код восстановления — он больше не показывается. {}": "Conta {}: anote o código de recuperação — ele não aparece de novo. {}",
     "Аккаунт {}: новый код восстановления — запишите. {}": "Conta {}: um novo código de recuperação — anote-o. {}",
+    # Upstream 0.6 & Online additions (PT-BR)
+    ", основной": ", principal",
+    "DLSS {}: готово": "DLSS {}: pronto",
+    "DLSS найден (нужна видеокарта NVIDIA RTX)": "DLSS encontrado (requer GPU NVIDIA RTX)",
+    "DLSS не найден: выберите библиотеку NVIDIA ниже (и нужна сборка с мостом DLSS). Игра включит FSR 3.1":
+        "DLSS não encontrado: selecione a biblioteca NVIDIA abaixo (necessária compilação com a ponte DLSS). O jogo ativará FSR 3.1",
+    "DLSS: библиотека NVIDIA": "DLSS: biblioteca NVIDIA",
+    "Online ID (NPID)": "ID Online (NPID)",
+    "Online ID — это имя учётной записи (NPID), зарегистрированное на сервере, а не адрес email":
+        "O ID Online é o nome de usuário (NPID) registrado no servidor, e não o seu e-mail",
+    "Seamless Hunt (seamlesshunt.com)": "Seamless Hunt (seamlesshunt.com)",
+    "The Hunter's Dream": "The Hunter's Dream",
+    "The Hunter's Dream (thehuntersdream.com)": "The Hunter's Dream (thehuntersdream.com)",
+    "UPnP (открыть порт на роутере автоматически)": "UPnP (abrir porta no roteador automaticamente)",
+    "eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой":
+        "eboot.bin não é da versão 1.09: copie o eboot.bin do dump da atualização 1.09 para a pasta do jogo substituindo o arquivo",
+    "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":
+        "Não foi possível ler o eboot.bin como executável descriptografado de PS4: faça o dump novamente",
+    "eboot.bin с вшитым патчем 60 FPS от Lance McDonald: из-за него игра падает в меню жестов. Скопируйте чистый eboot.bin из дампа обновления 1.09 в папку игры с заменой":
+        "Este eboot.bin possui o patch de 60 FPS do Lance McDonald embutido, causando travamento no menu de gestos: copie um eboot.bin limpo do dump da atualização 1.09 para a pasta do jogo substituindo-o",
+    "play.seamlesshunt.com:31313 — сервер Seamless Hunt (BBSC). Публичный сервер shadPS4 принимает только сборки shadPS4. Для частного сервера укажите host:port от его владельца. WebAPI: оставьте пустым, тогда берётся адрес сервера с портом 31315":
+        "play.seamlesshunt.com:31313 é o servidor do Seamless Hunt (BBSC). O servidor público do shadPS4 aceita apenas compilações do shadPS4. Para um servidor privado, insira host:porta fornecido pelo proprietário. WebAPI: deixe em branco para usar o endereço do servidor com a porta 31315",
+    "{} — библиотека DLSS для Windows; на Linux NVIDIA её не загружает. Нужна libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}":
+        "{} é a biblioteca DLSS para Windows; a NVIDIA não a carrega no Linux. É necessária a libnvidia-ngx-dlss.so.<versão> do SDK DLSS da NVIDIA: {}",
+    "Адрес WebAPI": "Endereço do WebAPI",
+    "Адрес сервера": "Endereço do servidor",
+    "Ассеты найдены (FP8 / Float8 RDNA4)": "Recursos encontrados (FP8 / Float8 RDNA4)",
+    "Бесшовный кооператив (BBSC)": "Cooperativo contínuo (BBSC)",
+    "Библиотека DLSS NVIDIA (libnvidia-ngx-dlss.so.*)": "Biblioteca DLSS da NVIDIA (libnvidia-ngx-dlss.so.*)",
+    "В папку logs в каталоге данных: для разбора рывков и вылетов":
+        "Na pasta logs do diretório de dados: para investigar travamentos e engasgos",
+    "В этой сборке нет модуля для этого пула (libbbnet20.so)":
+        "Esta compilação não possui o módulo para este pool (libbbnet20.so)",
+    "Войти через Discord": "Entrar com o Discord",
+    "Вход не выполнен": "Não conectado",
+    "Вход через Discord, как в bbhost: на сайте нужно подтвердить код. Пароль не нужен, токен хранится на этом компьютере вместе с настройками лаунчера":
+        "Login pelo Discord como no bbhost: confirme o código no site. Nenhuma senha necessária; o token é salvo neste computador com as configurações do launcher",
+    "Вы вошли как {}": "Conectado como {}",
+    "Выбрать файл…": "Escolher arquivo…",
+    "Выйти": "Desconectar",
+    "Выключено: игра остаётся офлайн, как раньше": "Desativado: o jogo permanece offline como antes",
+    "Выключите при Tailscale или другом VPN": "Desative ao usar Tailscale ou outra VPN",
+    "Вычисляет размер…": "Calculando tamanho…",
+    "Для поиска сбоев: чтение текстур обратно в память":
+        "Para depuração de falhas: leitura de texturas de volta para a memória",
+    "Игра сразу открывает главное меню в режиме вне сети (патч игры)":
+        "O jogo abre diretamente o menu principal offline (patch de jogo)",
+    "Играть онлайн": "Jogar online",
+    "Играть офлайн": "Jogar offline",
+    "Игровой сервер": "Servidor de jogo",
+    "Игровой сервер (сообщения, пятна крови, призраки)":
+        "Servidor de jogo (mensagens, manchas de sangue, espectros)",
+    "Из сборки: {}": "Desta compilação: {}",
+    "Имя учётной записи shadNet, не email. Зарегистрируйтесь на seamlesshunt.com или спросите владельца частного сервера. Пароль хранится на этом компьютере вместе с настройками лаунчера":
+        "Nome de usuário da sua conta shadNet, não o e-mail. Registre-se em seamlesshunt.com ou solicite ao administrador de um servidor privado. A senha é salva neste computador com as configurações do launcher",
+    "Код входа: {}": "Código de login: {}",
+    "Кооператив с игроками bbhost через The Hunter's Dream; вход через Discord":
+        "Cooperativo com jogadores do bbhost via The Hunter's Dream; login pelo Discord",
+    "Монитор": "Monitor",
+    "На странице {}: 1) нажмите «Sign in with Discord to link» и войдите; 2) вернувшись на страницу, введите код в поле кода (не в «Sign in with a code from the game»). Код скопирован в буфер":
+        "Na página {}: 1) clique em «Sign in with Discord to link» e faça login; 2) ao retornar à página, insira o código no campo correspondente (não em «Sign in with a code from the game»). O código foi copiado para a área de transferência",
+    "Не удалось прочитать файл": "Não foi possível ler o arquivo",
+    "Не удалось скопировать библиотеку": "Não foi possível copiar a biblioteca",
+    "Нет: выберите libnvidia-ngx-dlss.so.* из DLSS SDK NVIDIA ({})":
+        "Nenhuma: escolha libnvidia-ngx-dlss.so.* do SDK DLSS da NVIDIA ({})",
+    "Нужен аккаунт Discord, привязанный к The Hunter's Dream":
+        "É necessária uma conta do Discord vinculada ao The Hunter's Dream",
+    "Нужен файл libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}":
+        "É necessário o arquivo libnvidia-ngx-dlss.so.<versão> do SDK DLSS da NVIDIA: {}",
+    "Нужна библиотека для Linux": "É necessária uma biblioteca para Linux",
+    "Нужно обновление 1.09: скопируйте файлы дампа обновления 1.09 в папку игры с заменой (найдена версия {})":
+        "A atualização 1.09 é necessária: copie os arquivos do dump da atualização 1.09 para a pasta do jogo substituindo os existentes (versão encontrada: {})",
+    "Онлайн": "Online",
+    "Основной": "Principal",
+    "Открыть страницу": "Abrir página",
+    "Параллельная запись команд; ускоряет рендеринг при упоре в CPU":
+        "Gravação paralela de comandos; acelera a renderização em gargalos de CPU",
+    "Пароль": "Senha",
+    "Проверить": "Testar",
+    "Проверить соединение": "Testar conexão",
+    "Проверка…": "Verificando…",
+    "Проверяет кучу игры и записывает записи в её память; немного медленнее":
+        "Verifica o heap do jogo e registra gravações na memória; um pouco mais lento",
+    "Пропускать выбор «по сети / вне сети»": "Pular escolha «jogar online / offline»",
+    "Пул": "Pool",
+    "С кем играть: у всех в сессии должен быть один пул":
+        "Com quem jogar: todos na sessão precisam usar o mesmo pool",
+    "Своя: {}": "Personalizada: {}",
+    "Сервер BBSC: бесшовный кооператив, колокола и призывы; аккаунт создаётся на сайте":
+        "Servidor BBSC: cooperativo contínuo, sinos e invocações; a conta é criada no site",
+    "Сервер shadNet": "Servidor shadNet",
+    "Сервер кооператива (колокола и призывы)": "Servidor cooperativo (sinos e invocações)",
+    "Сервис кооператива": "Serviço cooperativo",
+    "Сессия переживает смерти, лампы, смену локаций и боссов; до 5 охотников. Нужен сервер с игровым сервером BBSC, у всех игроков включено":
+        "A sessão resiste a mortes, lanternas, trocas de área e chefes; até 5 caçadores. Requer um servidor executando o servidor de jogo BBSC, e todos os jogadores com a opção ativada",
+    "Соединение": "Conexão",
+    "Сообщения, пятна крови и призраки приходят с игрового сервера; колокола и призывы идут через сервер shadNet. По умолчанию оба — Seamless Hunt (сервер BBSC). Игра по сети совместима с версией для Windows: нужны версия игры 1.09 и тот же сервер":
+        "Mensagens, manchas de sangue e espectros vêm do servidor de jogo; sinos e invocações passam pelo servidor shadNet. Por padrão, ambos são Seamless Hunt (servidor BBSC). O modo online é compatível com a versão para Windows: todos precisam da versão 1.09 do jogo e do mesmo servidor",
+    "У всех в сессии должны быть одна версия игры (1.09) и один сервер. Читы меняют игру и для других игроков: выключайте их при совместной игре":
+        "Todos na sessão precisam da mesma versão do jogo (1.09) e do mesmo servidor. Cheats alteram a experiência dos outros jogadores: desative-os ao jogar em conjunto",
+    "Убрать выбранную": "Remover selecionado",
+    "Учётная запись": "Conta",
+    "Учётная запись для игры онлайн указана, но «Играть онлайн» выключено":
+        "Uma conta para jogar online foi informada, mas «Jogar online» está desativado",
+    "Файлы игры повреждены при распаковке: шейдеры не распаковываются, игра зависнет на загрузке. Распакуйте игру и обновление 1.09 заново исправленным инструментом (issue #81)":
+        "Os arquivos do jogo foram corrompidos durante a extração: os shaders não descompactam e o jogo travará no carregamento. Extraia o jogo e a atualização 1.09 novamente com uma ferramenta corrigida (issue #81)",
+    "Эта сборка без модуля онлайна (libbbnet.so): игра только офлайн":
+        "Esta compilação não possui o módulo online (libbbnet.so): jogo somente offline",
+    "Эта сборка без моста DLSS (libbbport_dlss.so): DLSS работать не будет":
+        "Esta compilação não possui a ponte DLSS (libbbport_dlss.so): o DLSS não funcionará",
+    "Это не библиотека DLSS": "Isto não é uma biblioteca DLSS",
+    "Это не магазинное издание Bloodborne (найдено {}): нужен Bloodborne любого региона с обновлением 1.09":
+        "Esta não é uma versão comercial de Bloodborne (encontrado: {}): é necessário Bloodborne de qualquer região com a atualização 1.09",
+    "доступен": "acessível",
+    "недоступен": "inacessível",
 }
 
 
