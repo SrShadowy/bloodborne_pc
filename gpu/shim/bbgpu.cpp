@@ -443,6 +443,11 @@ extern "C" int bbgpu_menu_pointer_in_menu(void) {
     return BbMenuPointer::InMenu() ? 1 : 0;
 }
 
+extern "C" int bbgpu_input_blocked(void) { // [extra]
+    return (BbMenuPointer::InputBlocked() || BbVideoTrack::IsActive()) ? 1 : 0; // [extra]
+} // [extra]
+
+
 extern "C" uint32_t bbgpu_menu_confirm_button(void) {
     return BbMenuPointer::ConfirmButton();
 }

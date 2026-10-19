@@ -4,9 +4,18 @@
 # its /nix/store with user namespaces, available on SteamOS and most desktops).
 # Running it opens the launcher; `--play` starts the game with the launcher's saved settings.
 # Data (generated files, saves, bbport.ini): ~/.local/share/bbport (BB_DATA_DIR).
+# `bash packaging/appimage.sh [default|minimal]` (or BB_APPIMAGE_VARIANT): minimal builds without
+# Mesa's Vulkan drivers and MangoHud (a -minimal AppImage), the system's own are used.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 [[ -f out/bb-probe && -f out/gpu/libbbgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+variant=${1:-${BB_APPIMAGE_VARIANT:-default}}
+case $variant in
+    default | minimal) ;;
+    *) echo "Uso: $0 [default|minimal] (recebido: $variant)" >&2; exit 1 ;;
+esac
+suffix=; [[ $variant == minimal ]] && suffix=-minimal
+export BB_APPIMAGE_VARIANT=$variant
 root=$PWD
 # The libraries' store paths: for each library a binary needs (NEEDED), the RUNPATH directory it
 # is found in (their closures come along). Not every RUNPATH entry: built in nix-shell, the
@@ -34,9 +43,9 @@ trap 'rm -rf "$work"' EXIT
 (cd "$work" && nix bundle --impure --bundler github:ralismark/nix-appimage \
     --expr "import $root/packaging {}")
 mkdir -p dist out/nix-roots
-install -m755 "$work/bbport.AppImage" dist/Bloodborne-bbport-x86_64.AppImage
-# A GC root for the package: nix-collect-garbage keeps it, and with it the outputs built here from
-# source (the Vulkan-only Mesa, GTK 4 without GStreamer, libadwaita, SDL3), so the next AppImage
-# does not build them again (only a nixpkgs update does).
-nix-build --impure packaging -o out/nix-roots/bbport > /dev/null
-ls -lh dist/Bloodborne-bbport-x86_64.AppImage
+install -m755 "$work/bbport.AppImage" dist/Bloodborne-bbport-x86_64${suffix}.AppImage
+# A GC root for the package (per variant): nix-collect-garbage keeps it, and with it the outputs
+# built here from source (the Vulkan-only Mesa, GTK 4 without GStreamer, libadwaita, SDL3), so the
+# next AppImage does not build them again (only a nixpkgs update does).
+nix-build --impure packaging -o out/nix-roots/bbport${suffix} > /dev/null
+ls -lh dist/Bloodborne-bbport-x86_64${suffix}.AppImage

@@ -49,6 +49,8 @@ int bbgpu_mouse_camera_active(void);
 void bbgpu_mouse_camera_set_using_mouse(int using_mouse);
 int bbgpu_mouse_camera_take_target_switch(uint8_t *out_rx, uint8_t *out_ry);
 int bbgpu_menu_pointer_in_menu(void);
+int bbgpu_input_blocked(void); // [extra]
+int bbgpu_video_skip(void); // [extra]
 uint32_t bbgpu_menu_confirm_button(void);
 uint32_t bbgpu_menu_pointer_step_pad(uint32_t current_buttons, uint8_t lx, uint8_t ly);
 int bbgpu_get_prompt_layout(void);

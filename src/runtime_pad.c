@@ -633,6 +633,7 @@ static void apply_keyboard(PadData *d, const bool *k) {
     key_stick(&look_stick,d->timestamp,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT),
               key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN),&d->right_x,&d->right_y);
     extra_pad_apply_walk_modifier(&d->left_x, &d->left_y, k, key_down(k, IN_MOVE_LEFT), key_down(k, IN_MOVE_RIGHT), key_down(k, IN_MOVE_UP), key_down(k, IN_MOVE_DOWN)); // [extra]
+    extra_pad_apply_cutscene_skip(&d->buttons, k); // [extra]
     memset((void *)key_latch,0,sizeof(key_latch));
 }
 

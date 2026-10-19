@@ -43,7 +43,7 @@ def get_git_version():
             ver = ver[1:]
         return ver
     except Exception:
-        return "0.5"
+        return "0.6"
 
 def get_ldd_dependencies(binary_path):
     """Parses ldd output to find dynamic library dependencies."""
@@ -531,10 +531,6 @@ def build_and_package(args):
     create_start_script(staging_dir)
     create_readme(staging_dir, version)
 
-    if (ROOT_DIR / "bbport.ini").exists():
-        shutil.copy2(ROOT_DIR / "bbport.ini", staging_dir / "bbport.ini")
-    if (ROOT_DIR / "mods.json").exists():
-        shutil.copy2(ROOT_DIR / "mods.json", staging_dir / "mods.json")
     if (ROOT_DIR / "patches.json").exists():
         shutil.copy2(ROOT_DIR / "patches.json", staging_dir / "patches.json")
 

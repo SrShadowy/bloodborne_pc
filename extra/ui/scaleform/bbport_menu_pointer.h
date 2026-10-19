@@ -12,6 +12,9 @@ void Install(uintptr_t image_base, uint64_t image_size);
 // True while the player is on the title screen or any in-game Scaleform menu/list has focus.
 bool InMenu();
 
+// True while gameplay input is blocked by an active event, movie, or cutscene.
+bool InputBlocked();
+
 // Region-aware menu confirm/back ScePad buttons (Cross=0x4000 / Circle=0x2000).
 uint32_t ConfirmButton();
 uint32_t BackButton();

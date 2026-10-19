@@ -223,6 +223,25 @@ static inline void extra_pad_apply_walk_modifier(uint8_t *left_x, uint8_t *left_
     }
 }
 
+__attribute__((weak)) int bbgpu_input_blocked(void);
+__attribute__((weak)) int bbgpu_video_skip(void);
+
+/* Cutscene skip helper: if gameplay input is blocked (cutscene or pre-rendered movie playing),
+ * pressing Enter or Esc emits BTN_OPTIONS (0x8) and triggers video skip if an AvPlayer is active. */
+static inline void extra_pad_apply_cutscene_skip(uint32_t *buttons, const bool *k) {
+    if (!k) return;
+    const int blocked = bbgpu_input_blocked ? bbgpu_input_blocked() : 0;
+    if (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER] || k[SDL_SCANCODE_ESCAPE]) {
+        if (bbgpu_video_skip && bbgpu_video_skip()) {
+            *buttons &= ~0x2000; /* BTN_CIRCLE */
+            *buttons |= 0x8;    /* BTN_OPTIONS */
+        } else if (blocked) {
+            *buttons &= ~0x2000; /* BTN_CIRCLE */
+            *buttons |= 0x8;    /* BTN_OPTIONS */
+        }
+    }
+}
+
 #ifdef __cplusplus
 }
 #endif

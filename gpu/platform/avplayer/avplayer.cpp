@@ -8,6 +8,7 @@
 #include "platform/avplayer/avplayer.h"
 #include "platform/avplayer/player.h"
 #include "platform/errors.h"
+#include "extra/core/engine_fixes/bbport_video.h" // [extra]
 
 namespace BbAvPlayer {
 
@@ -66,7 +67,9 @@ Handle PS4_SYSV_ABI sceAvPlayerInit(AvPlayerInitData* data) {
         LOG_ERROR(Lib_AvPlayer, "sceAvPlayerInit needs all four allocators");
         return nullptr;
     }
-    return new Player(*data);
+    auto* p = new Player(*data); // [extra]
+    BbVideoTrack::OnCreate(p); // [extra]
+    return p; // [extra]
 }
 
 s32 PS4_SYSV_ABI sceAvPlayerInitEx(const AvPlayerInitDataEx* data, Handle* player) {
@@ -81,6 +84,7 @@ s32 PS4_SYSV_ABI sceAvPlayerInitEx(const AvPlayerInitDataEx* data, Handle* playe
     init.num_output_video_framebuffers = data->num_output_video_framebuffers;
     init.auto_start = data->auto_start;
     *player = new Player(init);
+    BbVideoTrack::OnCreate(*player); // [extra]
     return BbErr::Ok;
 }
 
@@ -92,6 +96,7 @@ s32 PS4_SYSV_ABI sceAvPlayerClose(Handle player) {
     if (!player) {
         return ErrorInvalidParams;
     }
+    BbVideoTrack::OnClose(player); // [extra]
     delete player;
     return BbErr::Ok;
 }

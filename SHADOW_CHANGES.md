@@ -265,13 +265,15 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 | `gpu/shim/bbport_frame_rate.cpp` | `cmpl/jle/vxorps detour // [extra]` em `HookRunSpeed` | (shim local) | Detour com guarda contra divisão por zero (`dt <= 0.001f`) | 2026-10-19 |
 | `gpu/shim/bbport_overlay.cpp` | `if (!label) label = ""; // [extra]` em `Checkbox`/`Slider` | (shim local) | Guarda defensiva contra ponteiro nulo no ImGui | 2026-10-19 |
 | `gpu/shim/bbport_overlay.cpp` | `if (event.key == SDLK_F10 ...) // [extra]` | (shim local) | Atalho global F10 / Pause para alternar congelamento com banner toast | 2026-10-19 |
-| `gpu/shim/bbport_game_menu.cpp` | `"effect_bloom" // [extra]` em `DefineTexts` | (shim local) | Rótulos e metadados para o 11º efeito | 2026-10-19 |
+| `gpu/bbnet20/vendor/shadps4/core/libraries/net/net_upnp.cpp` | `#if MINIUPNPC_API_VERSION >= 18 // [extra]` | (vendor compat) | Compatibilidade com miniupnpc legado (Ubuntu 22.04 LTS / glibc 2.35) | 2026-10-19 |
+| `gpu/bbgpu.h` | `int bbgpu_input_blocked(void); int bbgpu_video_skip(void); // [extra]` | `extra/core/engine_fixes/bbport_video.cpp` | Consulta de bloqueio e pulo de vídeo ativo | 2026-10-19 |
+| `gpu/shim/bbgpu.cpp` | `bbgpu_input_blocked() // [extra]` | `extra/core/engine_fixes/bbport_video.cpp` | Wrapper combinando InputBlocked e BbVideoTrack::IsActive | 2026-10-19 |
+| `gpu/platform/avplayer/avplayer.cpp` | `BbVideoTrack::OnCreate/OnClose // [extra]` | `extra/core/engine_fixes/bbport_video.cpp` | Rastreamento do ciclo de vida de instâncias do AvPlayer | 2026-10-19 |
+| `src/runtime_pad.c` | `extra_pad_apply_cutscene_skip(...) // [extra]` | `extra/management/prompts/bbport_pad_hook.h` | Emissão de BTN_OPTIONS com Esc/Enter e pulo de vídeo via AvPlayer::Stop | 2026-10-19 |
 | `tests/test_settings.cpp` | Validação de labels não nulos // [extra] | (teste unitário) | Teste de regressão para integridade de todos os 11 efeitos em todos os idiomas | 2026-10-19 |
 
 ---
 
-## 74. Blindagem Geométrica Havok (`PushBackSafe`) e Restauração da Pausa de Mundo e IA no Modo Foto
-- **Problema**: Afundamento contínuo da cápsula do personagem no chão durante `dt = 0.0f`, gerando raycasts degenerados que percorriam todos os triângulos do mapa, acumulando 163.840 elementos no coletor Havok e causando SIGSEGV (`0xf00010`) em `hkArray<Element96>::pushBack` (`0xb84ce0`). Tentativa posterior com `tm[0x38] = 1` impedia o despacho do frame step, deixando a IA e animações ativas.
-- **Solução Arquitetural**:
-  1. `PushBackSafe`: Interceptação em `0xb84ce0` com teto de 2048 hits por consulta e validação contra ponteiro nulo (`if (!data) return;`), blindando a engine contra qualquer crash de memória do Havok.
-  2. `Extra::PhotoPause`: Restauração do congelamento real da simulação via `live->dt = 0.0f` no passo do motor, paralisando chefes, inimigos, partículas e física com transição suave via `Extra::PresentPacer`.
+## 75. Pulo Universal de Cutscenes In-Engine e Vídeos Pré-Renderizados (AvPlayer) via Teclado
+- **Causa**: O primeiro vídeo (`sprj_opening.mp4` / `sprj_advertise.mp4`) é reproduzido pelo `libSceAvPlayer`, antes da inicialização das estruturas de Scaleform menu flow (`kMenuFlow`), fazendo com que `bbgpu_input_blocked()` retornasse 0 e o `apply_keyboard` desviasse o <kbd>Esc</kbd> para `BTN_CIRCLE`.
+- **Solução Arquitetural**: Módulo `BbVideoTrack` (`extra/core/engine_fixes/bbport_video.{h,cpp}`) monitorando o ciclo de vida do player. Ao pressionar <kbd>Enter</kbd> ou <kbd>Esc</kbd>, `bbgpu_video_skip()` executa `player->Stop()` limpo e seguro em thread, disparando `StateStop` para o motor do jogo avançar imediatamente, além de desmascarar `BTN_OPTIONS` (0x8) para cutscenes in-engine.

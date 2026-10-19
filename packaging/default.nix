@@ -1,6 +1,10 @@
 # Packaged port: the prebuilt game binaries (build.sh first), the start-up scripts and the GTK4
 # launcher, with their whole Nix closure and Mesa's Vulkan drivers. `bash packaging/appimage.sh`
 # turns it into an AppImage (Steam Deck); `nix-build packaging` alone gives result/bin/bbport.
+# BB_APPIMAGE_VARIANT=minimal (appimage.sh, docker-appimage.sh) drops what a gaming system already
+# has — Mesa's Vulkan drivers and MangoHud — and uses the system's own, as NVIDIA's has always
+# been used. For current-Mesa distributions (Arch, Fedora, CachyOS, SteamOS); not for NixOS, whose
+# drivers live in its store, hidden behind the AppImage's own.
 { pkgs ? import <nixpkgs> { }
   # Store paths the prebuilt binaries load libraries from (their RUNPATHs), written by
   # appimage.sh. Nix only finds references to its inputs, and the binaries were built outside.
@@ -12,6 +16,11 @@ let
   # FSR 4.1.1 models are extracted from AMD's DLLs: never in a public package. BB_PACKAGE_FSR411=1
   # (appimage.sh runs nix with --impure) bundles the local fsr4_411 for one's own devices.
   fsr411 = builtins.getEnv "BB_PACKAGE_FSR411" == "1";
+  # The slim variant (see the header): no Mesa's Vulkan drivers and no MangoHud in the closure,
+  # the system's own are used (vkEnumerateInstance layers/drivers: what the loader finds in
+  # /usr/share/vulkan/icd.d and implicit_layer.d). bbport_vulkan.py already treats the absence of
+  # BB_BUNDLED_VK_DRIVER_FILES as "no bundled drivers" and leaves the loader's default search.
+  minimal = builtins.getEnv "BB_APPIMAGE_VARIANT" == "minimal";
   assetDirs = [ "scripts" "patches" "fsr4_shaders" "launcher" "tools" ]
     ++ lib.optional fsr411 "fsr4_411";
   # Only what the package needs (the tree also holds builds, profiles and captures).
@@ -31,7 +40,20 @@ let
       in builtins.elem rel wanted || builtins.elem rel dlssFiles || isNgx rel
         || lib.any (dir: lib.hasPrefix (dir + "/") rel) assetDirs;
   };
-  python = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
+  # The launcher's interpreter: the standard Python ships tens of MB the port never runs — its
+  # build configuration (config-3.13*, read only to compile C extensions at runtime; PyGObject is
+  # built here, not dlopened-compiled), the IDLE editor, the test suite, pydoc's documents,
+  # ensurepip's bundled pip and turtledemo. None is imported by the launcher or the game's scripts;
+  # the stdlib's own precompiled __pycache__ stays, so startup does not recompile.
+  python3 = pkgs.python3.overrideAttrs (old: {
+    postInstall = (old.postInstall or "") + ''
+      for d in $out/lib/python3*; do
+        rm -rf "$d"/config-3* "$d"/idlelib "$d"/test "$d"/pydoc_data \
+               "$d"/ensurepip "$d"/turtledemo "$d"/site-packages/pip* 2>/dev/null || true
+      done
+    '';
+  });
+  python = python3.withPackages (ps: [ ps.pygobject3 ]);
   # FSR 4.1.1 from the user's own AMD DLL (the launcher's button, tools/fsr4cap/build_assets.sh):
   # its two tools built here, so that the package needs no compiler and no network for it. Proton
   # (GE-Proton 10+) and Steam's runtime come from the user's Steam. On NixOS the recording runs
@@ -57,12 +79,13 @@ let
     x86_64-w64-mingw32-gcc -std=c11 -O1 -Wall -I$f/ffx/api/include -I$f/ffx/upscalers/include \
       $f/fsr4cap.c $f/capture.c $f/rootsig.c -o $out -ld3d12 -ldxguid -static
   '';
-  # Mesa's Vulkan drivers come with the package (RADV and ANV); bbport_vulkan.py adds the host
-  # NVIDIA ICD and only its vendor libraries (matching the host's kernel module). Only the two
+  # Mesa's Vulkan drivers come with the default package (RADV and ANV); bbport_vulkan.py adds the
+  # host NVIDIA ICD and only its vendor libraries (matching the host's kernel module). Only the two
   # drivers, not the whole Mesa: its OpenGL drivers and LLVM were ~800 MB of the package. RADV
   # without LLVM (it compiles with ACO; LLVM was only an optional backend); the drivers' one
   # reference to Mesa's store path (share/drirc.d, per-application tweaks: none for this game)
-  # is removed.
+  # is removed. The minimal variant skips all of it (its closure, ~45 MB, and the ICDs): the
+  # system's own Mesa is used through the loader's default search.
   mesaVulkan = (pkgs.mesa.override {
     galliumDrivers = [ "radeonsi" "iris" "llvmpipe" "zink" ];
     # Dozen (microsoft-experimental) only because the recipe expects its spirv2dxil output.
@@ -82,8 +105,12 @@ let
         ${mesaVulkan}/share/vulkan/icd.d/''${name}_icd.x86_64.json > $out/share/vulkan/icd.d/''${name}_icd.x86_64.json
     done
   '';
-  icds = lib.concatMapStringsSep ":" (name: "${vulkanDrivers}/share/vulkan/icd.d/${name}")
-    [ "radeon_icd.x86_64.json" "intel_icd.x86_64.json" ];
+  # In the minimal variant the wrappers get an explicit empty string: --set needs its value, and
+  # bbport_vulkan.py reads "" as "no bundled drivers", leaving the loader's default search (the
+  # system's own ICDs) in place.
+  icds = if minimal then "\"\""
+    else lib.concatMapStringsSep ":" (name: "${vulkanDrivers}/share/vulkan/icd.d/${name}")
+      [ "radeon_icd.x86_64.json" "intel_icd.x86_64.json" ];
   # MangoHud (its Vulkan layer, XDG_DATA_DIRS) without its 32-bit half: the game is 64-bit.
   # xdg-utils (Perl, ~55 MB) only opens links: the host's xdg-open instead.
   # libdecor without its GTK 3 plugin (as in shell.nix) for MangoHud's glfw: GTK 3, tinysparql, ICU.
@@ -125,7 +152,7 @@ let
   # Environment the closure needs on any host: icon themes, SVG icon loader, fonts (above) and
   # a UTF-8 locale built into glibc.
   common = ''
-      --prefix XDG_DATA_DIRS : ${mangohud}/share:${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:${gtk4}/share/gsettings-schemas/${gtk4.name} \
+      --prefix XDG_DATA_DIRS : ${lib.optionalString (!minimal) "${mangohud}/share:"}${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:${gtk4}/share/gsettings-schemas/${gtk4.name} \
       --set-default GDK_PIXBUF_MODULE_FILE ${pkgs.librsvg}/${pkgs.gdk-pixbuf.moduleDir}.cache \
       --set-default FONTCONFIG_FILE ${fontsConf} \
       --set-default LC_ALL C.UTF-8 \

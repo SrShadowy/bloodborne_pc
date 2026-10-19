@@ -47,6 +47,15 @@ class PackagedVulkanTests(unittest.TestCase):
         self.assertEqual(self.env["LD_LIBRARY_PATH"], "/bundled/lib")
         self.assertFalse((self.root / "data").exists())
 
+    def test_minimal_package_leaves_the_loader_its_default_search(self):
+        # BB_APPIMAGE_VARIANT=minimal: the wrapper sets BB_BUNDLED_VK_DRIVER_FILES to "" and there
+        # is no bundled Mesa. Nothing is set, so the Vulkan loader finds the system's ICDs.
+        self.env["BB_BUNDLED_VK_DRIVER_FILES"] = ""
+        message = self.configure()
+        self.assertNotIn("VK_DRIVER_FILES", self.env)
+        self.assertIn("system drivers", message)
+        self.assertEqual(self.env["LD_LIBRARY_PATH"], "/bundled/lib")
+
     def test_explicit_and_legacy_overrides_are_preserved(self):
         for key in ("VK_DRIVER_FILES", "VK_ICD_FILENAMES"):
             with self.subTest(key=key):

@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Select Vulkan ICDs for the packaged port before starting GTK or the game.
 
-Mesa comes with the package. NVIDIA's userspace driver must come from the host,
-matching its kernel module. Expose only NVIDIA libraries, rather than the host's
-whole library directory (which would also replace the package's libc/GTK/SDL).
+Mesa comes with the default package (the minimal variant leaves it out: the system's
+own drivers, found by the loader's default search). NVIDIA's userspace driver must come
+from the host, matching its kernel module. Expose only NVIDIA libraries, rather than the
+host's whole library directory (which would also replace the package's libc/GTK/SDL).
 """
 
 import hashlib
@@ -101,7 +102,10 @@ def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS,
     if not found:
         if bundled:
             env["VK_DRIVER_FILES"] = bundled
-        return "Vulkan: bundled AMD/Intel drivers; no accessible NVIDIA ICD found"
+            return "Vulkan: bundled AMD/Intel drivers; no accessible NVIDIA ICD found"
+        # The minimal package: the loader's own search finds the system's ICDs (its default
+        # /usr/share/vulkan/icd.d and friends; nothing is set here).
+        return "Vulkan: system drivers (no bundled Mesa); no accessible NVIDIA ICD found"
 
     data, driver = found
     # The driver version/path and mtime give each installed driver its own small

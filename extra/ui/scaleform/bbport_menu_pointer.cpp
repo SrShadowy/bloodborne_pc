@@ -43,20 +43,6 @@ int64_t NowMs() {
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
-
-bool InputBlocked() {
-    uintptr_t a = 0, b = 0;
-    if (SafeRead(GuestAddr(kMenuFlow), &a, sizeof(a)) && a) {
-        uint64_t v = 0;
-        if (SafeRead(a + 0xa78, &v, sizeof(v)) && v) return true;
-    }
-    if (SafeRead(GuestAddr(kInputBlockB), &b, sizeof(b)) && b) {
-        uint32_t v = 0;
-        if (SafeRead(b + 0x2e4, &v, sizeof(v)) && v) return true;
-    }
-    return false;
-}
-
 bool FrontEnd() {
     if (!g_has_base) return false;
     uintptr_t flow = 0;
@@ -227,8 +213,22 @@ uint32_t ConfirmButton() {
 
 uint32_t BackButton() { return ConfirmButton() == 0x2000u ? 0x4000u : 0x2000u; }
 
-bool InMenu() {
+bool InputBlocked() {
     if (!g_has_base) return false;
+    uintptr_t a = 0, b = 0;
+    if (SafeRead(GuestAddr(kMenuFlow), &a, sizeof(a)) && a) {
+        uint64_t v = 0;
+        if (SafeRead(a + 0xa78, &v, sizeof(v)) && v) return true;
+    }
+    if (SafeRead(GuestAddr(kInputBlockB), &b, sizeof(b)) && b) {
+        uint32_t v = 0;
+        if (SafeRead(b + 0x2e4, &v, sizeof(v)) && v) return true;
+    }
+    return false;
+}
+
+bool InMenu() {
+    if (!g_has_base || InputBlocked()) return false;
     return FrontEnd() || FlowMenuOpen() || (NowMs() - g_focus_ms.load(std::memory_order_relaxed) < 400);
 }
 
