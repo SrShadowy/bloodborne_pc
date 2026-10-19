@@ -22,6 +22,11 @@ Shader::PushData MakeUserData(const Gcn::Regs& regs) {
 }
 } // namespace
 
+namespace {
+void TraceShaderBinding(const Shader::Info& stage, VAddr addr, u64 size, bool written,
+                        const VideoCore::BufferCache& cache, const VideoCore::Buffer* bound);
+} // namespace
+
 const PreparedStage* Rasterizer::FindPreparedStage(const Shader::Info& stage) const {
     // Sharps a draw-preparation worker read from the same flattened user data.
     if (!bind_prepared || BbToggle::Disabled(BbToggle::PreparedResources)) {
@@ -234,6 +239,12 @@ void NoteResStats(const Pipeline* pipeline) {
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
     BB_SECTION(BindResources);
     NoteResStats(pipeline);
+    // BB_EXP_BARRIER_ALL=1 (experiment): a full memory barrier before every draw and dispatch.
+    static const bool barrier_all = std::getenv("BB_EXP_BARRIER_ALL") != nullptr;
+    if (barrier_all) {
+        runtime.AccessGlobal(vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eShaderWrite);
+        needs_barrier = true;
+    }
     {
         // bbport BB_HLE_STATS=1 (diagnostics): how often the compute shader substitutions fire.
         static const bool hle_stats = std::getenv("BB_HLE_STATS") != nullptr;
@@ -553,6 +564,51 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
     for (auto& range : ranges) {
         const u64 size = memory->ClampRangeSize(range.begin, range.end - range.begin);
         std::tie(range.buffer, range.offset) = buffer_cache.ObtainBuffer(range.begin, size, false);
+        if (InPlaceReads::Enabled()) {
+            InPlaceReads::Note(range.begin, size, scheduler.CurrentTick(), 0, 2);
+        }
+        if (const auto* vs = pipeline ? pipeline->GetStages()[u32(Shader::SwStage::Vertex)] : nullptr) {
+            TraceShaderBinding(*vs, range.begin, size, false, buffer_cache, range.buffer);
+            // BB_TRACE_SHADER: the draw's counts and streams too, once a second.
+            static const char* traced = std::getenv("BB_TRACE_SHADER");
+            // BB_TRACE_VERTEX_DATA=1 with BB_TRACE_SHADER: the stream bytes whenever they differ
+            // from the traced shader's previous draw (what it reads when this copy is taken).
+            static const bool trace_data = std::getenv("BB_TRACE_VERTEX_DATA") != nullptr;
+            if (traced && trace_data && std::strtoull(traced, nullptr, 16) == vs->pgm_hash &&
+                size <= 256) {
+                static std::array<u8, 256> last{};
+                static u32 data_prints = 0;
+                std::array<u8, 256> now{};
+                std::memcpy(now.data(), reinterpret_cast<const void*>(range.begin), size);
+                if (now != last && data_prints++ < 3000) {
+                    std::string text;
+                    const auto* f = reinterpret_cast<const float*>(now.data());
+                    for (u64 i = 0; i < size / 4 && i < 24; ++i) {
+                        text += fmt::format(" {:g}", f[i]);
+                    }
+                    std::printf("Vertex data: gpu frame %llu %#llx+%#llx:%s\n",
+                                (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed),
+                                (unsigned long long)range.begin, (unsigned long long)size,
+                                text.c_str());
+                    last = now;
+                }
+            }
+            static std::atomic<u32> printed{0};
+            const u32 second = BbStats::coarse_second.load(std::memory_order_relaxed);
+            if (traced && std::strtoull(traced, nullptr, 16) == vs->pgm_hash &&
+                printed.exchange(second) != second) {
+                std::printf("Draw vs %016llx: %u indices, %u instances, range %#llx+%#llx",
+                            (unsigned long long)vs->pgm_hash, regs.num_indices,
+                            regs.num_instances.NumInstances(), (unsigned long long)range.begin,
+                            (unsigned long long)size);
+                for (const auto& b : guest_buffers) {
+                    std::printf("; stream %#llx size %#llx stride %u",
+                                (unsigned long long)b.base_address,
+                                (unsigned long long)b.GetSize(), b.GetStride());
+                }
+                std::printf("%s\n", ready ? " (prepared)" : "");
+            }
+        }
         needs_barrier |= runtime.IsBufferAccessed(range.buffer, range.offset, size);
     }
 
@@ -599,6 +655,9 @@ void Rasterizer::ResolveIndexBuffer(u32 index_offset) {
     const u32 size = regs.num_indices * index_size;
     const auto [buffer, offset] = buffer_cache.ObtainBuffer(address, size, false);
     needs_barrier |= runtime.IsBufferAccessed(buffer, offset, size);
+    if (InPlaceReads::Enabled()) {
+        InPlaceReads::Note(address, size, scheduler.CurrentTick(), 0, 3);
+    }
     // Tracked as a graphics read after the draw (ResetBindings): an upload into a mirrored index
     // range must not overtake the draw's fixed-function index fetches.
     bound_buffers.emplace_back(buffer, offset, size, false);
@@ -632,7 +691,7 @@ namespace {
 // size, written or read, where the data is (in place: the game's memory over PCIe on a discrete
 // GPU; VRAM; partly), how often; printed every 5 s.
 void TraceShaderBinding(const Shader::Info& stage, VAddr addr, u64 size, bool written,
-                        const VideoCore::BufferCache& cache) {
+                        const VideoCore::BufferCache& cache, const VideoCore::Buffer* bound) {
     static const std::vector<u64> hashes = [] {
         std::vector<u64> out;
         const char* env = std::getenv("BB_TRACE_SHADER");
@@ -651,6 +710,7 @@ void TraceShaderBinding(const Shader::Info& stage, VAddr addr, u64 size, bool wr
     struct Key {
         u64 hash, addr, size;
         bool written;
+        const char* bound;
         auto operator<=>(const Key&) const = default;
     };
     struct Entry {
@@ -661,7 +721,7 @@ void TraceShaderBinding(const Shader::Info& stage, VAddr addr, u64 size, bool wr
     static std::map<Key, Entry> entries;
     static auto report = std::chrono::steady_clock::now();
     std::scoped_lock lk{mutex};
-    auto& entry = entries[{stage.pgm_hash, addr, size, written}];
+    auto& entry = entries[{stage.pgm_hash, addr, size, written, cache.BoundPlace(bound)}];
     ++entry.count;
     entry.place = in_place ? 1 : any_in_place ? 2 : 0;
     const auto now = std::chrono::steady_clock::now();
@@ -671,10 +731,10 @@ void TraceShaderBinding(const Shader::Info& stage, VAddr addr, u64 size, bool wr
     report = now;
     static constexpr const char* Places[] = {"VRAM", "in place", "partly in place"};
     for (const auto& [key, value] : entries) {
-        std::printf("Shader %016llx binds %#llx+%#llx %s, %s, x%llu (uses_dma %d)\n",
+        std::printf("Shader %016llx binds %#llx+%#llx %s, %s, bound: %s, x%llu (uses_dma %d)\n",
                     (unsigned long long)key.hash, (unsigned long long)key.addr,
                     (unsigned long long)key.size, key.written ? "written" : "read",
-                    Places[value.place], (unsigned long long)value.count, int(stage.uses_dma));
+                    Places[value.place], key.bound, (unsigned long long)value.count, int(stage.uses_dma));
     }
     entries.clear();
 }
@@ -811,6 +871,9 @@ void Rasterizer::BindGuestBuffer(const Shader::BufferResource& desc, const Gcn::
         const auto [record, record_offset] =
             buffer_cache.LayerPagedRecord(address, vsharp.GetSize(), desc.is_written);
         NotePagedBinding(stage.pgm_hash, vsharp, desc.is_written);
+        if (!desc.is_written && InPlaceReads::Enabled()) {
+            InPlaceReads::Note(address, vsharp.GetSize(), scheduler.CurrentTick(), stage.pgm_hash, 1);
+        }
         push_data.AddOffset(slot, 0);
         buffer_infos.emplace_back(record->Handle(), record_offset, 32);
         bound_buffers.emplace_back(nullptr, 0, 0, desc.is_written);
@@ -828,7 +891,10 @@ void Rasterizer::BindGuestBuffer(const Shader::BufferResource& desc, const Gcn::
     }
     const auto [buffer, offset] =
         buffer_cache.ObtainBuffer(address, size, desc.is_written, desc.is_formatted);
-    TraceShaderBinding(stage, address, size, desc.is_written, buffer_cache);
+    if (!desc.is_written && InPlaceReads::Enabled()) {
+        InPlaceReads::Note(address, size, scheduler.CurrentTick(), stage.pgm_hash, 0);
+    }
+    TraceShaderBinding(stage, address, size, desc.is_written, buffer_cache, buffer);
     // Bound at the storage alignment below; the shader adds the rest (PushData::buf_offsets).
     const u64 offset_aligned = Common::AlignDown(offset, alignment);
     const u64 adjust = offset - offset_aligned;
@@ -864,7 +930,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 push_data.AddOffset(binding.buffer, 0);
             }
-            buffer_infos.emplace_back(constant_ring->Handle(), ring->offset, ring->size);
+            buffer_infos.emplace_back(RingHandle(ring->ring), ring->offset, ring->size);
         } else if (desc.IsSpecial()) {
             BindSpecialBuffer(desc, stage, binding.buffer, alignment);
         } else {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -387,6 +389,28 @@ void CommandProcessor::ReportStall(const char* why) {
         syscall(SYS_tgkill, getpid(), thread_tid, SIGUSR2);
     }
 #endif
+#ifndef _WIN32
+    // Every thread of the process prints its frames and registers (the runtime's SIGUSR2 handler):
+    // when the guest itself stops (its job system, a lock), they say what each one waits for.
+    // BB_STALL_THREADS=0: the command thread only.
+    static const bool all_threads = [] {
+        const char* env = std::getenv("BB_STALL_THREADS");
+        return !(env && env[0] == '0');
+    }();
+    if (all_threads && !std::getenv("BB_STALL_THREADS_DONE")) {
+        setenv("BB_STALL_THREADS_DONE", "1", 1); // once per run
+        std::fputs("  all threads follow (frames: image-relative, then registers and stack):\n", stdout);
+        std::fflush(stdout);
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator("/proc/self/task", ec)) {
+            const long tid = std::strtol(entry.path().filename().c_str(), nullptr, 10);
+            if (tid > 0 && tid != long(thread_tid)) {
+                syscall(SYS_tgkill, getpid(), tid, SIGUSR2);
+                std::this_thread::sleep_for(std::chrono::milliseconds(15));
+            }
+        }
+    }
+#endif
 }
 
 void CommandProcessor::Run(std::stop_token stop) {
@@ -460,6 +484,11 @@ void CommandProcessor::AfterBatch() {
                 [](Vulkan::Rasterizer& r, const u8*) {
                     r.OnSubmit();
                     r.Flush();
+                    // BB_EXP_FINISH_FRAMES=1 (experiment): the GPU finishes each frame before the next.
+                    static const bool finish = std::getenv("BB_EXP_FINISH_FRAMES") != nullptr;
+                    if (finish) {
+                        r.Finish();
+                    }
                 },
                 &none, 0);
         } else if (rasterizer) {
@@ -576,22 +605,24 @@ void CommandProcessor::SignalGpuIdle(u64 generation) {
 
 // ---- Submissions -----------------------------------------------------------------------------
 
-void CommandProcessor::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
+void CommandProcessor::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb, bool force_copy) {
     Queue& queue = queues[GfxQueueId];
     auto work = std::make_unique<Work>();
     work->queue = GfxQueueId;
     // BB_COPY_GPU_BUFFERS: one copy per submission, alive until it is decoded (the guest reused
     // the memory before this thread got to it: "PM4 type 0" while an area loads).
-    if (EmulatorSettings.IsCopyGpuBuffers()) {
+    if (force_copy || EmulatorSettings.IsCopyGpuBuffers()) {
         auto copy = std::make_shared<SubmittedCopy>();
         copy->data.resize(dcb.size() + ccb.size());
         std::memcpy(copy->data.data(), dcb.data(), dcb.size_bytes());
         std::memcpy(copy->data.data() + dcb.size(), ccb.data(), ccb.size_bytes());
-        copy->guest_dcb = dcb.data();
+        copy->guest_dcb = force_copy ? copy->data.data() : dcb.data();
         copy->dcb_dwords = dcb.size();
-        copy->guest_ccb = ccb.data();
+        copy->guest_ccb = force_copy ? copy->data.data() + dcb.size() : ccb.data();
         copy->ccb_dwords = ccb.size();
         copy->submitted = std::chrono::steady_clock::now();
+        Diagnostics::InspectSubmittedCopy(*copy);
+        Diagnostics::RememberSubmittedCopy(copy);
         dcb = {copy->data.data(), copy->dcb_dwords};
         ccb = {copy->data.data() + copy->dcb_dwords, copy->ccb_dwords};
         work->copy = std::move(copy);

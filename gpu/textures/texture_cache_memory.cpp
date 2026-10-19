@@ -49,9 +49,12 @@ void TextureCache::UpdateMemoryBudget() {
     }
     const s64 local = s64(instance.GetTotalMemoryBudget());
     const s64 threshold = std::min<s64>(local, TargetThreshold);
-    // Pressure: 60 % of the threshold free (at least 1 GB), critical: 20 % (at least 512 MB).
+    // Pressure: 60 % of the threshold free, but on cards under 16 GB 30 % of the budget (at least
+    // 2 GB): 60 % of an 8 GB card's budget had the collector evicting hundreds of images every
+    // 5 s at 3 GB used (#204). Critical: 20 % of the threshold (at least 512 MB).
+    const s64 pressure_free = std::min(threshold * 6 / 10, std::max(local * 3 / 10, s64(2 * GiB)));
     pressure_gc_memory = std::max<u64>(
-        std::min(local - threshold * 6 / 10, local - s64(GiB)), DefaultPressureMemory);
+        std::min(local - pressure_free, local - s64(GiB)), DefaultPressureMemory);
     critical_gc_memory = std::max<u64>(
         std::min(local - threshold * 2 / 10, local - s64(512 * MiB)), DefaultCriticalMemory);
     trigger_gc_memory = u64((local - threshold) / 2);

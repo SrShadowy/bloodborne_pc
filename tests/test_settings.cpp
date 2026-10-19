@@ -17,6 +17,9 @@ static std::string Read(const char* path) {
 }
 
 int main() {
+    assert(!BbSettings::IsHotEffect(6)); // SSR resizes resources on restart.
+    assert(BbSettings::IsHotEffect(7));  // Bloom still switches live.
+    assert(!BbSettings::IsHotEffect(8)); // Startup intros.
     char path[] = "/tmp/bbport-settings-test-XXXXXX";
     const int fd = mkstemp(path);
     assert(fd >= 0);

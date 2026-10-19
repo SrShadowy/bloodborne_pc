@@ -133,9 +133,10 @@ EFFECTS = [
     ("effect_game_aa", "Собственное сглаживание игры", True),
     ("effect_dynamic_shadows", "Тени от динамических источников", True),
     ("effect_ssr", "Отражения SSR (не было в игре)", False),
+    ("effect_bloom", "Свечение (Bloom)", True),
     ("puddle_reflections", "Отражения в лужах", False),
     ("skip_intro", "Пропуск заставок при запуске", True),
-    ("debug_camera", "Свободная камера (Cross + L3 / Space + Z)", False),
+    ("debug_camera", "Свободная камера (Cross + L3 / F + Ctrl)", False),
     ("debug_menu", "Debug menu (левый touchpad / Tab; нужны шрифты)", False),
 ]
 MODEL_LOD = [("Как в игре", "0"), ("Максимальная (-2)", "-2"), ("Ниже (1)", "1"),
@@ -148,8 +149,13 @@ PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
 DRAW_PIPE = [("Гибридный (Рекомендуется)", "2", "Ускорение в игре, стабильность в кат-сценах"),
              ("Включён", "1"),
              ("Выключен", "0", "Стабильнее, стандартный режим")]
-LANGUAGES = [("Английский", "1"), ("Русский", "8"), ("Японский", "0"), ("Французский", "2"),
-             ("Испанский", "3"), ("Немецкий", "4"), ("Итальянский", "5")]
+LANGUAGES = [("Английский", "1"), ("Английский (Великобритания)", "18"), ("Русский", "8"),
+             ("Японский", "0"), ("Французский", "2"), ("Испанский", "3"),
+             ("Испанский (Латинская Америка)", "20"), ("Немецкий", "4"), ("Итальянский", "5"),
+             ("Нидерландский", "6"), ("Португальский", "7"), ("Португальский (Бразилия)", "17"),
+             ("Польский", "16"), ("Турецкий", "19"), ("Корейский", "9"),
+             ("Китайский (упрощённый)", "11"), ("Китайский (традиционный)", "10"),
+             ("Финский", "12"), ("Шведский", "13"), ("Датский", "14"), ("Норвежский", "15")]
 LIVE_RESOLUTION = [("Авто (по видеокарте)", "auto"), ("Выключена (быстрее)", "0"), ("Включена", "1")]
 READBACKS = [("Relaxed", "", "По умолчанию"), ("Выключены", "0", "Быстрее, но лица могут искажаться"),
              ("Precise", "2", "Экспериментально; может зависать при запуске")]
@@ -188,7 +194,9 @@ DEFAULTS = {
     "gpu_profile": False,
     "vk_validation": False,
     "extra_env": "",
-    # Online play (Online page, the online module gpu/bbnet): off by default; shadNet server and The Hunter's Dream.
+    # The GPU by its Vulkan name ("" = the port's choice: a discrete one first).
+    "gpu": "",
+    # Online play (Online page, the online module gpu/bbnet20): off by default.
     "online": False,
     "online_bbsc": True,
     "online_community": online.COMMUNITY_SERVER,
@@ -197,8 +205,12 @@ DEFAULTS = {
     "online_npid": "",
     "online_password": "",
     "online_upnp": True,
-    # Online service (Online page): shadNet keeps working as before; bbhost is
-    # The Hunter's Dream account (bbport_bbhost), its co-op backend comes later.
+    # Online pool: "seamless" (Seamless Hunt + BBSC), "huntersdream" (The Hunter's Dream, bbhost), or "legacy"
+    "online_pool": "seamless",
+    "thd_server": "",
+    "thd_online_id": "",
+    "thd_token": "",
+    # Online service (Online page backwards compat):
     "online_backend": "shadnet",
     "online_bbhost_server": bbhost.DEFAULT_SERVER,
     "aspect": "auto",
@@ -299,9 +311,12 @@ def ngx_libraries(directory):
         return []
 
 
-def online_module():
-    """The online module beside the GPU library (gpu/bbnet; a build without its libraries has none)."""
-    return (PORT_DIR / ("bin" if PACKAGED else "out") / "gpu" / "libbbnet.so").is_file()
+def online_module(pool="seamless"):
+    """The online module beside the GPU library (gpu/bbnet, or gpu/bbnet20 for shadNet / The
+    Hunter's Dream pools; a build without its libraries has none)."""
+    base = PORT_DIR / ("bin" if PACKAGED else "out") / "gpu"
+    name = "libbbnet.so" if pool == "legacy" else "libbbnet20.so"
+    return (base / name).is_file() or (base / "libbbnet.so").is_file() or (base / "libbbnet20.so").is_file()
 
 
 def ini_path():
@@ -395,6 +410,15 @@ def game_environment(s):
     model = s.get("memory_model", "auto")
     if model in ("new", "old"):
         env["BB_PC_MODEL"] = "1" if model == "new" else "0"
+    # The GPU chosen by name: its index in Vulkan's order now (BB_GPU_ID). One not found (taken
+    # out, renamed by a driver update) leaves the choice to the port. BB_GPU_ID from the shell
+    # wins.
+    if s.get("gpu") and "BB_GPU_ID" not in os.environ:
+        from bbport_devices import connected_gpus
+        index = next((index for index, _vendor, _kind, name, _best in connected_gpus()
+                      if name == s["gpu"]), None)
+        if index is not None:
+            env["BB_GPU_ID"] = str(index)
     if s.get("as_0_3"):
         env["BB_AS_0_3"] = "1"
     if s.get("crash_diag"):
@@ -405,7 +429,12 @@ def game_environment(s):
         env["BB_GPU_PROFILE"] = "1"
     if s["vk_validation"]:
         env["BB_VK_VALIDATION"] = "1"
-    if s.get("online") and online_module():
+    pool = "huntersdream" if s.get("online_pool") == "huntersdream" or s.get("online_backend") in ("bbhost", "hosts", "thehuntersdream", "hd") else "seamless"
+    try:
+        has_online_mod = online_module(pool)
+    except TypeError:
+        has_online_mod = online_module()
+    if s.get("online") and has_online_mod:
         server = s["online_server"].strip() or online.SHADNET_SERVER
         community = online.community_address(s["online_community"])
         env["BB_ONLINE"] = "1"
@@ -415,27 +444,37 @@ def game_environment(s):
         env["BB_SHADNET_PASSWORD"] = s["online_password"]
         env["BB_UPNP"] = "1" if s["online_upnp"] else "0"
         env["BB_COMMUNITY_SERVER"] = community
-        # The selected service (plan ONLINE_BBHOST_PLAN §3, §9): shadNet unless the
-        # settings say bbhost; an unknown value is shadNet, the compatible default.
-        backend = "bbhost" if s.get("online_backend") in ("bbhost", "hosts", "thehuntersdream", "hd") else "shadnet"
+        env["BB_NET_GEN"] = "20"
+        backend = "bbhost" if (pool == "huntersdream" or s.get("online_backend") in ("bbhost", "hosts", "thehuntersdream", "hd")) else "shadnet"
         env["BB_ONLINE_BACKEND"] = backend
-        if backend == "bbhost":
-            # The account service's origin; a bad custom address falls back to the
-            # public server (the Online page shows the error in the row itself).
+        if pool == "seamless" and s.get("online_bbsc"):
+            env["BB_BBSC"] = "1"
+        if pool == "huntersdream" or backend == "bbhost":
+            # run.sh turns these into the backend's addresses and the host overrides.
+            env["BB_NET_BACKEND"] = "thd"
+            server_val = s.get("thd_server", "") or s.get("online_bbhost_server", "")
+            env["BB_COMMUNITY_SERVER"] = online.thd_base(server_val)
+            thd_id = s.get("thd_online_id", "")
+            thd_token = s.get("thd_token", "")
+            if not thd_id or not thd_token:
+                try:
+                    import bbport_hosts as hosts
+                    thd_id, thd_token = hosts.load_account(ACCOUNT_FILE)
+                except Exception:
+                    pass
+            env["BB_THD_ONLINE_ID"] = thd_id
+            env["BB_THD_TOKEN"] = thd_token
             try:
-                base = bbhost.server_base(s.get("online_bbhost_server"))
-            except bbhost.BbhostError:
-                base = bbhost.server_base("")
+                import bbport_hosts as hosts
+                base = hosts.server_base(server_val)
+            except Exception:
+                base = "https://thehuntersdream.com:18671"
             scheme, _sep, host = base.partition("://")
             env["BB_HOST_SCHEME"] = scheme
             env["BB_HOST_SERVER"] = host
-            server_domain = host.split(":")[0]
-            env["BB_COMMUNITY_SERVER"] = f"{scheme}://{server_domain}"
-            online_id, token = bbhost.load_account(ACCOUNT_FILE)
-            env["BB_HOST_ONLINE_ID"] = online_id
-            env["BB_HOST_TOKEN"] = token
-        elif s.get("online_bbsc", True):
-            env["BB_BBSC"] = "1"
+            if thd_id and thd_token:
+                env["BB_HOST_ONLINE_ID"] = thd_id
+                env["BB_HOST_TOKEN"] = thd_token
     for item in s["extra_env"].split():
         if "=" in item:
             key, value = item.split("=", 1)

@@ -3,9 +3,11 @@
  *
  * Keyboard layout (Dark Souls III's on PC, with the player's changes; also with a gamepad
  * connected: both drive the game):
- *   WASD left stick, IJKL right stick (the camera), Space Circle (dodge, run), F and Enter Cross
+ *   WASD left stick, IJKL right stick (the camera), Space the dodge (a short Circle press: never a
+ *   run), Left Shift the run (Circle held), Shift + Space the jump (Circle let go and pressed again
+ *   while running), F and Enter Cross
  *   (interact, confirm), Q Triangle (blood vial), E L1 (transform the weapon), Tab and R Square
- *   (the quick item), C R3 (lock-on), Left Ctrl L3, Escape Options (the menu), G left touchpad
+ *   (the quick item), C R3 (lock-on), Left Ctrl L3, Escape Options (the menu; Circle, the way back, while a game menu is open), G left touchpad
  *   (gestures), Backspace right touchpad; the d-pad on 1 (left: the left hand's weapon), 2 (right:
  *   the right hand's), 3 (up), 4 (down) and the arrow keys.
  *   Mouse (once the game window is clicked; F1 or leaving the window releases it): look (the
@@ -298,12 +300,12 @@ enum {
     IN_CROSS, IN_CIRCLE, IN_SQUARE, IN_TRIANGLE, IN_L1, IN_R1, IN_L2, IN_R2, IN_L3, IN_R3,
     IN_OPTIONS, IN_TOUCHPAD, IN_TOUCHPAD_RIGHT, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT,
     IN_MOVE_UP, IN_MOVE_DOWN, IN_MOVE_LEFT, IN_MOVE_RIGHT, IN_LOOK_UP, IN_LOOK_DOWN, IN_LOOK_LEFT,
-    IN_LOOK_RIGHT, IN_COUNT
+    IN_LOOK_RIGHT, IN_SPRINT, IN_DODGE, IN_COUNT
 };
 static const char *const input_names[IN_COUNT]={
     "cross","circle","square","triangle","l1","r1","l2","r2","l3","r3","options","touchpad",
     "touchpad_right","up","down","left","right","move_up","move_down","move_left","move_right",
-    "look_up","look_down","look_left","look_right",
+    "look_up","look_down","look_left","look_right","sprint","dodge",
 };
 static const uint32_t input_buttons[IN_COUNT]={
     BTN_CROSS,BTN_CIRCLE,BTN_SQUARE,BTN_TRIANGLE,BTN_L1,BTN_R1,BTN_L2,BTN_R2,BTN_L3,BTN_R3,
@@ -339,7 +341,7 @@ static void bind_defaults(void) {
     /* The header comment's layout. */
     enum { NONE=-1, SHIFT=SDL_SCANCODE_LSHIFT };
     static const struct { int input; int key; int mod; } keys[]={
-        {IN_CIRCLE,SDL_SCANCODE_SPACE,NONE}, {IN_CROSS,SDL_SCANCODE_F,NONE},
+        {IN_DODGE,SDL_SCANCODE_SPACE,NONE}, {IN_SPRINT,SHIFT,NONE}, {IN_CROSS,SDL_SCANCODE_F,NONE},
         {IN_CROSS,SDL_SCANCODE_RETURN,NONE}, {IN_TRIANGLE,SDL_SCANCODE_Q,NONE},
         {IN_L1,SDL_SCANCODE_E,NONE}, {IN_SQUARE,SDL_SCANCODE_TAB,NONE}, {IN_SQUARE,SDL_SCANCODE_R,NONE},
         {IN_R3,SDL_SCANCODE_C,NONE}, {IN_L3,SDL_SCANCODE_LCTRL,NONE},
@@ -477,7 +479,22 @@ static int mouse_key_down(int code) {
     if (code==MOUSE_WHEEL_DOWN) return wheel_phase[1]==1;
     return (mouse_buttons & SDL_BUTTON_MASK(code-MOUSE_KEY))!=0;
 }
+/* Short taps: a key pressed and released between two pad reads (a 60-100 Hz poll against a light
+ * tap) would never show in SDL_GetKeyboardState. A key-down event watch latches it until the
+ * next read ends (apply_keyboard), so every tap counts for at least one sample. */
+static volatile uint8_t key_latch[SDL_SCANCODE_COUNT];
+static bool key_watch(void *userdata, SDL_Event *e) {
+    (void)userdata;
+    if (e->type==SDL_EVENT_KEY_DOWN && !e->key.repeat && (int)e->key.scancode<SDL_SCANCODE_COUNT)
+        key_latch[e->key.scancode]=1;
+    return true;
+}
+static void key_watch_start(void) {
+    static int started;
+    if (!started && SDL_WasInit(SDL_INIT_VIDEO)) { SDL_AddEventWatch(key_watch,NULL); started=1; }
+}
 static int code_down(const bool *k, int code) {
+    if (code>=0 && code<SDL_SCANCODE_COUNT && key_latch[code]) return 1;
     return code>=MOUSE_KEY ? mouse_key_down(code) : k && k[code];
 }
 /* Whether a chord on `code` (any input's) has its modifier held: the plain bindings of the key
@@ -510,22 +527,113 @@ static int pad_value(SDL_Gamepad *g, int input) {
     return value;
 }
 
-/* key held for the negative / positive direction: the stick all the way, else the gamepad's. */
-static uint8_t key_axis(uint8_t value, int negative, int positive) {
-    return negative || positive ? (uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0)) : value;
+/* The keys as a stick. A digital key would be the stick thrown to its stop at once, and the
+ * diagonal the corner of the square (1.41 long): the game's character then snaps to the new
+ * direction and slips into a run. Here the keys give a direction on the unit circle (a diagonal
+ * is as long as one key), and the stick follows it as a real thumb does: its length ramps
+ * (BB_KEY_RISE_MS 70, BB_KEY_FALL_MS 45) and its angle turns at BB_KEY_TURN_DPS (1100 degrees
+ * a second) the short way round, so a reversal sweeps through the sides, not through a dead
+ * centre. A stick almost at rest takes the new angle at once. */
+typedef struct { float angle, mag; uint64_t last_us; } KeyStick;
+static float key_tunable(const char *name, float def) {
+    const char *env=getenv(name);
+    if (!env || !*env) return def;
+    const float v=(float)atof(env);
+    return v>0 ? v : def;
 }
+static int key_stick(KeyStick *st, uint64_t now, int left, int right, int up, int down, uint8_t *x, uint8_t *y) {
+    static float rise_ms, fall_ms, turn_dps;
+    if (rise_ms==0) {
+        rise_ms=key_tunable("BB_KEY_RISE_MS",70.0f); fall_ms=key_tunable("BB_KEY_FALL_MS",45.0f);
+        turn_dps=key_tunable("BB_KEY_TURN_DPS",1100.0f);
+    }
+    const int tx=(right?1:0)-(left?1:0), ty=(down?1:0)-(up?1:0);
+    float dt=st->last_us && now>st->last_us ? (float)(now-st->last_us)*1e-6f : 0.0f;
+    st->last_us=now;
+    if (dt>0.05f) dt=0.05f;
+    const float target_mag=(tx || ty) ? 1.0f : 0.0f;
+    if (tx || ty) {
+        const float target=atan2f((float)ty,(float)tx);
+        if (st->mag<0.12f) st->angle=target;
+        else {
+            float diff=target-st->angle;
+            while (diff>(float)M_PI) diff-=2.0f*(float)M_PI;
+            while (diff<-(float)M_PI) diff+=2.0f*(float)M_PI;
+            const float step=turn_dps*(float)M_PI/180.0f*dt;
+            st->angle += diff>step ? step : diff<-step ? -step : diff;
+        }
+    }
+    const float rate=target_mag>st->mag ? 1.0f/(rise_ms*1e-3f) : 1.0f/(fall_ms*1e-3f);
+    const float dm=rate*dt;
+    st->mag += target_mag>st->mag ? (target_mag-st->mag<dm ? target_mag-st->mag : dm)
+                                  : -(st->mag-target_mag<dm ? st->mag-target_mag : dm);
+    if (st->mag<0.003f) { st->mag=0; return 0; }
+    const float fx=cosf(st->angle)*st->mag, fy=sinf(st->angle)*st->mag;
+    int vx=128+(int)lroundf(fx*127.0f), vy=128+(int)lroundf(fy*127.0f);
+    *x=(uint8_t)(vx<0 ? 0 : vx>255 ? 255 : vx);
+    *y=(uint8_t)(vy<0 ? 0 : vy>255 ? 255 : vy);
+    return 1;
+}
+static KeyStick move_stick, look_stick;
+/* Circle from the keyboard. Dodge (Space) is a short press whatever the key does: held, it would
+ * be the run (the game tells a tap from a hold by the time). Sprint (Left Shift) holds Circle: the
+ * run. Both together, Space while Shift is held, is the jump: Circle let go for a moment and pressed
+ * again while the run goes on, as a gamepad's B is. While a game menu is open they do nothing, and
+ * Escape is Circle (back) instead of Options. */
+#define DODGE_PULSE_US 90000u
+/* The jump, Shift + Space: the way the player gets it with the keys alone, Space twice while
+ * running: Circle let go, pressed, let go, then held again (the run goes on). One press of it
+ * only let go and pressed once, which stopped the run and gave no jump. BB_JUMP_GAP_MS (70) is
+ * each pause, BB_JUMP_TAP_MS (70) the press between them. */
+static uint64_t dodge_pulse_until, jump_start_us;
+static uint32_t jump_gap_us, jump_tap_us;
+static int dodge_was_down;
+static int keyboard_circle(const bool *k, uint64_t now, int menu) {
+    if (!jump_gap_us) {
+        jump_gap_us=(uint32_t)(key_tunable("BB_JUMP_GAP_MS",70.0f)*1000.0f);
+        jump_tap_us=(uint32_t)(key_tunable("BB_JUMP_TAP_MS",70.0f)*1000.0f);
+    }
+    const int dodge=key_down(k,IN_DODGE), sprint=key_down(k,IN_SPRINT);
+    if (menu) { dodge_was_down=dodge; dodge_pulse_until=jump_start_us=0; return 0; }
+    const int jumping=jump_start_us && now<jump_start_us+2u*jump_gap_us+jump_tap_us;
+    if (dodge && !dodge_was_down && !jumping) {
+        if (sprint) { jump_start_us=now; dodge_pulse_until=0; }
+        else { dodge_pulse_until=now+DODGE_PULSE_US; jump_start_us=0; }
+    }
+    dodge_was_down=dodge;
+    if (jump_start_us && now<jump_start_us+2u*jump_gap_us+jump_tap_us) {
+        const uint64_t t=now-jump_start_us;
+        return t>=jump_gap_us && t<jump_gap_us+jump_tap_us; /* low, the press, low */
+    }
+    return sprint || now<dodge_pulse_until;
+}
+
+
 static void apply_keyboard(PadData *d, const bool *k) {
-    for (int i=IN_CROSS;i<=IN_RIGHT;++i)
-        if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
+    key_watch_start();
+    const int menu=bbgpu_pointer_wanted()!=0;
+    /* The way back in a game menu is Escape; Options opens the menu at other times. A press that
+     * began outside a menu is Options for as long as it is held: the menu it opens must not take
+     * the same press for its way back (it opened and closed at once). */
+    static int options_latched;
+    if (!key_down(k,IN_OPTIONS)) options_latched=0;
+    else if (!menu) options_latched=1;
+    for (int i=IN_CROSS;i<=IN_RIGHT;++i) {
+        if (i==IN_TOUCHPAD || i==IN_TOUCHPAD_RIGHT || !key_down(k,i)) continue;
+        d->buttons |= (i==IN_OPTIONS && menu && !options_latched) ? BTN_CIRCLE : input_buttons[i];
+    }
+    if (keyboard_circle(k,d->timestamp,menu)) d->buttons|=BTN_CIRCLE;
     if (key_down(k,IN_TOUCHPAD)) touch_click(d,0);
     if (key_down(k,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
     if (key_down(k,IN_L2)) d->l2=255;
     if (key_down(k,IN_R2)) d->r2=255;
-    d->left_x=key_axis(d->left_x,key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
-    d->left_y=key_axis(d->left_y,key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
-    d->right_x=key_axis(d->right_x,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT));
-    d->right_y=key_axis(d->right_y,key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
+    /* A gamepad's stick is kept while no key moves it. */
+    key_stick(&move_stick,d->timestamp,key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT),
+              key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN),&d->left_x,&d->left_y);
+    key_stick(&look_stick,d->timestamp,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT),
+              key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN),&d->right_x,&d->right_y);
     extra_pad_apply_walk_modifier(&d->left_x, &d->left_y, k, key_down(k, IN_MOVE_LEFT), key_down(k, IN_MOVE_RIGHT), key_down(k, IN_MOVE_UP), key_down(k, IN_MOVE_DOWN)); // [extra]
+    memset((void *)key_latch,0,sizeof(key_latch));
 }
 
 /* Mouse look: the game turns its camera at a rate set by the right stick, so the stick follows
@@ -549,7 +657,8 @@ static uint8_t look_axis(float value, uint8_t stick, int deadzone) {
  * The stick below only without that hook (another game version, BB_NATIVE_MOUSE=0). */
 #define MOUSE_RAD_PER_PIXEL 0.0015f
 static void apply_mouse_look(PadData *d, double dx, double dy, uint64_t now, int captured) {
-    if (captured && (dx!=0 || dy!=0)) {
+    /* The free camera (patch) takes the mouse through the right stick below. */
+    if (captured && (dx!=0 || dy!=0) && !bbgpu_free_camera()) {
         const float k=MOUSE_RAD_PER_PIXEL*mouse_sensitivity;
         /* The camera's pitch grows as it rises (looking down): the mouse moving down (dy > 0)
            looks down, as the stick pushed down does. */
@@ -686,14 +795,16 @@ int runtime_pad_prompt(const char *name, int prefer_mouse, char *label, int size
     const int cur_layout = bbgpu_get_prompt_layout ? bbgpu_get_prompt_layout() : 0;
     const int device = extra_pad_override_device(cur_layout, prompt_device);
     const Binding b=bindings[input];
+    /* Circle has no key of its own: the way back in a game menu is Escape (Options' key). */
+    const Binding keyboard_b=input==IN_CIRCLE && bindings[input].key_count==0 ? bindings[IN_OPTIONS] : bindings[input];
     const int look=mouse_look;
     SDL_GamepadType type = extra_pad_override_type(cur_layout, prompt_pad_type);
     pthread_mutex_unlock(&lock);
     if (device==2) {
         int key=-1, mouse=-1, key_mod=-1, mouse_mod=-1;
-        for (int i=0;i<b.key_count;++i) {
-            if (b.keys[i]>=MOUSE_KEY) { if (mouse<0) { mouse=b.keys[i]; mouse_mod=b.mods[i]; } }
-            else if (key<0) { key=b.keys[i]; key_mod=b.mods[i]; }
+        for (int i=0;i<keyboard_b.key_count;++i) {
+            if (keyboard_b.keys[i]>=MOUSE_KEY) { if (mouse<0) { mouse=keyboard_b.keys[i]; mouse_mod=keyboard_b.mods[i]; } }
+            else if (key<0) { key=keyboard_b.keys[i]; key_mod=keyboard_b.mods[i]; }
         }
         /* A chord's modifier as a prefix: Shift as its arrow (R2: "⇧Left"). */
         char prefix[16]="";

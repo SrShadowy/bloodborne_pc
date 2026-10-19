@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "common/types.h"
 #include "bbport_guest_hooks.h"
+#include "bbport_settings.h"
 #include "bbport_guest_code.h"
 #include "bbport_heap_sites.h"
 #include "bbport_toggles.h"
+#include "bbport_fx_init_clear.h"
+#include "bbport_effect_flags.h"
+#include "platform/gnm/gnm.h"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <atomic>
@@ -262,6 +267,537 @@ bool InstallCallDetour(u64 offset) {
     WriteJumpOverTrap(address, 0xe8, rel);
     return true;
 }
+/// Game effects switched while the game runs (no restart). The community patches only set them
+/// at start; here the same switches are written live:
+///  - Ambient occlusion (SSAO), motion blur, the game's own anti-aliasing and the shadows of
+///    dynamic lights are bytes of the renderer's options (+0x2968, +0x2969, +0x296a, +0x296e;
+///    the patches change the immediates that set them in the constructor at 0x22c2542, 0x22c2532).
+///    The renderer tests them while it builds each frame. The constructor's tail (0x22c254c)
+///    reports the options' address; written there and on every change.
+///  - Chromatic aberration (0x229faa8) and depth of field (0x21d7bbc) are code the patches
+///    replace: written back and forth here; the game's own bytes are kept as they were found.
+/// BB_HOT_EFFECTS=0: the patches at start as before (patches.py).
+/// The options objects built so far (the game builds about ten at a load, one per render context).
+constexpr std::size_t MaxEffectObjects = 64;
+std::array<std::atomic<u64>, MaxEffectObjects> effects_objects{};
+std::atomic<std::size_t> effects_object_count{0};
+std::atomic<int> effects_applied[BbSettings::EffectCount];
+struct HotCode {
+    int effect;              ///< BbSettings::Effects index
+    u64 offset;
+    std::array<u8, 12> patch; /// the community patch's bytes
+    std::size_t size;
+    bool patch_when_on = false; /// the patch enables the effect (SSR), else disables it
+    bool data = false;          /// a constant in the game's data, not code
+    std::array<u8, 12> original{};
+    bool ready = false;
+};
+/// SSR requires the complete startup patch, including its resource dimensions.
+/// Partial live writes leave a half-size target behind full-size shader accesses.
+std::array<HotCode, 3> hot_code = {{
+    {0, 0x229faa8, {0xc7, 0x83, 0xac, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90}, 12},
+    {1, 0x21d7bbc, {0xe9, 0xdf, 0x00, 0x00, 0x00, 0x90}, 6},
+    {7, 0x21d72f0, {0x31, 0xf6, 0x0f, 0x1f, 0x40, 0x00}, 6}, // "Disable Bloom"
+}};
+struct HotFlag {
+    int effect;
+    std::uint32_t offset;
+};
+constexpr std::array<HotFlag, 4> hot_flags = {{{2, 0x2969}, {3, 0x2968}, {4, 0x296a}, {5, 0x296e}}};
+
+/// Writes `size` bytes of code from the last to the first (the first byte, an opcode, is the
+/// one that makes the new code reachable).
+void WriteHotCode(u64 address, const u8* bytes, std::size_t size, bool data) {
+    if (data) {
+        // A constant: its page keeps the protection it has (read-only data) after the write.
+        int prot = PROT_READ;
+        if (FILE* maps = std::fopen("/proc/self/maps", "r")) {
+            char line[512];
+            while (std::fgets(line, sizeof(line), maps)) {
+                unsigned long long lo = 0, hi = 0;
+                char perms[8] = {};
+                if (std::sscanf(line, "%llx-%llx %7s", &lo, &hi, perms) == 3 && address >= lo && address < hi) {
+                    prot = (perms[0] == 'r' ? PROT_READ : 0) | (perms[1] == 'w' ? PROT_WRITE : 0) |
+                           (perms[2] == 'x' ? PROT_EXEC : 0);
+                    break;
+                }
+            }
+            std::fclose(maps);
+        }
+        const long page_size = sysconf(_SC_PAGESIZE);
+        void* page = reinterpret_cast<void*>(address & ~u64(page_size - 1));
+        const std::size_t span = (address + size) - reinterpret_cast<u64>(page);
+        mprotect(page, span, prot | PROT_WRITE);
+        std::memcpy(reinterpret_cast<void*>(address), bytes, size);
+        mprotect(page, span, prot);
+        return;
+    }
+    const long page_size = sysconf(_SC_PAGESIZE);
+    void* page = reinterpret_cast<void*>(address & ~u64(page_size - 1));
+    const std::size_t span = (address + size) - reinterpret_cast<u64>(page);
+    mprotect(page, span, PROT_READ | PROT_WRITE | PROT_EXEC);
+    auto* p = reinterpret_cast<u8*>(address);
+    for (std::size_t i = size; i-- > 1;) {
+        __atomic_store_n(p + i, bytes[i], __ATOMIC_SEQ_CST);
+    }
+    __atomic_store_n(p, bytes[0], __ATOMIC_SEQ_CST);
+    mprotect(page, span, Core::GuestCodeProtection());
+}
+
+// (counted below)
+extern "C" int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
+
+void ApplyHotEffects(bool force, u64 fresh = 0) {
+    auto& settings = BbSettings::Get();
+    for (auto& code : hot_code) {
+        if (!code.ready) {
+            continue;
+        }
+        const int want = settings.effects[code.effect].load(std::memory_order_relaxed) ? 1 : 0;
+        if (!force && effects_applied[code.effect].load() == want) {
+            continue;
+        }
+        effects_applied[code.effect].store(want);
+        const bool use_patch = (want != 0) == code.patch_when_on;
+        WriteHotCode(ImageBase + code.offset, use_patch ? code.patch.data() : code.original.data(), code.size,
+                     code.data);
+    }
+    const std::size_t count = std::min(effects_object_count.load(std::memory_order_acquire), MaxEffectObjects);
+    std::size_t live_objects = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const u64 object = effects_objects[i].load(std::memory_order_relaxed);
+        const bool is_fresh = object == fresh; // just built: certainly an options object
+        // An object the game has freed since may hold anything: it is written only while its
+        // switches still look like switches (every byte 0 or 1, +0x2968..+0x2970).
+        // Still the options object: its switches look like switches, and the block of constants the
+        // constructor copies from the game's data (32 bytes at +0x2980) is still whole. The game frees
+        // these objects; the memory is reused, and a block of zeros has passed for switches: a write
+        // there damaged the game's heap (Havok's job queue stopped, a black screen).
+        u8 block[0x40]{};
+        // process_vm_readv fails on the game's memory (its pages are protected for the kernel's copy);
+        // the runtime's own map says whether the range is still mapped.
+        if (!runtime_memory_is_mapped(object + 0x2960, sizeof(block))) {
+            continue; // not mapped any more
+        }
+        std::memcpy(block, reinterpret_cast<const void*>(object + 0x2960), sizeof(block));
+        bool plausible = std::memcmp(block + 0x20, reinterpret_cast<const void*>(ImageBase + 0x5128a40), 32) == 0;
+        for (int b = 8; b <= 0x10; ++b) {
+            plausible &= block[b] <= 1;
+        }
+        if (!plausible && !is_fresh) {
+            continue;
+        }
+        ++live_objects;
+        for (const auto& flag : hot_flags) {
+            int want = settings.effects[flag.effect].load(std::memory_order_relaxed) ? 1 : 0;
+            if (flag.effect == 3) {
+                // Menus and auxiliary contexts can deliberately have no SSAO target.
+                // Preserve that restriction instead of overriding the game's safety flag.
+                want = BbEffectFlags::SsaoEnabled(
+                    {reinterpret_cast<const u8*>(object), 0x29a0}, want != 0);
+            }
+            auto* byte = reinterpret_cast<volatile u8*>(object + flag.offset);
+            if (force || *byte != want) {
+                __atomic_store_n(const_cast<u8*>(byte), u8(want), __ATOMIC_RELAXED);
+            }
+        }
+    }
+    static std::atomic<int> told{0};
+    if (force && told.fetch_add(1) < 8) {
+        std::printf("Guest hooks: game effects written to %zu of %zu options objects (the rest are gone)\n",
+                    live_objects, count);
+    }
+}
+
+/// The renderer options object is built (rbx at the constructor's tail): its switches follow the
+/// settings from the start.
+void PS4_SYSV_ABI EffectsConstructed(u64 object) {
+    // Built again at the same place: not counted twice.
+    const std::size_t known = std::min(effects_object_count.load(std::memory_order_acquire), MaxEffectObjects);
+    bool seen = false;
+    for (std::size_t i = 0; i < known; ++i) {
+        seen |= effects_objects[i].load(std::memory_order_relaxed) == object;
+    }
+    if (!seen) {
+        const std::size_t at = effects_object_count.fetch_add(1);
+        if (at < MaxEffectObjects) {
+            effects_objects[at].store(object, std::memory_order_release);
+        } else {
+            effects_object_count.store(MaxEffectObjects);
+        }
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 3) {
+            std::printf("Guest hooks: renderer options at %#llx (the game builds several; game effects "
+                        "follow the settings in each)\n", static_cast<unsigned long long>(object));
+        }
+    }
+    ApplyHotEffects(true, object);
+}
+
+bool InstallHotEffects() {
+    if (const char* env = std::getenv("BB_HOT_EFFECTS"); env && env[0] == '0') {
+        return false;
+    }
+    constexpr u64 offset = 0x22c254c;
+    static constexpr std::array<u8, 11> tail = {0x48, 0xc7, 0x83, 0x77, 0x29, 0x00,
+                                                0x00, 0x00, 0x00, 0x00, 0x00};
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), tail.data(), tail.size())) {
+        return false; // another game version, or the patches changed it
+    }
+    // The code effects: the game's own bytes, taken before anything is written.
+    for (auto& code : hot_code) {
+        const u8* at = reinterpret_cast<const u8*>(ImageBase + code.offset);
+        if (std::memcmp(at, code.patch.data(), code.size) == 0) {
+            continue; // the startup patch is in (or the bytes are the same): left as it is
+        }
+        std::memcpy(code.original.data(), at, code.size);
+        code.ready = true;
+    }
+    Emitter e;
+    e.SaveVolatile();
+    e.Bytes({0x48, 0x89, 0xdf});                           // mov rdi, rbx
+    e.CallAbs(reinterpret_cast<const void*>(&EffectsConstructed));
+    e.RestoreVolatile();
+    for (const u8 b : tail) {
+        e.Bytes({b});                                      // the instruction the jump covers
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00});         // jmp [rip]
+    e.U64(address + tail.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    for (auto& code : hot_code) {
+        if (code.ready) {
+            effects_applied[code.effect].store(-1);
+        }
+    }
+    ApplyHotEffects(true); // the code effects before the game runs
+    return true;
+}
+
+/// The render job pool (found in a hang of Laurence's cinematic, 2026-10-16). Six slots, a queue at
+/// 0x1056920 (take a free slot, sleeping until one is free) and 0x1056990 (give it back); the one
+/// caller of both is the job runner's step at 0x1067f60: take a slot, check the job's resource
+/// (0x2165150), run it, give the slot back. Its two error exits (the resource is not in the state
+/// asked for; the run fails) leave through 0x1068092 returning 1 with the slot still held in
+/// [runner + 0x120], and the next call takes another one: each failed job loses a slot for good.
+/// After six, every thread that needs a slot sleeps for ever (the main thread and Havok's five
+/// workers polled the same empty pool in the dump; six runners held its six slots). The exit now
+/// gives the held slot back before it returns. BB_JOB_SLOT_FIX=0: as the game has it.
+std::atomic<u64> job_slots_released{0};
+
+u64 JobProbeWord(u64 address) {
+    u64 value = 0;
+    if (address && runtime_memory_is_mapped(address, sizeof(value))) {
+        std::memcpy(&value, reinterpret_cast<const void*>(address), sizeof(value));
+    } else if (address) {
+        // Stack locals and image vtables are outside the direct-memory map. Read them safely
+        // through the kernel; returning zero for those hid the failed request's size/function.
+        iovec local{&value, sizeof(value)}, remote{reinterpret_cast<void*>(address), sizeof(value)};
+        if (process_vm_readv(getpid(), &local, 1, &remote, 1, 0) != ssize_t(sizeof(value))) {
+            value = 0;
+        }
+    }
+    return value;
+}
+
+void JobProbeObject(const char* name, u64 address) {
+    std::printf("Job allocation: %s=%#llx", name, static_cast<unsigned long long>(address));
+    if (address) {
+        for (u64 off = 0; off < 0xe0; off += 8) {
+            std::printf(" +%02llx=%#llx", static_cast<unsigned long long>(off),
+                        static_cast<unsigned long long>(JobProbeWord(address + off)));
+        }
+    }
+    std::printf("\n");
+}
+
+void JobProbeRangeHeap(u64 heap) {
+    if (!heap || !runtime_memory_is_mapped(heap, 0xe0)) return;
+    const u64 sentinel = heap + 0x68;
+    u64 node = JobProbeWord(heap + 0x88), free_bytes = 0, largest = 0;
+    unsigned blocks = 0;
+    for (; node && node != sentinel && blocks < 8192; ++blocks) {
+        if (!runtime_memory_is_mapped(node, 0x30)) return;
+        const u64 begin = JobProbeWord(node + 8);
+        const u64 end = JobProbeWord(JobProbeWord(node + 0x18) + 8);
+        if (end < begin || end - begin > (1ull << 36)) return;
+        free_bytes += end - begin;
+        largest = std::max(largest, end - begin);
+        node = JobProbeWord(node + 0x20);
+    }
+    if (node == sentinel) {
+        std::printf("Job allocation: range heap=%#llx live=%llu reported_free=%llu free=%llu "
+                    "largest=%llu free_blocks=%u\n", static_cast<unsigned long long>(heap),
+                    static_cast<unsigned long long>(JobProbeWord(heap + 0xc8)),
+                    static_cast<unsigned long long>(JobProbeWord(heap + 0xd0)),
+                    static_cast<unsigned long long>(free_bytes),
+                    static_cast<unsigned long long>(largest), blocks);
+    }
+}
+
+// Error 9 in 0x2169c30 comes from allocation, not its preceding state check (error 8).
+// Observe only failed retries/growth, preserving every guest register and flag.
+void PS4_SYSV_ABI JobAllocationFailure(u64 tag, const Core::GuestRegisterSnapshot* r) {
+    if (tag == 0 ? r->rcx != 0 : r->r14 != 0) return;
+    static std::atomic<u64> failures{0};
+    const u64 n = failures.fetch_add(1) + 1;
+    if (n > 3 && (n & (n - 1)) != 0) return;
+    const u64 allocator = tag == 0 ? r->r12 : JobProbeWord(r->rbx);
+    const u64 bytes = tag == 0 ? (JobProbeWord(r->rbp - 0x54) & 0xffffffff)
+                              : ((tag == 1 ? r->r15 : JobProbeWord(r->rbx + 0x18) & 0xffffffff) * 24 + 8);
+    std::printf("Job allocation: %llu failures, %s bytes=%llu allocator=%#llx "
+                "allocate_fn=+%#llx\n", static_cast<unsigned long long>(n),
+                tag == 0 ? "resource buffer" : "tracking block",
+                static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(allocator),
+                static_cast<unsigned long long>(JobProbeWord(JobProbeWord(allocator) +
+                                                             (tag == 0 ? 0x18 : 0x58)) - ImageBase));
+    JobProbeObject("allocator", allocator);
+    JobProbeObject("allocator+8 target", JobProbeWord(allocator + 8));
+    JobProbeRangeHeap(JobProbeWord(allocator + 8));
+    JobProbeObject("tracking", r->rbx);
+}
+
+bool InstallJobAllocationProbe() {
+    constexpr std::array<u8, 8> buffer_fail{0xb8, 9, 0, 0, 0, 0x48, 0x85, 0xc9};
+    constexpr std::array<u8, 8> tracking_fail{0xb8, 9, 0, 0, 0, 0x4d, 0x85, 0xf6};
+    bool ok = Core::InstallGuestCodeHook(reinterpret_cast<void*>(ImageBase + 0x26d0dac),
+                                         buffer_fail, 0, JobAllocationFailure);
+    ok &= Core::InstallGuestCodeHook(reinterpret_cast<void*>(ImageBase + 0x26d0e82),
+                                     tracking_fail, 1, JobAllocationFailure);
+    ok &= Core::InstallGuestCodeHook(reinterpret_cast<void*>(ImageBase + 0x26d0ebb),
+                                     tracking_fail, 2, JobAllocationFailure);
+    return ok;
+}
+
+// The resource cache used by 0x26d0d30 has its own backing allocation, independent of the
+// graphics-heap budget patches. At high frame rates its 160 MiB range heap fills before the
+// cinematic's geometry is prepared; failed 20-40 KiB allocations then leave missing SRTs.
+// 320 MiB still failed on 4 MiB requests in the same load; 512 MiB survived that peak and
+// returned to a few hundred live ranges with most of the cache free after streaming finished.
+// Taken from the game's own allocator (2026-10-17) the larger backing starved the memory areas
+// load into: after a trip to the Hunter's Dream and back, map pieces (walls, the city below,
+// distant buildings) were missing. Now the game allocates its 160 MiB as always and the cache
+// gets the port's direct memory past the game's size instead (runtime_extra_direct_map,
+// BB_DMEM_EXTRA_MB): right after the allocation, its result and the size the range heap is
+// set up with are replaced. BB_RENDER_RESOURCE_CACHE_MB=160: the game's cache as it is.
+extern "C" int runtime_extra_direct_map(uint64_t size, uint64_t alignment, void** out);
+void PS4_SYSV_ABI ResourceCacheBacking(u64, const Core::GuestRegisterSnapshot* r) {
+    constexpr u64 native_bytes = 160ull << 20;
+    if ((JobProbeWord(r->r14 + 0x54) & 0xffffffffu) != native_bytes || !r->rax) return;
+    static const std::uint32_t bytes = [] {
+        const char* env = std::getenv("BB_RENDER_RESOURCE_CACHE_MB");
+        const long mb = env ? std::strtol(env, nullptr, 10) : 512;
+        return std::uint32_t(std::clamp(mb, 160l, 512l)) << 20;
+    }();
+    if (bytes == native_bytes) return;
+    void* block = nullptr;
+    if (const int error = runtime_extra_direct_map(bytes, 64ull << 10, &block); error || !block) {
+        std::printf("Render resource cache: no port memory for %u MiB (error %#x): the game's "
+                    "160 MiB\n", bytes >> 20, unsigned(error));
+        return;
+    }
+    // The creation record can be a stack object: not necessarily in the runtime's map.
+    std::memcpy(reinterpret_cast<void*>(r->r14 + 0x54), &bytes, sizeof(bytes));
+    const_cast<Core::GuestRegisterSnapshot*>(r)->rax = reinterpret_cast<u64>(block);
+    std::printf("Render resource cache: %u MiB in the port's memory at %p (the game's 160 MiB "
+                "stays allocated)\n", bytes >> 20, block);
+}
+
+bool InstallResourceCacheSize() {
+    // mov rcx, rbx; mov [rcx + 0x10], rax: right after the allocator's Allocate(size, 16) returns.
+    constexpr std::array<u8, 7> code{0x48, 0x89, 0xd9, 0x48, 0x89, 0x41, 0x10};
+    return Core::InstallGuestCodeHook(reinterpret_cast<void*>(ImageBase + 0x216b21d), code,
+                                      0, ResourceCacheBacking);
+}
+
+void PS4_SYSV_ABI JobSlotFix(u64 runner, u64 queue, std::uint32_t result,
+                            std::uint32_t error) {
+    if (result != 1) {
+        return;
+    }
+    u64& held = *reinterpret_cast<u64*>(runner + 0x120);
+    const u64 item = held;
+    if (!item) {
+        return;
+    }
+    using GiveBack = void(PS4_SYSV_ABI*)(u64 queue, u64 item);
+    reinterpret_cast<GiveBack>(ImageBase + 0x1056990)(queue, item);
+    held = 0;
+    const u64 n = job_slots_released.fetch_add(1) + 1;
+    if (n <= 5 || (n & (n - 1)) == 0) {
+        const u64 job = *reinterpret_cast<const u64*>(runner + 0x118);
+        const u64 resource = job ? *reinterpret_cast<const u64*>(job + 0x40) : 0;
+        std::uint32_t state = 0;
+        if (resource && runtime_memory_is_mapped(resource + 0x38, sizeof(state))) {
+            std::memcpy(&state, reinterpret_cast<const void*>(resource + 0x38), sizeof(state));
+        }
+        std::printf("Guest hooks: a failed render job gave its slot back (%llu so far); "
+                    "error=%u runner=%#llx resource=%#llx state[38..3b]=%08x\n",
+                    static_cast<unsigned long long>(n), error,
+                    static_cast<unsigned long long>(runner),
+                    static_cast<unsigned long long>(resource), state);
+    }
+}
+
+/// The runner is destroyed or reset (0x106798a, 0x1067a5c: `mov qword [rbx + 0x120], 0`) with a slot
+/// still held (a job cancelled in the middle): the slot goes back first. The pool is the global the
+/// game's own 0x1057350 returns.
+void PS4_SYSV_ABI JobSlotDrop(u64 runner) {
+    u64& held = *reinterpret_cast<u64*>(runner + 0x120);
+    const u64 item = held;
+    if (!item) {
+        return;
+    }
+    const u64 queue = *reinterpret_cast<const u64*>(ImageBase + 0x54b8788);
+    if (!queue) {
+        return;
+    }
+    using GiveBack = void(PS4_SYSV_ABI*)(u64 queue, u64 item);
+    reinterpret_cast<GiveBack>(ImageBase + 0x1056990)(queue, item);
+    held = 0;
+    const u64 n = job_slots_released.fetch_add(1) + 1;
+    if (n <= 5 || (n & (n - 1)) == 0) {
+        std::printf("Guest hooks: a render job destroyed with its slot gave it back (%llu so far)\n",
+                    static_cast<unsigned long long>(n));
+    }
+}
+
+bool InstallJobSlotDropHook(u64 offset) {
+    // mov qword [rbx + 0x120], 0
+    static constexpr std::array<u8, 11> code = {0x48, 0xc7, 0x83, 0x20, 0x01, 0x00,
+                                                0x00, 0x00, 0x00, 0x00, 0x00};
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), code.data(), code.size())) {
+        return false;
+    }
+    Emitter e;
+    e.SaveVolatile();
+    e.Bytes({0x48, 0x89, 0xdf});                   // mov rdi, rbx (the runner)
+    e.CallAbs(reinterpret_cast<const void*>(&JobSlotDrop));
+    e.RestoreVolatile();
+    for (const u8 b : code) {
+        e.Bytes({b});
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + code.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    return true;
+}
+
+bool InstallJobSlotFix() {
+    if (const char* env = std::getenv("BB_JOB_SLOT_FIX"); env && env[0] == '0') {
+        return false;
+    }
+    constexpr u64 offset = 0x1068092;
+    // mov rax, [rbx]; cmp rax, [rbp-0x30]: the stack check every exit of that function ends in.
+    static constexpr std::array<u8, 7> code = {0x48, 0x8b, 0x03, 0x48, 0x3b, 0x45, 0xd0};
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), code.data(), code.size())) {
+        return false;
+    }
+    Emitter e;
+    e.SaveVolatile();
+    e.Bytes({0x4c, 0x89, 0xf7});                   // mov rdi, r14 (the runner)
+    // SaveVolatile uses r12 for its stack anchor; the game's r12 (the pool) is
+    // saved at [r12]. Passing the anchor itself silently loses the slot:
+    // GiveBack finds no matching item, then JobSlotFix clears the held pointer.
+    e.Bytes({0x49, 0x8b, 0x34, 0x24});             // mov rsi, [r12] (the saved pool)
+    e.Bytes({0x44, 0x89, 0xfa});                   // mov edx, r15d (the result)
+    e.Bytes({0x89, 0xc1});                         // mov ecx, eax (the original error)
+    e.CallAbs(reinterpret_cast<const void*>(&JobSlotFix));
+    e.RestoreVolatile();
+    for (const u8 b : code) {
+        e.Bytes({b});                              // the two instructions the jump covers
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + code.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    return InstallJobSlotDropHook(0x106798a) & InstallJobSlotDropHook(0x1067a5c) && true;
+}
+
+/// Yebis's blur-kernel sample parameters (GPUTexUtil_GetRecursiveSampleParameters, 0xbbc3e0): its
+/// first argument, the base sample count, must be at least 3 (an assertion the retail build has
+/// compiled out). Game data now and then gives 2; the function then runs on in a state that does
+/// not end (the guest stops submitting: a black screen), so the count is raised to 3 at the entry.
+/// BB_KERNEL_CLAMP=0: not installed.
+bool InstallKernelSampleClamp() {
+    if (const char* env = std::getenv("BB_KERNEL_CLAMP"); env && env[0] == '0') {
+        return false;
+    }
+    constexpr u64 offset = 0xbbc3e0;
+    static constexpr std::array<u8, 6> entry = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}; // push rbp; mov rbp, rsp; push r15
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), entry.data(), entry.size())) {
+        return false;
+    }
+    Emitter e;
+    e.Bytes({0x83, 0xff, 0x03});                   // cmp edi, 3
+    e.Bytes({0x7d, 0x05});                         // jge over
+    e.Bytes({0xbf, 0x03, 0x00, 0x00, 0x00});       // mov edi, 3
+    for (const u8 b : entry) {
+        e.Bytes({b});                              // the instructions the jump covers
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + entry.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    return true;
+}
+
+/// The free camera (the community patch "Restore Debug Camera", Lance McDonald's: hold Cross and
+/// press L3). Its code (0x1de3329..) keeps the mode in the camera manager (r12): byte +0xc4 is 1
+/// while the free camera is on (+0x150 of r13: the player is locked in the first mode, free in
+/// the second). The probe copies r12 out at the check that runs every update of that code
+/// (0x1de344c: cmp byte [r12 + 0xc4], 1); the mouse then drives the free camera's right stick
+/// instead of the follow camera's own turn. Only installed where the patch is in place.
+alignas(8) std::atomic<u64> free_camera_manager{0};
+
+bool InstallFreeCameraProbe() {
+    constexpr u64 offset = 0x1de344c;
+    static constexpr std::array<u8, 9> code = {0x41, 0x80, 0xbc, 0x24, 0xc4, 0x00, 0x00, 0x00, 0x01};
+    const u64 address = ImageBase + offset;
+    if (std::memcmp(reinterpret_cast<const void*>(address), code.data(), code.size())) {
+        return false; // the patch is off (or other code there)
+    }
+    Emitter e;
+    e.Bytes({0x9c, 0x50});                         // pushfq; push rax
+    e.Bytes({0x48, 0xb8});                         // movabs rax, &free_camera_manager
+    e.U64(reinterpret_cast<u64>(&free_camera_manager));
+    e.Bytes({0x4c, 0x89, 0x20});                   // mov [rax], r12
+    e.Bytes({0x58, 0x9d});                         // pop rax; popfq
+    for (const u8 b : code) {
+        e.Bytes({b});                              // the check itself
+    }
+    e.Bytes({0xff, 0x25, 0x00, 0x00, 0x00, 0x00}); // jmp [rip]
+    e.U64(address + code.size());
+    const u64 stub = PlaceStub(e);
+    std::uint32_t rel = 0;
+    if (!stub || !Rel32To(address + 5, stub, rel)) {
+        return false;
+    }
+    WriteJumpOverTrap(address, 0xe9, rel);
+    return true;
+}
+
 /// Aspect ratio on the fly. The camera manager (0x1436b..) copies the active camera's projection
 /// parameters into the current camera every frame (+0x50 vertical field of view, +0x54 aspect
 /// ratio, +0x58 near, +0x5c far: four plain copies, and a blend of two cameras, one of them per
@@ -1260,6 +1796,49 @@ bool Patch(u64 address, const unsigned char* expected, std::size_t size) {
     mprotect(page, span, Core::GuestCodeProtection());
     return true;
 }
+
+void PS4_SYSV_ABI FxInitClear(void* context, void* state, void* texture, const float* color) {
+    if (gettid() == getpid() && texture && color &&
+        runtime_memory_is_mapped(reinterpret_cast<u64>(texture) + 0x10, 11 * sizeof(u32))) {
+        std::array<u32, 11> target;
+        std::memcpy(target.data(), static_cast<const u8*>(texture) + 0x10, sizeof(target));
+        const auto clear = BbFxInit::Plan(target, std::span{color, 4});
+        if (clear && runtime_memory_is_mapped(clear->address, clear->bytes) &&
+            BbGnm::SubmitFxInitZero(clear->address, clear->bytes)) {
+            static u64 count = 0; // main thread only
+            if (++count <= 3 || (count & (count - 1)) == 0)
+                std::printf("FX initialization: %llu targets cleared through private commands "
+                            "(%#llx +%u bytes)\n", (unsigned long long)count,
+                            (unsigned long long)clear->address, clear->bytes);
+            return;
+        }
+    }
+    using NativeClear = void(PS4_SYSV_ABI *)(void*, void*, void*, const float*);
+    reinterpret_cast<NativeClear>(ImageBase + 0x2168630)(context, state, texture, color);
+}
+
+bool InstallFxInitClear() {
+    if (const char* env = std::getenv("BB_FX_INIT_CLEAR"); env && env[0] == '0') return false;
+    // Only the three initialization calls in 0xebb960; regular clears retain the game's path.
+    constexpr std::array<CallSite, 3> sites{{
+        {0xebbc86, {0xe8, 0xa5, 0xc9, 0x2a, 0x01}},
+        {0xebbca4, {0xe8, 0x87, 0xc9, 0x2a, 0x01}},
+        {0xebbcc2, {0xe8, 0x69, 0xc9, 0x2a, 0x01}},
+    }};
+    for (const auto& site : sites)
+        if (std::memcmp(reinterpret_cast<const void*>(ImageBase + site.offset), site.code, 5))
+            return false;
+    Emitter e;
+    e.JmpAbs(reinterpret_cast<u64>(&FxInitClear));
+    const u64 stub = PlaceStub(e);
+    if (!stub) return false;
+    for (const auto& site : sites) {
+        std::uint32_t rel = 0;
+        if (!Rel32To(ImageBase + site.offset + 5, stub, rel)) return false;
+        WriteJumpOverTrap(ImageBase + site.offset, 0xe8, rel);
+    }
+    return true;
+}
 } // namespace
 
 void Install(RangeCallback on_gpu_range_allocated) {
@@ -1272,18 +1851,21 @@ void Install(RangeCallback on_gpu_range_allocated) {
     action.sa_flags = SA_SIGINFO | SA_NODEFER;
     sigemptyset(&action.sa_mask);
     sigaction(SIGTRAP, &action, &previous_action);
+    // Only the PC memory model needs notifications about GPU allocations and resource copies.
+    // The remaining hooks (including the loading/cutscene fixes) are shared by both models.
+    const bool memory_hooks =
+        on_gpu_range_allocated != nullptr && !std::getenv("BB_EXP_NO_MEMORY_HOOKS");
     int patched = 0;
     for (const auto& site : MemcpySites) {
-        patched += Patch(ImageBase + site.offset, site.code, sizeof(site.code));
+        patched += memory_hooks && Patch(ImageBase + site.offset, site.code, sizeof(site.code));
     }
-    std::printf("Guest hooks: %d of %zu resource copy sites tell the GPU side of their writes\n",
-                patched, MemcpySites.size());
     on_range_allocated = on_gpu_range_allocated;
-    const bool allocator = Patch(ImageBase + AllocReturn, AllocReturnCode, sizeof(AllocReturnCode));
+    const bool allocator =
+        memory_hooks && Patch(ImageBase + AllocReturn, AllocReturnCode, sizeof(AllocReturnCode));
     // BB_HEAP_HOOKS=0 (bisecting): the heap's ranges are not reported.
     const char* heap_env = std::getenv("BB_HEAP_HOOKS");
-    const bool heap_hooks = !heap_env || heap_env[0] != '0';
-    if (BbStats::enabled) {
+    const bool heap_hooks = memory_hooks && (!heap_env || heap_env[0] != '0');
+    if (memory_hooks && BbStats::enabled) {
         Patch(ImageBase + CollectorEntry, CollectorEntryCode, sizeof(CollectorEntryCode));
     }
     int heap_sites = 0;
@@ -1293,9 +1875,16 @@ void Install(RangeCallback on_gpu_range_allocated) {
         }
         heap_sites += Patch(ImageBase + site, HeapAllocReturnCode, sizeof(HeapAllocReturnCode));
     }
-    std::printf("Guest hooks: GPU heap allocations seen at %d of %zu call sites\n", heap_sites,
-                HeapAllocReturns.size());
-    std::printf("Guest hooks: GPU memory allocator %s\n", allocator ? "tells the GPU side of new ranges" : "not found");
+    if (memory_hooks) {
+        std::printf("Guest hooks: %d of %zu resource copy sites tell the GPU side of their writes\n",
+                    patched, MemcpySites.size());
+        std::printf("Guest hooks: GPU heap allocations seen at %d of %zu call sites\n", heap_sites,
+                    HeapAllocReturns.size());
+        std::printf("Guest hooks: GPU memory allocator %s\n",
+                    allocator ? "tells the GPU side of new ranges" : "not found");
+    } else {
+        std::printf("Guest hooks: none for the GPU memory (this memory model keeps copies)\n");
+    }
     const bool task_alloc = Patch(ImageBase + TaskAllocSite, TaskAllocCode, sizeof(TaskAllocCode));
     std::printf("Guest hooks: task allocator null-guard %s\n", task_alloc ? "active" : "not found");
     // Native detours over the traps just placed (BB_GUEST_HOOK_TRAPS=1 keeps the traps).
@@ -1313,6 +1902,21 @@ void Install(RangeCallback on_gpu_range_allocated) {
             }
         }
         const int aspect_sites = InstallCameraAspectHooks();
+        std::printf("Guest hooks: render job slot leak fix %s\n",
+                    InstallJobSlotFix() ? "on" : "not installed");
+        std::printf("Guest hooks: job allocation failure probe %s\n",
+                    InstallJobAllocationProbe() ? "on" : "not installed");
+        std::printf("Guest hooks: render resource cache size fix %s\n",
+                    InstallResourceCacheSize() ? "on" : "not installed");
+        std::printf("Guest hooks: FX initialization context race fix %s\n",
+                    InstallFxInitClear() ? "on" : "off (BB_FX_INIT_CLEAR=0 or unmatched code)");
+        std::printf("Guest hooks: blur-kernel sample count clamp %s\n",
+                    InstallKernelSampleClamp() ? "on" : "not installed");
+        std::printf("Guest hooks: game effects switched live %s\n",
+                    InstallHotEffects() ? "on (no restart)" : "off (startup patches)");
+        if (InstallFreeCameraProbe()) {
+            std::printf("Guest hooks: free camera probe on (the mouse drives it)\n");
+        }
         const int marker_places = InstallMarkerHooks();
         if (const char* env = std::getenv("BB_HUD_ANCHOR"); env && env[0] == '0') hud_anchor_on = false;
         const bool hud_hooks = InstallViewportHook() && InstallHudHook();
@@ -1359,6 +1963,14 @@ void Install(RangeCallback on_gpu_range_allocated) {
     if (const char* env = std::getenv("BB_HEAP_SITES"); env && env[0] == '1') {
         Patch(ImageBase + ReleaseCheck, ReleaseCheckCode, sizeof(ReleaseCheckCode));
     }
+}
+void ApplyGameEffects() {
+    ApplyHotEffects(false);
+}
+
+bool FreeCameraActive() {
+    const u64 manager = free_camera_manager.load(std::memory_order_relaxed);
+    return manager != 0 && *reinterpret_cast<const volatile u8*>(manager + 0xc4) == 1;
 }
 std::uint64_t CameraState() {
     return camera_state.load(std::memory_order_relaxed);

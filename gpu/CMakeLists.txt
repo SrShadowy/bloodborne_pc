@@ -294,6 +294,12 @@ target_include_directories(ui-composition-test PRIVATE ..)
 add_executable(cp-decoder-test EXCLUDE_FROM_ALL ../tests/test_cp_decoder.cpp cp/cp_decoder.cpp)
 target_compile_options(cp-decoder-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(cp-decoder-test PRIVATE cp)
+add_executable(fx-init-clear-test EXCLUDE_FROM_ALL ../tests/test_fx_init_clear.cpp cp/cp_decoder.cpp)
+target_compile_options(fx-init-clear-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(fx-init-clear-test PRIVATE . shim)
+add_executable(effect-flags-test EXCLUDE_FROM_ALL ../tests/test_effect_flags.cpp)
+target_compile_options(effect-flags-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(effect-flags-test PRIVATE shim)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp
     shim/bbport_settings.cpp
     ../extra/management/i18n/bbport_strings.cpp)
@@ -376,6 +382,7 @@ if (BB_NET)
     if (Protobuf_FOUND AND nlohmann_json_FOUND AND OpenSSL_FOUND AND ZLIB_FOUND AND
         MINIUPNPC_INCLUDE AND MINIUPNPC_LIBRARY)
         add_subdirectory(bbnet)
+        add_subdirectory(bbnet20)
         # hosts transport test (tests/test_hosts_http.cpp): an in-process httplib server
         # plays the Hunter's Dream on 127.0.0.1 — no network, no Vulkan, no game.
         # Build it explicitly: ninja -C out/gpu hosts-http-test && out/gpu/hosts-http-test
@@ -425,3 +432,9 @@ add_executable(shader-corpus-test EXCLUDE_FROM_ALL ../tests/test_shader_corpus.c
 target_include_directories(shader-corpus-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_options(shader-corpus-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(shader-corpus-test PRIVATE bbgpu)
+
+add_executable(srt-walker-fault-test EXCLUDE_FROM_ALL ../tests/test_srt_walker_fault.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(srt-walker-fault-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
+target_compile_options(srt-walker-fault-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_link_libraries(srt-walker-fault-test PRIVATE bbgpu)

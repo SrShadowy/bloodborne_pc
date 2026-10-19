@@ -7,7 +7,23 @@ from bbport_i18n import tr
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+
+def open_url(url):
+    """Opens url in the user's browser: GIO, then Python's webbrowser (xdg-open and the like);
+    True when one of them took it."""
+    try:
+        if Gio.AppInfo.launch_default_for_uri(url, None):
+            return True
+    except GLib.Error:
+        pass
+    try:
+        import webbrowser
+        return bool(webbrowser.open(url))
+    except Exception:
+        return False
+
 
 
 def flat_button(icon, tooltip, handler):

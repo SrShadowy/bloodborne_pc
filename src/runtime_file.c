@@ -19,7 +19,7 @@
 #include <sys/stat.h>
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define MAX_FILES 1024
-#define MAX_MOUNTS 16
+#define MAX_MOUNTS 64 /* app0, 16 save data slots, 16 add-ons and the rest */
 
 typedef struct { int64_t sec, nsec; } GuestTimespec;
 typedef struct {

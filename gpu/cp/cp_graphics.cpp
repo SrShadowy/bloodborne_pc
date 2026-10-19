@@ -3,6 +3,7 @@
 // and the constant engine's buffer beside it.
 
 #include <chrono>
+#include <thread>
 #include <cstring>
 
 #include <sys/resource.h>
@@ -93,6 +94,27 @@ bool Pipelined(Op op) {
     }
 }
 
+} // namespace
+
+
+namespace {
+/// BB_CE_WATCH=addr (diagnostics): constant RAM dumps and WRITE_DATA packets over that address.
+void WatchCommandWrite(const char* what, VAddr address, u64 bytes, const void* data) {
+    static const VAddr watched = [] {
+        const char* env = std::getenv("BB_CE_WATCH");
+        return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+    }();
+    static std::atomic<u32> printed{0};
+    if (!watched || watched < address || watched >= address + bytes ||
+        printed.fetch_add(1, std::memory_order_relaxed) >= 3000) {
+        return;
+    }
+    const auto* f = static_cast<const float*>(data) + (watched - address) / 4;
+    std::printf("CE watch: gpu frame %llu %s %#llx+%llu: %g %g %g %g %g %g\n",
+                (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed), what,
+                (unsigned long long)address, (unsigned long long)bytes, f[0], f[1], f[2], f[3],
+                f[4], f[5]);
+}
 } // namespace
 
 // ---- Submission start and end ----------------------------------------------------------------
@@ -197,11 +219,53 @@ CommandProcessor::Status CommandProcessor::RunGraphics(Work& work) {
             continue;
         }
         if (type != 3) {
+            // The game may still be writing this buffer (a packet written after the walk began):
+            // it is read again for a few milliseconds before it counts as bad. A buffer that stays
+            // bad is reported as before, with the time it was waited.
+            {
+                static const long wait_us = [] {
+                    const char* env = std::getenv("BB_PM4_WAIT_US");
+                    return env ? std::atol(env) : 20000L;
+                }();
+                const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(wait_us);
+                while (*level.at >> 30 != 3 && *level.at >> 30 != 2 &&
+                       std::chrono::steady_clock::now() < until) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(50));
+                }
+                if (*level.at >> 30 == 3 || *level.at >> 30 == 2) {
+                    std::printf("PM4: the dword at %p was not a packet header at first, now %#x (the "
+                                "game was still writing)\n", static_cast<const void*>(level.at), *level.at);
+                    continue;
+                }
+            }
+            // The packet before was walked with another header than memory holds now: the game wrote
+            // it again after (or while) we read it, the tail of its body counted as the next packets.
+            // A register-setting packet is walked again with the header as it is now (setting them
+            // twice is the same as once). BB_PM4_RECOVER=0: stop as before.
+            static const bool recover = [] {
+                const char* env = std::getenv("BB_PM4_RECOVER");
+                return !(env && env[0] == '0');
+            }();
+            if (recover && level.prev_at && level.recoveries < 4 && *level.prev_at != level.prev_header) {
+                const Op prev_op = Header{level.prev_header}.Opcode();
+                if (prev_op == Op::SetShReg || prev_op == Op::SetContextReg ||
+                    prev_op == Op::SetUconfigReg) {
+                    std::printf("PM4: the header at %p changed after it was walked (%#x, now %#x): the packet "
+                                "is walked again\n", static_cast<const void*>(level.prev_at),
+                                level.prev_header, *level.prev_at);
+                    ++level.recoveries;
+                    level.at = level.prev_at;
+                    level.prev_at = nullptr;
+                    continue;
+                }
+            }
             Diagnostics::ReportBadPacket(reinterpret_cast<uintptr_t>(level.begin),
                                          size_t(level.end - level.begin), level.at, work.seq,
-                                         level.depth);
+                                         level.depth, work.copy.get());
             UNREACHABLE_MSG("PM4 type {} packet ({:#x})", type, header);
         }
+        level.prev_at = level.at;
+        level.prev_header = header;
         const u32 body_words = Header{header}.BodyWords();
         if (level.at + 1 + body_words > level.end) {
             LOG_ERROR(Render, "PM4 packet past the end of its buffer ({} dwords left)",
@@ -465,6 +529,7 @@ CommandProcessor::Step CommandProcessor::Graphics(Work& work, Level& level, cons
             BbCeStats::NoteWrite(BbCeStats::WriteData, address, bytes);
         }
         BbWriteLog::NoteIntent(address, values, bytes, BbWriteLog::WriteDataIntent);
+        WatchCommandWrite("WriteData", address, bytes, values);
         if (rasterizer->RunInOrder(&Tasks::WriteDataTask, packet, (body_words + 1) * sizeof(u32),
                                    BbToggle::PipelinedMemoryWrites, false)) {
             NotePendingWrite(address, values, bytes);
@@ -524,6 +589,18 @@ CommandProcessor::Step CommandProcessor::Graphics(Work& work, Level& level, cons
     case Op::WaitOnCeCounter:
         while (cblock.ce_count <= cblock.de_count && work.ce_started && !work.ce.Done()) {
             RunConstantEngine(work);
+        }
+        // BB_CE_WAIT_LOG=1 (diagnostics): a wait the constant engine did not satisfy (its buffer
+        // ended or never started): the draws after it read constants not dumped for them.
+        if (cblock.ce_count <= cblock.de_count) {
+            static const bool log = std::getenv("BB_CE_WAIT_LOG") != nullptr;
+            static std::atomic<u32> printed{0};
+            if (log && printed.fetch_add(1, std::memory_order_relaxed) < 2000) {
+                std::printf("CE wait unmet: gpu frame %llu ce %u de %u started %d done %d ccb %zu\n",
+                            (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed),
+                            cblock.ce_count, cblock.de_count, int(work.ce_started),
+                            int(work.ce.Done()), work.ccb.size());
+            }
         }
         break;
     case Op::StrmoutBufferUpdate:
@@ -881,6 +958,7 @@ CommandProcessor::Status CommandProcessor::RunConstantEngine(Work& work) {
             if (rasterizer) {
                 rasterizer->WaitForPendingReads(address, bytes);
             }
+            WatchCommandWrite("DumpConstRam", address, bytes, from);
             BbFreeCheck::Check(address, bytes, from, BbFreeCheck::ConstRam);
             std::memcpy(reinterpret_cast<void*>(address), from, bytes);
             // No write tracking: the caches hear of it (in order, on the recording thread).

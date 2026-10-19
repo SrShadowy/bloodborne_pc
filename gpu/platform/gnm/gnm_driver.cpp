@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "bbport_gnm_hooks.h"
+#include "bbport_fx_init_clear.h"
 #include "bbport_heap_sites.h"
 #include "bbport_timeline.h"
 #include "bbport_toggles.h"
@@ -57,6 +58,15 @@ extern "C" std::uint64_t runtime_heap_growths(void);
 
 
 namespace BbGnm {
+
+bool SubmitFxInitZero(u64 address, u32 bytes) {
+    if (!liverpool || !bytes || bytes > 32768 || (bytes & 3) || (address & 3)) return false;
+    const auto commands = BbFxInit::Commands({address, bytes});
+    // This enters the graphics queue in order, with no register changes. The queue owns its
+    // copy independently of BB_COPY_GPU_BUFFERS; the initializer may return immediately.
+    liverpool->SubmitGfx(commands, {}, true);
+    return true;
+}
 
 using namespace Pm4;
 using OrbisKernelEqueue = BbKernel::EqueueHandle;

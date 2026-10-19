@@ -122,6 +122,9 @@ public:
     /// memory with the CPU (a constant RAM dump), waits until the recording thread has run the
     /// queued packets that read those bytes (their buffer bindings, DMA), not all of them.
     void WaitForPendingReads(VAddr address, u64 size);
+    /// Stage A, the game's memory in place: waits until the GPU has run `packet` (drawn reading in
+    /// place what a CPU write is about to replace), when it has not yet.
+    void WaitForInPlaceReads(u64 packet);
     /// NoteCommandWrite for a write made on stage A: handed to the recording thread in order (a copy
     /// of the bytes) instead of draining it first.
     void NoteCommandWriteInOrder(VAddr addr, const void* data, u64 size);
@@ -280,6 +283,18 @@ public:
 
     u64 Flush();
     void Finish();
+    /// BB_PASS_DUMP (diagnostics): rows of chosen render targets at each display pass.
+    void DumpPassImages(char tag);
+    /// BB_TRACE_GPU_INPUTS (diagnostics): the traced draw's buffer ranges, dumped at the display pass.
+    void DumpTracedInputs();
+    struct TracedRange {
+        vk::Buffer buffer;
+        vk::DeviceSize offset, size;
+    };
+    std::vector<TracedRange> traced_inputs;
+    u64 traced_inputs_frame = 0;
+    /// BB_EXP_FLIP_LAG (recording thread, at a flip): waits for the GPU to finish the frame before.
+    void WaitPreviousFrame();
     void OnSubmit();
 
     PipelineCache& GetPipelineCache() {
@@ -403,7 +418,8 @@ private:
     static void RunDrawPacket(void* rasterizer, const u8* packet, u32 size);
     struct RingBinding;
     void CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
-                             boost::container::static_vector<RingBinding, Shader::NUM_BUFFERS>& out);
+                             boost::container::static_vector<RingBinding, Shader::NUM_BUFFERS>& out,
+                             const Gcn::ComputeProgram* cs = nullptr);
     void PrintPipeStats();
     /// The registers of the draw being recorded: stage B's copy there, else Liverpool's.
     const Gcn::Regs& Regs() const;
@@ -483,6 +499,9 @@ private:
     void EmitIndexBuffer();
 
     void ResetBindings(bool is_compute);
+    /// bbport BB_DRAW_WATCH=1 (diagnostics): a draw whose viewport, targets or textures differ from
+    /// what the same shaders and target had before, for one frame.
+    void WatchDraw(const GraphicsPipeline* pipeline, const RenderState& state);
 
     bool IsComputeMetaClear(const Pipeline* pipeline);
     bool IsComputeImageCopy(const Pipeline* pipeline, bool dry_run = false);
@@ -658,9 +677,19 @@ private:
     struct RingBinding {
         u32 index;  ///< buffer resource of the stage
         u32 size;
-        u64 offset; ///< in the ring
+        u64 offset; ///< in the ring; RingPending / RingNotCopied with resolve workers
         VAddr address;
+        u32 ring;   ///< 0: stage A's constant_ring, 1 + n: resolve worker n's
+        u32 always_note; ///< resolve workers: note the read even when copied (HLE compute)
     };
+    static constexpr u64 RingPending = ~0ull;    ///< stage A left the copy to a resolve worker
+    static constexpr u64 RingNotCopied = ~1ull;  ///< the worker left it to stage B (ObtainBuffer)
+    /// Stage 2 (resolve workers): checks and copies the constants stage A left pending in a packet.
+    static void ResolvePacket(void* context, u8* packet, u32 size, u64 number, u32 worker);
+    std::vector<std::unique_ptr<ConstantRing>> worker_rings; ///< one per resolve worker
+    [[nodiscard]] vk::Buffer RingHandle(u32 ring) const {
+        return ring == 0 ? constant_ring->Handle() : worker_rings[ring - 1]->Handle();
+    }
     /// Stage A: the newest draw pipe packet that reads guest memory, hashed per granule: 256 bytes
     /// for bindings up to 4 KiB, 16 KiB up to 256 KiB, 1 MiB above (a note costs a few granules,
     /// a lookup checks all three). A collision only makes a write wait longer.
@@ -670,33 +699,40 @@ private:
         static constexpr u64 Shifts[4] = {8, 14, 20, 23};
         static constexpr u64 Limits[3] = {4_KB, 256_KB, 4_MB};
         static constexpr u32 Bits = 16;
-        std::array<std::vector<u64>, 4> tables{
-            std::vector<u64>(1u << Bits), std::vector<u64>(1u << Bits),
-            std::vector<u64>(1u << Bits), std::vector<u64>(1u << Bits)};
+        // Atomic: resolve workers note reads and look up writes while stage A notes them.
+        std::array<std::vector<std::atomic<u64>>, 4> tables{
+            std::vector<std::atomic<u64>>(1u << Bits), std::vector<std::atomic<u64>>(1u << Bits),
+            std::vector<std::atomic<u64>>(1u << Bits), std::vector<std::atomic<u64>>(1u << Bits)};
         static u64 Slot(u64 granule, u32 level) {
             return ((granule * 4 + level) * 0x9E3779B97F4A7C15ull) >> (64 - Bits);
         }
         /// Ranges past Limits[2] (another game's vertex buffers span whole heaps, the same few every
-        /// draw): one entry each while they repeat; one pushed out goes into the tables.
+        /// draw): one entry each while they repeat; one pushed out goes into the tables first.
+        /// Written by stage A only.
         struct Big {
-            VAddr begin = 0, end = 0;
-            u64 packet = 0;
+            std::atomic<VAddr> begin{0}, end{0};
+            std::atomic<u64> packet{0};
         };
         std::array<Big, 16> big{};
         u32 big_next = 0;
         void Note(VAddr address, u64 size, u64 packet) {
             if (size > Limits[2]) {
                 for (auto& b : big) {
-                    if (b.begin == address && b.end == address + size) {
-                        b.packet = std::max(b.packet, packet);
+                    if (b.begin.load(std::memory_order_relaxed) == address &&
+                        b.end.load(std::memory_order_relaxed) == address + size) {
+                        b.packet.store(std::max(b.packet.load(std::memory_order_relaxed), packet),
+                                       std::memory_order_relaxed);
                         return;
                     }
                 }
                 auto& out = big[big_next++ % big.size()];
-                if (out.end != 0) {
-                    NoteTables(out.begin, out.end - out.begin, out.packet);
+                if (const VAddr end = out.end.load(std::memory_order_relaxed); end != 0) {
+                    const VAddr begin = out.begin.load(std::memory_order_relaxed);
+                    NoteTables(begin, end - begin, out.packet.load(std::memory_order_relaxed));
                 }
-                out = {address, address + size, packet};
+                out.packet.store(packet, std::memory_order_relaxed);
+                out.begin.store(address, std::memory_order_relaxed);
+                out.end.store(address + size, std::memory_order_release);
                 return;
             }
             NoteTables(address, size, packet);
@@ -706,27 +742,41 @@ private:
             auto& table = tables[level];
             for (u64 g = address >> Shifts[level]; g <= (address + size - 1) >> Shifts[level];
                  ++g) {
-                u64& slot = table[Slot(g, level)];
-                slot = std::max(slot, packet);
+                auto& slot = table[Slot(g, level)];
+                u64 seen = slot.load(std::memory_order_relaxed);
+                while (seen < packet &&
+                       !slot.compare_exchange_weak(seen, packet, std::memory_order_relaxed)) {
+                }
             }
         }
         u64 Newest(VAddr address, u64 size) const {
             u64 newest = 0;
             for (const auto& b : big) {
-                if (b.begin < address + size && address < b.end) {
-                    newest = std::max(newest, b.packet);
+                if (b.begin.load(std::memory_order_relaxed) < address + size &&
+                    address < b.end.load(std::memory_order_acquire)) {
+                    newest = std::max(newest, b.packet.load(std::memory_order_relaxed));
                 }
             }
             for (u32 level = 0; level < 4; ++level) {
                 for (u64 g = address >> Shifts[level]; g <= (address + size - 1) >> Shifts[level];
                      ++g) {
-                    newest = std::max(newest, tables[level][Slot(g, level)]);
+                    newest = std::max(newest,
+                                      tables[level][Slot(g, level)].load(std::memory_order_relaxed));
                 }
             }
             return newest;
         }
     };
     PendingReads pending_reads;
+    /// Stage A: packets whose constants a resolve worker copies, by the bytes they read (a
+    /// constant RAM dump over them waits for the workers first: WaitForPendingReads).
+    PendingReads pending_resolve;
+    /// Stage B: the scheduler tick each recent packet was recorded in (packet number & mask).
+    struct PacketTick {
+        std::atomic<u64> packet{0}, tick{0};
+    };
+    std::unique_ptr<std::array<PacketTick, 1u << 16>> packet_ticks =
+        std::make_unique<std::array<PacketTick, 1u << 16>>();
     PendingReads pending_write_table; ///< the same per granule for GPU writes queued (NotePendingGpuWrite)
     /// Copies into guest memory by the command processor since the GPU last ran everything
     /// (a ring; `copies_begin`..`copies_end` bounds them all, empty when begin >= end).
@@ -739,6 +789,8 @@ private:
     void SyncProgramWrites(VAddr address, u64 size);
     u64 untracked_reads_packet = 0; ///< newest packet reading guest memory it does not list
     u64 constram_waits_skipped = 0; ///< statistics: CPU writes that did not have to wait
+    u64 constram_gpu_waits = 0;       ///< statistics: dumps that waited for the GPU (WaitForInPlaceReads)
+    u64 constram_gpu_wait_cycles = 0;
     u64 proxy_samples = 0; ///< texture bindings that read a scene proxy (statistics)
     float sampler_lod_bias = 0.0f; ///< bbport: extra bias of this draw's samplers
     bool pipeline_is_compute = false; ///< bbport: the bound pipeline of BindResources
@@ -760,7 +812,9 @@ private:
             if (ring_stages[i].info == &stage) {
                 for (u32 j = 0; j < ring_stages[i].count; ++j) {
                     if (ring_stages[i].bindings[j].index == index) {
-                        return &ring_stages[i].bindings[j];
+                        // Left to stage B by its resolve worker: bound as without a ring.
+                        const auto& binding = ring_stages[i].bindings[j];
+                        return binding.offset >= RingNotCopied ? nullptr : &binding;
                     }
                 }
                 return nullptr;

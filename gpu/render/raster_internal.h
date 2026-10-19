@@ -89,4 +89,13 @@ inline bool IsKnownFormat(Gcn::DataFormat data_fmt, Gcn::NumberFormat num_fmt) {
     return d < 256 && n < 256 && tables.first[d] && tables.second[n];
 }
 
+/// BB_INPLACE_READ_CHECK=1 (diagnostics): reads the GPU makes of the game's memory when it runs a
+/// draw (stage B bindings not copied by stage A), with the tick they run in; a constant RAM dump
+/// checks after its waits that none over its bytes is still pending (a missed wait).
+namespace InPlaceReads {
+bool Enabled();
+void Note(VAddr address, u64 size, u64 tick, u64 hash, u32 kind);
+void CheckDump(VAddr address, u64 size, const std::function<bool(u64)>& tick_done);
+} // namespace InPlaceReads
+
 } // namespace Vulkan

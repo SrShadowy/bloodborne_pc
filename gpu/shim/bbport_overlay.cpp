@@ -19,6 +19,8 @@
 #include "bbport_discord_rpc.h"
 #include "bbport_info_hud.h"
 #include "extra/management/hud/bbport_fps_hud.h"
+#include "bbport_guest_hooks.h"
+#include "bbport_frame_rate.h"
 #include "bbport_settings.h"
 #include "rpc/bbport_game_data.h"
 #include "bbport_strings.h"
@@ -656,6 +658,14 @@ void RenderResolutionSection(BbSettings::Values& s, int lang) {
         }
         ImGui::EndCombo();
     }
+    if (BbSettings::FixedRenderSession() && s.startup_live_resolution != 0) {
+        // Started with a fixed render size (BB_LIVE_RES=0 or BB_RENDER_RES): the setting is
+        // not what this session runs.
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s",
+                           UI::L("This session started with a fixed resolution: changes apply after a restart",
+                                 "Esta sessão iniciou com resolução fixa: mudanças se aplicam após reiniciar",
+                                 "Эта сессия запущена с фиксированным разрешением: смена — после перезапуска"));
+    }
     Hint(S(HintLiveResolution));
 }
 
@@ -684,9 +694,9 @@ void RenderEffectsSection(BbSettings::Values& s, int lang) {
         const auto& effect = BbSettings::Effects[e];
         Checkbox(BbSettings::EffectLabel(e, lang), s.effects[e]);
         if (std::string_view(effect.key) == "debug_camera") {
-            Hint(UI::L("Hold Cross and press L3 (keyboard: Space + Z).",
-                       "Segure Cross e aperte L3 (teclado: Space + Z).",
-                       "Удерживайте Cross и нажмите L3 (клавиатура: Space + Z)."));
+            Hint(UI::L("Hold Cross and press L3 (keyboard: F + Left Ctrl).",
+                       "Segure Cross e aperte L3 (teclado: F + Left Ctrl).",
+                       "Удерживайте Cross и нажмите L3 (клавиатура: F + Left Ctrl)."));
         } else if (std::string_view(effect.key) == "debug_menu") {
             Hint(UI::L("Left side of the touchpad (Tab); right side: Backspace. Needs the adhoc folder from Nexus mod #253 (the fonts in adhoc/font).",
                        "Lado esquerdo do touchpad (Tab); lado direito: Backspace. Requer a pasta adhoc do mod #253 do Nexus (fontes em adhoc/font).",
@@ -695,16 +705,21 @@ void RenderEffectsSection(BbSettings::Values& s, int lang) {
     }
     Checkbox(S(PuddleReflections), s.puddle_reflections);
     Hint(S(HintPuddleReflections));
-    Hint(S(HintGameEffects));
-    Hint(S(HintSpecialControls));
+    BbGuestHooks::ApplyGameEffects();
+    Hint(UI::L("SSR reflections, intros, free camera and debug menu apply after a restart. Other effects "
+               "switch immediately. Motion blur and shadows from dynamic lights place a significant load on the GPU.",
+               "Reflexos SSR, aberturas, câmera livre e menu de depuração aplicam após reiniciar. Outros efeitos "
+               "mudam imediatamente. Desfoque de movimento e sombras dinâmicas aumentam a carga na GPU.",
+               "Отражения SSR, заставки, свободная камера и debug menu применяются после перезапуска. "
+               "Остальные эффекты переключаются сразу. Размытие в движении и тени от динамических источников заметно нагружают GPU."));
 
     bool restart = s.object_motion != s.startup_object_motion ||
+                   s.model_lod != s.startup_model_lod ||
                    s.live_resolution != s.startup_live_resolution ||
                    (s.startup_draw_pipe == BbSettings::DrawPipeOff && s.draw_pipe != BbSettings::DrawPipeOff) ||
                    BbSettings::ResolutionNeedsRestart();
-    // Effects 0..4 (CA, DoF, Motion Blur, SSAO, AA) and Model LOD apply live; 5..9 require restart.
-    for (int e = 5; e < BbSettings::EffectCount; ++e) {
-        restart |= s.effects[e] != s.startup_effects[e];
+    for (int e = 0; e < BbSettings::EffectCount; ++e) {
+        restart |= !BbSettings::IsHotEffect(e) && s.effects[e] != s.startup_effects[e];
     }
     if (restart) {
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", S(RestartWarning));
@@ -716,6 +731,29 @@ void RenderEffectsSection(BbSettings::Values& s, int lang) {
 }
 
 void RenderPerformanceSection(BbSettings::Values& s, int lang) {
+    ImGui::SeparatorText(UI::L("Frame rate limit (now)", "Limite de taxa de quadros (agora)", "Лимит кадров (сейчас)"));
+    {
+        static const int steps[] = {0, 30, 60, 90, 120, 144, 240};
+        static const char* labels[] = {"As launched", "30", "60", "90", "120", "144", "240"};
+        static const char* labels_pt[] = {"Como iniciado", "30", "60", "90", "120", "144", "240"};
+        static const char* labels_ru[] = {"Как при запуске", "30", "60", "90", "120", "144", "240"};
+        int index = 0;
+        for (int i = 0; i < 7; ++i) {
+            if (steps[i] == BbFrameRate::Limit()) index = i;
+        }
+        if (ImGui::BeginCombo(UI::L("Limit (F3: 30 FPS on/off)", "Limite (F3: 30 FPS lig/desl)", "Лимит (F3: 30 FPS вкл/выкл)"),
+                              UI::L(labels[index], labels_pt[index], labels_ru[index]))) {
+            for (int i = 0; i < 7; ++i) {
+                if (ImGui::Selectable(UI::L(labels[i], labels_pt[i], labels_ru[i]), i == index)) {
+                    BbFrameRate::SetLimit(steps[i]);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint(UI::L("Not saved. At 30 FPS the cinematic of Laurence (optional boss) does not hang, as it can above 30.",
+                   "Não salvo. Em 30 FPS a cinemática de Laurence não trava, como pode ocorrer acima de 30.",
+                   "Не сохраняется. На 30 FPS кинематика Лоуренса не зависает, как может выше 30."));
+    }
     ImGui::SeparatorText(S(SectionMisc));
     Checkbox(S(ShowFpsCorner), s.show_fps);
     BbOverlaySections::RenderLightGridCheckbox(s, lang, dirty);
@@ -793,9 +831,9 @@ void Menu() {
     const float total_fps = total_ms_avg > 0.0f ? 1000.0f / total_ms_avg : orig_fps;
     const float display_ms = total_ms_avg > 0.0f ? total_ms_avg : orig_ms_avg;
     if (s.frame_generation.load()) {
-        ImGui::Text("%.0f \\ %.0f FPS  (%.1f %s)", orig_fps, total_fps, display_ms, S(FpsMs));
+        ImGui::Text("%.0f \ %.0f FPS  (%.1f %s)", orig_fps, total_fps, display_ms, S(FpsMs));
     } else {
-        ImGui::Text("%.0f FPS  (%.1f %s)", total_fps > 0.0f ? total_fps : orig_fps, display_ms, S(FpsMs));
+        ImGui::Text("%.0f FPS  (%.1f %s)", total_fps, display_ms, S(FpsMs));
     }
 
     RenderGraphicsSettings();

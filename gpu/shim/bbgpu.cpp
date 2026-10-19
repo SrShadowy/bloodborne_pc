@@ -390,6 +390,10 @@ extern "C" uint64_t bbgpu_camera_state(void) {
     return BbGuestHooks::CameraState();
 }
 
+extern "C" int bbgpu_free_camera(void) {
+    return BbGuestHooks::FreeCameraActive() ? 1 : 0;
+}
+
 extern "C" int bbgpu_camera_look(float yaw, float pitch) {
     if (!BbGuestHooks::CameraLookAvailable()) {
         return 0;

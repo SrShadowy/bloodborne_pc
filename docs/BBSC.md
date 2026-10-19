@@ -71,3 +71,29 @@ Differences from BBSC's own builds:
 
 `out/dev/verify/verify.sh NAME BB_ONLINE=1 BB_BBSC=1`: loads the save offline-capable, 14 self-tests
 pass, no faults (2026-10-14). Real co-op needs two players on a BBSC server.
+
+## On the shadPS4 0.20 stack (2026-10-16)
+
+BBSC now runs in `gpu/bbnet20` (`libbbnet20.so`: shadPS4 v0.20.0's network, NP and shadNet code,
+see `gpu/bbnet20/SHADNET-PORT.md`); the shadp2p module (`libbbnet.so`) stays as a fallback
+(`BB_NET_GEN=19`). Seamless Hunt is the launcher's first pool, The Hunter's Dream the second (no
+BBSC there). Ported, against the 0.20 sources:
+
+| BBSC part | Where in `gpu/bbnet20` |
+|---|---|
+| Game code, unchanged | `bbsc/core/` (`bloodborne_re.cpp`, `bbsc_*`), UI stand-ins `bbsc/bbsc_glue.cpp`, start in `bbnet_glue.cpp` (`bbnet_image_ready`) |
+| Signaling packets 0x20 (follow) and 0x22 (world flags); 2 KB receive buffer | `vendor/.../np_signaling/np_signaling_state.h`, `np_signaling_bbsc.h`, `np_signaling_helpers.cpp` (senders), `np/signaling_handler.cpp` (receive) |
+| Room replay after a stage load, leave-room trace | `np_matching2_mm.cpp` (`BbscReplayRoomMembers`), `np_matching2.cpp` |
+| Summon route, host-placement header, connect-first area, stale-record cleanup, fast sign | `network/http.cpp` (block before `sceHttpSendRequest`) |
+| UDP relay (BBR1, port 3478 of the shadNet server) | `core/net/p2p_relay.{h,cpp}`, hooked in `p2p_transport.cpp` (`SendPacket`, receive loop, keep-alive); fed by `np_matching2_mm.cpp`, `signaling_handler.cpp` |
+| `sceNpLookupNpId` | 0.20's own (`np_utility`), shadNet lookup |
+
+Not ported: the static peer map (`SHADPS4_BBSC_PEERS`, a test aid), the bell "rejoin fix" of the
+shadp2p signaling (0.20 answers an Offer on an established transport with an Accept, so the stuck
+case of shadp2p may not exist; needs a real two-player test), the summon capture files.
+Untested with a second player: everything above except that the module loads and BBSC installs
+its hooks (`BB_ONLINE=1 BB_BBSC=1`, 2026-10-16).
+
+Seamless Hunt's own releases (BBSC 0.0.1) fixed items not showing, death and respawn, sign
+targeting and the relay framing inside `bbsc.dll` (a Windows mod for shadPS4/BBport); that source
+is not published, so those fixes are not here.

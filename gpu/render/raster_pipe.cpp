@@ -29,8 +29,9 @@ struct DrawPacket {
     std::array<Gcn::CbDbExtent, Gcn::NUM_COLOR_BUFFERS> cb_extent;
     Gcn::CbDbExtent db_extent;
     u32 num_vsharps; ///< V#s of the vertex streams, after the indirect arguments
-    u32 pad;
+    u32 worker; ///< the resolve worker that copied constants for it (~0u: none)
     u64 ring_end; ///< constant ring position after this packet's copies
+    u64 worker_ring_end; ///< the same in that worker's ring
 };
 struct PacketStage {
     const Shader::Info* info;
@@ -121,31 +122,145 @@ void Rasterizer::NotePendingRead(VAddr address, u64 size) {
     }
 }
 
-void Rasterizer::WaitForPendingReads(VAddr address, u64 size) {
+namespace {
+/// BB_CONSTRAM_PIPE=0: a DumpConstRam waits for all queued draws, not only for those reading its
+/// bytes.
+bool ConstRamPipe() {
     static const bool enabled = [] {
         const char* env = std::getenv("BB_CONSTRAM_PIPE");
         return !env || env[0] != '0';
     }();
+    return enabled;
+}
+} // namespace
+
+void Rasterizer::WaitForPendingReads(VAddr address, u64 size) {
     if (!draw_pipe || !OnStageA()) {
         return;
     }
-    if (!enabled || !UseDrawPipe() || size == 0) {
+    // BB_EXP_CONSTRAM_FINISH=1 (experiment): every dump waits until the GPU has run all earlier work.
+    // 2: stage B catches up and submits, no GPU wait; 3: waits for the GPU only (work submitted).
+    static const int finish_all = [] {
+        const char* env = std::getenv("BB_EXP_CONSTRAM_FINISH");
+        return env ? std::atoi(env) : 0;
+    }();
+    if (finish_all == 1) {
+        DrainDrawPipe(DrawPipe::ReasonConstRam);
+        RunInOrder([](Rasterizer& self, const u8*) { self.Finish(); }, nullptr, 0,
+                   BbToggle::PipelinedTasks, false);
         DrainDrawPipe(DrawPipe::ReasonConstRam);
         return;
     }
-    const u64 packet = std::max(untracked_reads_packet, pending_reads.Newest(address, size));
-    if (draw_pipe->ReachedPacket(packet)) {
-        ++constram_waits_skipped;
+    if (finish_all == 2) {
+        DrainDrawPipe(DrawPipe::ReasonConstRam);
+        RunInOrder([](Rasterizer& self, const u8*) { self.scheduler.Flush(); }, nullptr, 0,
+                   BbToggle::PipelinedTasks, false);
+        DrainDrawPipe(DrawPipe::ReasonConstRam);
         return;
     }
-    draw_pipe->WaitForPacket(packet, DrawPipe::ReasonConstRam);
+    if (finish_all == 3) {
+        auto* semaphore = scheduler.GetWorkSemaphore();
+        semaphore->Refresh();
+        const u64 submitted = semaphore->CurrentTick() - 1; // the last tick sent
+        semaphore->Wait(submitted);
+    }
+    // Stage 2: the resolve workers copy (or note as read in place) the constants of the packets
+    // reading these bytes before the dump replaces them.
+    if (size != 0 && draw_pipe->ResolverCount() != 0) {
+        if (const u64 resolving = pending_resolve.Newest(address, size); resolving != 0) {
+            draw_pipe->WaitResolved(resolving);
+        }
+    }
+    const u64 packet =
+        size == 0 ? 0 : std::max(untracked_reads_packet, pending_reads.Newest(address, size));
+    if (!ConstRamPipe() || !UseDrawPipe() || size == 0) {
+        DrainDrawPipe(DrawPipe::ReasonConstRam);
+    } else if (draw_pipe->ReachedPacket(packet)) {
+        ++constram_waits_skipped;
+    } else {
+        draw_pipe->WaitForPacket(packet, DrawPipe::ReasonConstRam);
+    }
+    WaitForInPlaceReads(packet);
+    if (InPlaceReads::Enabled() && size != 0) {
+        auto* semaphore = scheduler.GetWorkSemaphore();
+        semaphore->Refresh();
+        InPlaceReads::CheckDump(address, size, [semaphore](u64 tick) { return semaphore->IsFree(tick); });
+        // Images whose memory this dump writes (read by the GPU when it uploads them).
+        {
+            static std::atomic<u32> image_reports{0};
+            texture_cache.ForEachImageInRegionLocked(address, size, [&](VideoCore::ImageId, VideoCore::Image& image) {
+                if (image_reports.fetch_add(1) < 300) {
+                    std::printf("In-place read check: frame %llu dump %#llx+%llu over image %#llx+%#llx %ux%u fmt %u flags %#x\n",
+                                (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
+                                (unsigned long long)address, (unsigned long long)size,
+                                (unsigned long long)image.info.guest_address,
+                                (unsigned long long)image.info.guest_size, image.info.size.width,
+                                image.info.size.height, u32(image.info.pixel_format), u32(image.flags));
+                }
+            });
+        }
+        static std::atomic<u32> write_reports{0};
+        const u64 write_packet = pending_write_table.Newest(address, size);
+        if (buffer_cache.IsRegionGpuModified(address, size) && write_reports.fetch_add(1) < 400) {
+            std::printf("In-place read check: frame %llu dump %#llx+%llu over a pending GPU write "
+                        "(write packet %llu reached %d)\n",
+                        (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
+                        (unsigned long long)address, (unsigned long long)size,
+                        (unsigned long long)write_packet, int(draw_pipe->ReachedPacket(write_packet)));
+        }
+    }
+}
+
+void Rasterizer::WaitForInPlaceReads(u64 packet) {
+    // With the game's memory in place the draw reads these bytes when the GPU runs it, not when
+    // the recording thread binds them (a copy then, with the old model): a dump while it is still
+    // queued on the GPU gave it the next draw's data. Single frames showed another pass's quad:
+    // the finished picture in the top-left quarter, black around it, or the scene shifted by half
+    // the frame, bright around it (docs/Flicker_video_2026-10-17.ru.md). Rare: ~1 of 1000 dumps.
+    // BB_CONSTRAM_GPU_WAIT=0: not waited.
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_CONSTRAM_GPU_WAIT");
+        return VideoCore::GuestInPlace() && !(env && env[0] == '0');
+    }();
+    if (!enabled || packet == 0) {
+        return;
+    }
+    const auto& entry = (*packet_ticks)[packet & 0xFFFF];
+    if (entry.packet.load(std::memory_order_acquire) != packet) {
+        return; // older than the table: long run
+    }
+    const u64 tick = entry.tick.load(std::memory_order_relaxed);
+    auto* semaphore = scheduler.GetWorkSemaphore();
+    if (semaphore->IsFree(tick)) {
+        return;
+    }
+    semaphore->Refresh();
+    if (semaphore->IsFree(tick)) {
+        return;
+    }
+    // The recording thread submits the tick if it still records into it, then the GPU runs it.
+    struct Data {
+        u64 tick;
+    };
+    const Data data{tick};
+    RunInOrder(
+        [](Rasterizer& self, const u8* bytes) {
+            Data d;
+            std::memcpy(&d, bytes, sizeof(d));
+            if (self.scheduler.CurrentTick() <= d.tick) {
+                self.scheduler.Flush();
+            }
+        },
+        &data, sizeof(data), BbToggle::PipelinedTasks, false);
+    DrainDrawPipe(DrawPipe::ReasonConstRam);
+    const u64 start = __rdtsc();
+    semaphore->Wait(tick);
+    ++constram_gpu_waits;
+    constram_gpu_wait_cycles += __rdtsc() - start;
 }
 
 void Rasterizer::NoteCommandWriteInOrder(VAddr addr, const void* data, u64 size) {
-    static const bool enabled = [] {
-        const char* env = std::getenv("BB_CONSTRAM_PIPE");
-        return !env || env[0] != '0';
-    }();
+    const bool enabled = ConstRamPipe();
     if (VideoCore::WriteTracking() || !IsMapped(addr, size)) {
         return;
     }
@@ -182,7 +297,8 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
 }
 
 void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
-                           boost::container::static_vector<RingBinding, Shader::NUM_BUFFERS>& out) {
+                           boost::container::static_vector<RingBinding, Shader::NUM_BUFFERS>& out,
+                           const Gcn::ComputeProgram* cs) {
     BB_SECTION(ARing);
     const PreparedStage* prepared_stage = nullptr;
     if (prepared && !BbToggle::Disabled(BbToggle::PreparedResources)) {
@@ -214,9 +330,12 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             memory->CopySparseMemory(address, dst, size);
         }
         constant_ring->Flush(*offset, size);
-        out.push_back({index, static_cast<u32>(size), *offset, address});
+        out.push_back({index, static_cast<u32>(size), *offset, address, 0, 0});
         return true;
     };
+    // Stage 2: the checks and copies of small read-only buffers go to the resolve workers; a
+    // constant RAM dump over them waits for those first (pending_resolve).
+    const bool resolvers = draw_pipe && draw_pipe->ResolverCount() != 0;
     // Compute stages may run as HLE copy shaders, which read their buffers on the recording
     // thread whether or not they were copied here.
     const bool hle_candidate = stage.sw_stage == Shader::SwStage::Compute;
@@ -233,15 +352,32 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             }
             continue;
         }
-        const auto vsharp = prepared_stage ? prepared_stage->buffer_sharps[index]
-                                           : desc.GetSharp(stage);
-        const VAddr address = vsharp.base_address;
-        if (address == 0 || vsharp.GetSize() == 0) {
-            continue;
+        VAddr address;
+        u64 size;
+        {
+            BB_SECTION(ARingSharp);
+            const auto vsharp = prepared_stage ? prepared_stage->buffer_sharps[index]
+                                               : desc.GetSharp(stage);
+            address = vsharp.base_address;
+            if (address == 0 || vsharp.GetSize() == 0) {
+                continue;
+            }
+            size = memory->ClampRangeSize(address, vsharp.GetSize());
         }
-        const u64 size = memory->ClampRangeSize(address, vsharp.GetSize());
         if (desc.is_written) {
-            NotePendingGpuWrite(address, size);
+            // The game's copy shader: what its control list names, not the tens of MiB bound (they
+            // kept every constant around them from the ring: bound in place, a later constant RAM
+            // dump changed them before the GPU read them, single frames drew another draw's quad).
+            thread_local std::vector<std::pair<unsigned long long, unsigned long long>> dests;
+            dests.clear();
+            if (cs && CopyDestinationsPrecise() &&
+                CopyShaderDestinations(stage, cs->dim_x, CopyDestinationGap(), dests)) {
+                for (const auto& [dest, dest_size] : dests) {
+                    NotePendingGpuWrite(dest, dest_size);
+                }
+            } else {
+                NotePendingGpuWrite(address, size);
+            }
             continue;
         }
         if (BbCeStats::Enabled()) {
@@ -257,6 +393,13 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         if (BbSections::Enabled()) {
             BbSections::ring_buffers.fetch_add(1, std::memory_order_relaxed);
         }
+        if (resolvers && size != 0 && size <= VideoCore::BufferCache::STREAM_THRESHOLD &&
+            !constants_in_place) {
+            out.push_back({index, static_cast<u32>(size), RingPending, address, 0,
+                           u32(hle_candidate)});
+            pending_resolve.Note(address, size, draw_pipe->NextPacket());
+            continue;
+        }
         bool copyable;
         {
             BB_SECTION(ARingChecks);
@@ -265,8 +408,104 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
                        !PendingWriteOverlaps(address, size) &&
                        !VideoCore::BufferCache::LayerMirrored(address, size);
         }
-        if (!copyable || !copy(index, nullptr, address, size) || hle_candidate) {
+        bool copied = false;
+        if (!copyable || !(copied = copy(index, nullptr, address, size)) || hle_candidate) {
+            BB_SECTION(ARingNote);
             NotePendingRead(address, size);
+        }
+        // BB_TRACE_CB=hash (diagnostics): how that shader's constant buffers were bound.
+        static const u64 traced_cb = [] {
+            const char* env = std::getenv("BB_TRACE_CB");
+            return env ? (std::strcmp(env, "all") == 0 ? ~0ull : std::strtoull(env, nullptr, 16)) : 0ull;
+        }();
+        if (traced_cb == ~0ull && !copied && size <= VideoCore::BufferCache::STREAM_THRESHOLD) {
+            static std::mutex trace_mutex;
+            static std::map<std::pair<u64, u32>, u64> in_place;
+            static u64 last_frame = 0;
+            std::scoped_lock lock{trace_mutex};
+            const u32 why = buffer_cache.IsRegionGpuModified(address, size) ? 1
+                            : PendingWriteOverlaps(address, size)          ? 2
+                            : VideoCore::BufferCache::LayerMirrored(address, size) ? 3
+                                                                             : 4;
+            ++in_place[{stage.pgm_hash, why}];
+            const u64 frame = BbStats::frame_number.load(std::memory_order_relaxed);
+            if (frame >= last_frame + 600) {
+                last_frame = frame;
+                std::printf("Trace cb: frame %llu small constants in place (hash why count):", (unsigned long long)frame);
+                for (const auto& [key, count] : in_place) {
+                    std::printf(" %llx/%u/%llu", (unsigned long long)key.first, key.second, (unsigned long long)count);
+                }
+                std::printf("\n");
+                in_place.clear();
+            }
+        }
+        // BB_TRACE_CB_LIST=hash,hash (diagnostics): their constants against the same draw's last frame.
+        static const std::vector<u64> traced_list = [] {
+            std::vector<u64> hashes;
+            if (const char* env = std::getenv("BB_TRACE_CB_LIST")) {
+                for (const char* at = env; *at;) {
+                    char* end = nullptr;
+                    hashes.push_back(std::strtoull(at, &end, 16));
+                    at = *end ? end + 1 : end;
+                }
+            }
+            return hashes;
+        }();
+        const bool listed = std::ranges::find(traced_list, stage.pgm_hash) != traced_list.end();
+        if ((traced_cb && stage.pgm_hash == traced_cb) || listed) {
+            static std::map<std::tuple<u64, u32, u32>, std::vector<u32>> history;
+            static std::map<std::pair<u64, u32>, u32> nth;
+            static u64 nth_frame = 0;
+            const u64 gpu_frame = BbStats::gpu_frames.load(std::memory_order_relaxed);
+            if (gpu_frame != nth_frame) {
+                nth_frame = gpu_frame;
+                nth.clear();
+            }
+            const u32 ordinal = nth[{stage.pgm_hash, index}]++;
+            auto& previous = history[{stage.pgm_hash, index, ordinal}];
+            std::vector<u32> now(size / 4);
+            std::memcpy(now.data(), reinterpret_cast<const void*>(address), now.size() * 4);
+            std::string changes;
+            u32 changed = 0;
+            for (size_t i = 0; i < now.size() && i < previous.size(); ++i) {
+                if (now[i] != previous[i] && changed++ < 24) {
+                    changes += fmt::format(" [{}] {:x}({:g})->{:x}({:g})", i, previous[i], std::bit_cast<float>(previous[i]), now[i], std::bit_cast<float>(now[i]));
+                }
+            }
+            std::printf("Trace cb values: gpu frame %llu %llx#%u slot %u %#llx %s changed %u:%s\n",
+                        (unsigned long long)gpu_frame, (unsigned long long)stage.pgm_hash, ordinal,
+                        index, (unsigned long long)address, copied ? "copied" : "in place", changed, changes.c_str());
+            previous = std::move(now);
+            std::printf("Trace cb: frame %llu %016llx slot %u %#llx+%llu %s gpu-mod %d pending-write %d "
+                        "mirrored %d packet %llu\n",
+                        (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
+                        (unsigned long long)stage.pgm_hash, index, (unsigned long long)address,
+                        (unsigned long long)size, copied ? "copied" : "IN PLACE",
+                        int(buffer_cache.IsRegionGpuModified(address, size)),
+                        int(PendingWriteOverlaps(address, size)),
+                        int(VideoCore::BufferCache::LayerMirrored(address, size)),
+                        (unsigned long long)(draw_pipe ? draw_pipe->NextPacket() : 0));
+        }
+        // BB_RING_REASONS=1 (diagnostics): why small read-only bindings were not copied, per 5 s.
+        static const bool reasons = std::getenv("BB_RING_REASONS") != nullptr;
+        if (reasons && !copyable && size != 0 && size <= VideoCore::BufferCache::STREAM_THRESHOLD) {
+            static std::array<std::atomic<u64>, 5> counts{};
+            static u32 samples = 0;
+            static std::atomic<u64> total{0};
+            static auto last = std::chrono::steady_clock::now();
+            ++counts[constants_in_place                          ? 0
+                     : buffer_cache.IsRegionGpuModified(address, size) ? (samples++ < 300 && std::printf("Ring GPU-modified sample %#llx+%llu\n", (unsigned long long)address, (unsigned long long)size), 1)
+                     : PendingWriteOverlaps(address, size)         ? 2
+                     : VideoCore::BufferCache::LayerMirrored(address, size) ? 3 : 4];
+            ++total;
+            if (std::chrono::steady_clock::now() - last > std::chrono::seconds(5)) {
+                last = std::chrono::steady_clock::now();
+                std::printf("Ring reasons (5 s): in place %llu, GPU-modified %llu, pending GPU write %llu, "
+                            "mirrored %llu, other %llu\n",
+                            (unsigned long long)counts[0].exchange(0), (unsigned long long)counts[1].exchange(0),
+                            (unsigned long long)counts[2].exchange(0), (unsigned long long)counts[3].exchange(0),
+                            (unsigned long long)counts[4].exchange(0));
+            }
         }
     }
 }
@@ -292,6 +531,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
                             Shader::MaxStageTypes>
         rings;
     u32 num_stages = 0;
+    bool resolve = false; // constants left to a resolve worker
     u32 size = sizeof(DrawPacket) + AlignPacket(num_blocks * sizeof(u16)) +
                num_blocks * Gcn::RegDirty::BlockWords * sizeof(u32);
     for (const auto* stage : stages) {
@@ -362,9 +602,27 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
                     ud_hits = ud_checks = ring_hits = vs_hits = code_hits = 0;
                 }
             }
+            // BB_EXP_DMA_UNTRACKED=1 (experiment): a stage that reads the game's memory through
+            // pointers when the GPU runs it (uses_dma) counts as reading memory it does not list:
+            // a constant RAM dump waits for the GPU to have run it.
+            static const bool dma_untracked = std::getenv("BB_EXP_DMA_UNTRACKED") != nullptr;
+            if (stage->uses_dma) {
+                static std::atomic<u64> dma_stages{0};
+                if ((dma_stages.fetch_add(1, std::memory_order_relaxed) & 0xFFFF) == 0) {
+                    std::printf("Draw pipe: %llu stages reading memory through pointers (uses_dma), "
+                                "last %016llx\n",
+                                (unsigned long long)dma_stages.load(), (unsigned long long)stage->pgm_hash);
+                }
+                if (dma_untracked) {
+                    untracked_reads_packet = draw_pipe->NextPacket();
+                }
+            }
             ring.clear();
             if (constant_ring && !BbToggle::Disabled(BbToggle::ConstantRing)) {
-                CollectRingBindings(*stage, used_prepared, ring);
+                CollectRingBindings(*stage, used_prepared, ring, cs);
+                for (const auto& binding : ring) {
+                    resolve |= binding.offset == RingPending;
+                }
             } else {
                 untracked_reads_packet = draw_pipe->NextPacket(); // bindings not listed
             }
@@ -454,6 +712,8 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     packet.db_extent = liverpool->last_db_extent;
     packet.ring_end = constant_ring ? constant_ring->Position() : 0;
     packet.num_vsharps = static_cast<u32>(vsharps.size());
+    packet.worker = ~0u;
+    packet.worker_ring_end = 0;
     out += sizeof(DrawPacket);
     std::memcpy(out, blocks.data(), num_blocks * sizeof(u16));
     out += AlignPacket(num_blocks * sizeof(u16));
@@ -500,7 +760,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         out += sizeof(Gcn::Regs);
     }
     dirty.Clear();
-    draw_pipe->Commit(static_cast<u32>(out - start));
+    draw_pipe->Commit(static_cast<u32>(out - start), resolve);
     PrintPipeStats();
 }
 
@@ -544,6 +804,17 @@ std::array<u64, TaskKinds> task_cycles{}, task_counts{};
 void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
     BB_SECTION(Packet);
     auto& self = *static_cast<Rasterizer*>(context);
+    // The tick the packet ended in (a constant RAM dump over what it reads in place must wait
+    // for that tick: WaitForPendingReads).
+    struct TickNote {
+        Rasterizer& self;
+        u64 packet;
+        ~TickNote() {
+            auto& entry = (*self.packet_ticks)[packet & 0xFFFF];
+            entry.tick.store(self.scheduler.CurrentTick(), std::memory_order_relaxed);
+            entry.packet.store(packet, std::memory_order_release);
+        }
+    } tick_note{self, self.draw_pipe->RunningPacket()};
     if (*reinterpret_cast<const PacketKind*>(data) == PacketKind::Task) {
         BB_SECTION(Task);
         self.buffer_cache.NewPacket();
@@ -692,6 +963,63 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
     if (self.constant_ring) {
         self.constant_ring->Stamp(packet.ring_end);
     }
+    if (packet.worker != ~0u) {
+        self.worker_rings[packet.worker]->Stamp(packet.worker_ring_end);
+    }
+}
+
+void Rasterizer::ResolvePacket(void* context, u8* data, u32, u64 number, u32 worker) {
+    auto& self = *static_cast<Rasterizer*>(context);
+    auto& packet = *reinterpret_cast<DrawPacket*>(data);
+    u8* in = data + sizeof(DrawPacket);
+    in += AlignPacket(packet.num_blocks * sizeof(u16));
+    in += packet.num_blocks * Gcn::RegDirty::BlockWords * sizeof(u32);
+    auto& ring = *self.worker_rings[worker];
+    const u64 alignment = std::max<u64>(self.instance.StorageMinAlignment(),
+                                        self.instance.UniformMinAlignment());
+    bool used_ring = false;
+    for (u32 i = 0; i < packet.num_stages; ++i) {
+        const auto& stage = *reinterpret_cast<const PacketStage*>(in);
+        in += sizeof(PacketStage);
+        auto* bindings = reinterpret_cast<RingBinding*>(in);
+        in += stage.num_ring * sizeof(RingBinding);
+        in += AlignPacket((stage.ud_size + stage.flat_size) * sizeof(u32));
+        for (u32 j = 0; j < stage.num_ring; ++j) {
+            auto& binding = bindings[j];
+            if (binding.offset != RingPending) {
+                continue;
+            }
+            const VAddr address = binding.address;
+            const u64 size = binding.size;
+            // The checks stage A made before: the GPU has written or will write these bytes,
+            // or the layer keeps a VRAM copy. Writes noted for later packets only make it
+            // stay with stage B (bound in place), never the reverse.
+            const bool copyable = !self.buffer_cache.IsRegionGpuModified(address, size) &&
+                                  !self.PendingWriteOverlaps(address, size) &&
+                                  !VideoCore::BufferCache::LayerMirrored(address, size);
+            std::optional<u64> offset;
+            if (copyable) {
+                offset = ring.Allocate(size, alignment);
+            }
+            if (offset) {
+                self.memory->CopySparseMemory(address, ring.Data(*offset), size);
+                ring.Flush(*offset, size);
+                binding.offset = *offset;
+                binding.ring = 1 + worker;
+                used_ring = true;
+            } else {
+                binding.offset = RingNotCopied;
+            }
+            // Read by stage B or the GPU later: a dump over it waits for the packet.
+            if (!offset || binding.always_note) {
+                self.pending_reads.NoteTables(address, size, number);
+            }
+        }
+    }
+    if (used_ring) {
+        packet.worker = worker;
+        packet.worker_ring_end = ring.Position();
+    }
 }
 
 void Rasterizer::PrintPipeStats() {
@@ -735,6 +1063,11 @@ void Rasterizer::PrintPipeStats() {
     if (constram_waits_skipped) {
         std::printf(" ConstRam not waited=%.0f", constram_waits_skipped / seconds);
         constram_waits_skipped = 0;
+    }
+    if (constram_gpu_waits) {
+        std::printf(" ConstRam GPU waits=%.1f (%.2f ms/s)", constram_gpu_waits / seconds,
+                    constram_gpu_wait_cycles / (cycles / seconds) * 1000.0 / seconds);
+        constram_gpu_waits = constram_gpu_wait_cycles = 0;
     }
     if (BbSections::Enabled()) {
         static std::array<u64, BbSections::Count> last_sections{};
@@ -799,3 +1132,49 @@ void Rasterizer::PrintPipeStats() {
 }
 
 } // namespace Vulkan
+
+namespace Vulkan::InPlaceReads {
+namespace {
+struct Entry {
+    VAddr address;
+    u64 size, tick, hash;
+    u32 kind;
+};
+constexpr u32 Count = 1u << 15;
+std::array<Entry, Count> entries{};
+std::atomic<u64> head{0};
+std::atomic<u32> reported{0};
+} // namespace
+
+bool Enabled() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_INPLACE_READ_CHECK");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+
+void Note(VAddr address, u64 size, u64 tick, u64 hash, u32 kind) {
+    entries[head.fetch_add(1, std::memory_order_relaxed) & (Count - 1)] = {address, size, tick,
+                                                                           hash, kind};
+}
+
+void CheckDump(VAddr address, u64 size, const std::function<bool(u64)>& tick_done) {
+    static constexpr const char* kinds[] = {"buffer", "paged", "vertex", "index"};
+    for (const auto& e : entries) {
+        if (e.size == 0 || e.address >= address + size || address >= e.address + e.size ||
+            tick_done(e.tick)) {
+            continue;
+        }
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 400) {
+            std::printf("In-place read check: frame %llu dump %#llx+%llu over a pending %s read "
+                        "%#llx+%llu by %016llx (tick %llu)\n",
+                        (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
+                        (unsigned long long)address, (unsigned long long)size, kinds[e.kind & 3],
+                        (unsigned long long)e.address, (unsigned long long)e.size,
+                        (unsigned long long)e.hash, (unsigned long long)e.tick);
+        }
+        return;
+    }
+}
+} // namespace Vulkan::InPlaceReads

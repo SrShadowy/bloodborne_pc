@@ -22,6 +22,16 @@ using Viewports = boost::container::static_vector<vk::Viewport, Gcn::NUM_VIEWPOR
 using Scissors = boost::container::static_vector<vk::Rect2D, Gcn::NUM_VIEWPORTS>;
 using ColorWriteMasks = std::array<vk::ColorComponentFlags, Gcn::NUM_COLOR_BUFFERS>;
 
+/// BB_DYNSTATE_CHECK=1 (diagnostics): the scissor each command buffer really has, set by whom;
+/// every draw compares it with what the state cache believed when the draw was decoded.
+namespace DynCheck {
+bool Enabled();
+void Begin(vk::CommandBuffer cmd);
+void Set(vk::CommandBuffer cmd, const Scissors& scissors, const char* who);
+void SetViewports(vk::CommandBuffer cmd, const Viewports& viewports, const char* who);
+void Draw(vk::CommandBuffer cmd, const Viewports& viewports, const Scissors& scissors, u64 vs, u64 ps);
+} // namespace DynCheck
+
 struct StencilOps {
     vk::StencilOp fail_op{};
     vk::StencilOp pass_op{};
@@ -36,6 +46,11 @@ public:
     /// Marks everything changed (a new command buffer, or commands that set state themselves).
     void Invalidate() {
         dirty = AllBits;
+    }
+
+    /// The viewports and scissors only: set again at the start of every render pass.
+    void InvalidateViewports() {
+        dirty |= ViewportsBit | ScissorsBit;
     }
 
     /// Whether CommitWith would emit anything.
@@ -55,10 +70,20 @@ public:
         }
         const auto changed = [&](Bit bit) { return (pending & bit) != 0; };
         if (changed(ViewportsBit)) {
-            emit([v = viewports](vk::CommandBuffer c) { c.setViewportWithCount(v); });
+            emit([v = viewports](vk::CommandBuffer c) {
+                c.setViewportWithCount(v);
+                if (DynCheck::Enabled()) {
+                    DynCheck::SetViewports(c, v, "cache");
+                }
+            });
         }
         if (changed(ScissorsBit)) {
-            emit([v = scissors](vk::CommandBuffer c) { c.setScissorWithCount(v); });
+            emit([v = scissors](vk::CommandBuffer c) {
+                c.setScissorWithCount(v);
+                if (DynCheck::Enabled()) {
+                    DynCheck::Set(c, v, "cache");
+                }
+            });
         }
         if (changed(DepthTestBit)) {
             emit([v = depth_test](vk::CommandBuffer c) { c.setDepthTestEnable(v); });
@@ -274,6 +299,15 @@ private:
         }
     }
 
+public:
+    const Scissors& CurrentScissors() const {
+        return scissors;
+    }
+    const Viewports& CurrentViewports() const {
+        return viewports;
+    }
+
+private:
     u32 dirty = 0;
     Viewports viewports{};
     Scissors scissors{};

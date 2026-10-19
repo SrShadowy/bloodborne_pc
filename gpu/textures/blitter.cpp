@@ -168,6 +168,10 @@ void ImageBlitter::Draw(vk::Pipeline pipeline, vk::ImageView source_view, u32 wi
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
     cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f});
     cmd.setScissorWithCount(vk::Rect2D{{0, 0}, {width, height}});
+    if (Vulkan::DynCheck::Enabled()) {
+        Vulkan::DynCheck::Set(cmd, {vk::Rect2D{{0, 0}, {width, height}}}, "blitter");
+        Vulkan::DynCheck::SetViewports(cmd, {vk::Viewport{0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f}}, "blitter");
+    }
     cmd.draw(3, 1, 0, 0);
     scheduler.EndRendering();
     scheduler.GetDynamicState().Invalidate();

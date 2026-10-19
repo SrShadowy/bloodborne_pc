@@ -21,6 +21,11 @@ void Install(RangeCallback on_gpu_range_allocated);
 void SetDisplayAspect(float aspect);
 /// The current camera's state the hooks above write (its projection at +0x50), 0 until known.
 std::uint64_t CameraState();
+/// The free camera (community patch) is on: the mouse drives it, not the follow camera.
+bool FreeCameraActive();
+/// The game effects chosen in the settings take effect now (a no-op when nothing changed, or
+/// when the effects are only set by the startup patches, BB_HOT_EFFECTS=0).
+void ApplyGameEffects();
 
 /// Native mouse look (BB_NATIVE_MOUSE, on by default): whether the camera hook is in, and a turn
 /// (radians: pitch, yaw) for the camera's next update; false while the camera does not take the

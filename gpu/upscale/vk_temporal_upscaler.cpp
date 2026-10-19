@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -66,6 +67,16 @@ int DumpFrame() {
     if (!trigger) {
         return -1;
     }
+    // BB_DUMP_EVERY=1: every frame while the trigger file exists (the file is left in place).
+    static const bool every = std::getenv("BB_DUMP_EVERY") != nullptr;
+    if (every) {
+        if (std::filesystem::exists(trigger)) {
+            std::printf("Dump frame %d: GPU frame %llu\n", index,
+                        (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed));
+            return index++;
+        }
+        return -1;
+    }
     if (remaining == 0) {
         if (++polls % 30 != 0 || std::remove(trigger) != 0) {
             return -1;
@@ -102,6 +113,11 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
     };
     cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &before});
     for (const auto& image : images) {
+        // BB_DUMP_ONLY=name,name: only those images.
+        static const char* only = std::getenv("BB_DUMP_ONLY");
+        if (only && !std::strstr(only, image.name)) {
+            continue;
+        }
         const VkDeviceSize size = VkDeviceSize(image.width) * image.height * image.bytes_per_pixel;
         const VkBufferCreateInfo buffer_ci{
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -182,6 +198,8 @@ void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::Com
     if (!trigger || std::remove(trigger) != 0) {
         return;
     }
+    std::printf("Final dump %d: GPU frame %llu\n", index,
+                (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed));
     const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
     DumpImages(instance, scheduler, cmdbuf, index++,
                {{image, width, height, 4, "final", bgra ? "bgra" : "rgba"}});
@@ -2230,7 +2248,10 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
         .srcAccessMask = vk::AccessFlagBits2::eNone,
         .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+        // The guest render pass uses LOAD, even for a full-screen display copy.
+        // Its attachment load must wait for this layout transition as well.
+        .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentRead |
+                         vk::AccessFlagBits2::eColorAttachmentWrite,
         .oldLayout = vk::ImageLayout::eUndefined,
         .newLayout = vk::ImageLayout::eGeneral,
         .image = vk::Image(display.image),
@@ -2315,6 +2336,36 @@ void TemporalUpscaler::CaptureFrameGenScene(vk::Image depth_image, vk::Format de
 }
 
 void TemporalUpscaler::OnDisplayPassStart(VAddr address) {
+    // Periodically clean up stale proxy render targets to prevent VRAM leak during level transitions.
+    static u64 last_cleanup_frame = 0;
+    const u64 current_frame = BbStats::frame_number.load(std::memory_order_relaxed);
+    if (current_frame - last_cleanup_frame >= 60) { // ~1 second at 60 FPS
+        scene_targets.CleanupStaleEntries();
+        last_cleanup_frame = current_frame;
+    }
+    // Cinematics can finish the LDR scene without drawing a Scaleform movie/HUD. The camera
+    // already uses the output's aspect, so presenting the native 16:9 buffer would squeeze it.
+    // Finish that scene at the display-copy boundary, while its camera and depth still exist.
+    // The display pass then reads the same output-size image as frames which have UI.
+    static const bool finish_without_ui = [] {
+        const char* value = std::getenv("BB_SCENE_WITHOUT_UI");
+        return !(value && value[0] == '0');
+    }();
+    if (finish_without_ui && Scaled() && !ui_phase && ldr_target && camera_motion.Ready()) {
+        if (Active() && !failed) {
+            RunScaled();
+        }
+        if (!ui_phase) {
+            RunUiOnly(ldr_target, camera_motion.Depth());
+        }
+        if (ui_phase) {
+            static u64 count = 0;
+            if (++count <= 3 || (count & (count - 1)) == 0) {
+                std::printf("Scene output: frame without UI completed at %ux%u (%llu so far)\n",
+                            ui_width, ui_height, static_cast<unsigned long long>(count));
+            }
+        }
+    }
     if (frame_generation && ui_phase && ui_image) {
         frame_generation->Interpolate(vk::Image(ui_image), address);
     }

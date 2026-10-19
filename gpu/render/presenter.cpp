@@ -129,7 +129,11 @@ void Presenter::SetHDR(bool enable) {
     if (!IsHDRSupported()) {
         return;
     }
-    swapchain.SetHDR(enable);
+    if (swapchain.GetHDR() != enable) {
+        // Changing HDR recreates the swapchain and waits for the device: exclude queue submits.
+        std::scoped_lock lock{Scheduler::submit_mutex};
+        swapchain.SetHDR(enable);
+    }
     hdr.store(enable, std::memory_order_relaxed);
 }
 
@@ -634,16 +638,22 @@ bool Presenter::PresentImage(Frame* frame, vk::Image source, bool last) {
     if (width == 0 || height == 0) {
         return false;
     }
+    // Recreate waits for the device. Recording threads must not submit to its queues meanwhile
+    // (#211); the recreation after a failed present below already uses this same mutex.
+    const auto recreate = [&] {
+        std::scoped_lock lock{Scheduler::submit_mutex};
+        swapchain.Recreate(width, height);
+    };
     // A resized window (or one minimised at the last try) needs a new swapchain.
     if (width != swapchain.GetWidth() || height != swapchain.GetHeight() ||
         !swapchain.IsPresentable()) {
-        swapchain.Recreate(width, height);
+        recreate();
         if (!swapchain.IsPresentable()) {
             return false;
         }
     }
     if (!swapchain.AcquireNextImage()) {
-        swapchain.Recreate(width, height);
+        recreate();
         if (!swapchain.AcquireNextImage()) {
             // Resized faster than the swapchain can follow: this frame is skipped.
             LOG_WARNING(Render_Vulkan, "Skipping a frame: no swapchain image");

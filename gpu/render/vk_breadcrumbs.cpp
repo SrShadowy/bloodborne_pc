@@ -166,6 +166,27 @@ void PrintEntry(const Stream& stream, u64 id, const char* label) {
         }
     }
     std::printf("\n");
+    // What a stuck draw reads, and whether the runtime still has it mapped (prot, memory type).
+    if (std::strcmp(label, "STUCK") == 0 && c.reads[0]) {
+        std::printf("      reads:");
+        for (u32 i = 0; i < Crumb::MaxReads && c.reads[i]; ++i) {
+            int prot = 0, type = 0;
+            uintptr_t end = 0;
+            const bool mapped = runtime_memory_vma_info(c.reads[i], &prot, &type, &end) && end > c.reads[i];
+            std::printf(" %c %#llx", c.read_kinds[i], (unsigned long long)c.reads[i]);
+            if (c.read_sizes[i]) {
+                std::printf("+%#x", c.read_sizes[i]);
+            }
+            if (mapped) {
+                std::printf(" (prot %d type %d%s)", prot, type,
+                            c.read_sizes[i] && end < c.reads[i] + c.read_sizes[i] ? ", mapping ends inside" : "");
+            } else {
+                std::printf(" (not mapped)");
+            }
+            std::printf(";");
+        }
+        std::printf("\n");
+    }
 }
 
 /// The guest code of the shaders of the stuck command, for disassembly (up to 64 KiB each:

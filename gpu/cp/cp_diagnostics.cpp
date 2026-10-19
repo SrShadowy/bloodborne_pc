@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <string>
 
 #include <sys/uio.h>
@@ -14,6 +16,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "bbport_write_log.h"
+#include "bbport_gnm_hooks.h"
 #include "core/emulator_settings.h"
 #include "cp/cp_diagnostics.h"
 #include "cp/cp_pm4.h"
@@ -260,7 +263,90 @@ void ScanDcb(std::span<const u32> dcb, int depth) {
     st = DcbStats{};
 }
 
-void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq, int depth) {
+void InspectSubmittedCopy(SubmittedCopy& copy) {
+    for (size_t at = 0; at < copy.dcb_dwords;) {
+        const u32 header = copy.data[at];
+        if ((header >> 30) == 2) {
+            ++at;
+            continue;
+        }
+        const size_t length = ((header >> 16) & 0x3fff) + 2;
+        if ((header >> 30) != 3 || length > copy.dcb_dwords - at) {
+            copy.bad_dcb_at_submit = at;
+            return;
+        }
+        at += length;
+    }
+}
+
+void RememberSubmittedCopy(std::shared_ptr<const SubmittedCopy> copy) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_GNM_WRITES_TRACE");
+        return env && env[0] == '1';
+    }();
+    if (!enabled) return;
+    struct Kept { u64 number; std::shared_ptr<const SubmittedCopy> copy; };
+    static std::mutex mutex;
+    static std::deque<Kept> history;
+    static u64 next = 0, kept_bytes = 0;
+    std::scoped_lock lock{mutex};
+    const u64 number = next++;
+    const auto begin = reinterpret_cast<uintptr_t>(copy->guest_dcb);
+    if (copy->bad_dcb_at_submit != ~size_t(0)) {
+        const auto bad = begin + copy->bad_dcb_at_submit * 4;
+        std::fprintf(stderr, "PM4 preflight history #%llu: source %#llx +%#llx bytes, first bad +%#llx\n",
+                     (unsigned long long)number, (unsigned long long)begin,
+                     (unsigned long long)(copy->dcb_dwords * 4),
+                     (unsigned long long)(copy->bad_dcb_at_submit * 4));
+        unsigned shown = 0;
+        for (auto it = history.rbegin(); it != history.rend() && shown < 3; ++it) {
+            const auto& old = *it->copy;
+            const auto old_begin = reinterpret_cast<uintptr_t>(old.guest_dcb);
+            if (bad < old_begin || bad >= old_begin + old.dcb_dwords * 4) continue;
+            const size_t word = (bad - old_begin) / 4;
+            size_t packet = 0;
+            while (packet < old.dcb_dwords) {
+                const auto h = old.data[packet];
+                const size_t n = (h >> 30) == 2 ? 1 : ((h >> 16) & 0x3fff) + 2;
+                if (((h >> 30) != 3 && (h >> 30) != 2) ||
+                    n > old.dcb_dwords - packet || packet + n > word) break;
+                packet += n;
+            }
+            std::fprintf(stderr, "  prior #%llu source %#llx +%#llx bytes; bad address was +%#llx, "
+                                 "packet at +%#llx header %#x\n",
+                         (unsigned long long)it->number, (unsigned long long)old_begin,
+                         (unsigned long long)(old.dcb_dwords * 4), (unsigned long long)(word * 4),
+                         (unsigned long long)(packet * 4), packet < old.dcb_dwords ? old.data[packet] : 0);
+            const size_t from = word > 16 ? word - 16 : 0;
+            std::fprintf(stderr, "    prior words from +%#llx:", (unsigned long long)(from * 4));
+            for (size_t p = from; p < std::min(old.dcb_dwords, word + 16); ++p)
+                std::fprintf(stderr, p == word ? " [%08x]" : " %08x", old.data[p]);
+            std::fprintf(stderr, "\n");
+            const char* dir = std::getenv("BB_DATA_DIR");
+            const auto path = fmt::format("{}/out/pm4-history-{}-prior-{}.bin", dir ? dir : ".",
+                                          number, it->number);
+            if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                std::fwrite(old.data.data(), sizeof(u32), old.dcb_dwords, f);
+                std::fclose(f);
+                std::fprintf(stderr, "    prior snapshot: %s\n", path.c_str());
+            }
+            ++shown;
+        }
+        if (!shown) std::fprintf(stderr, "  no retained submission covers the bad address\n");
+        const auto from = copy->bad_dcb_at_submit > 16 ? copy->bad_dcb_at_submit - 16 : 0;
+        BbGnmHooks::ReportDriverWrites(begin + from * 4,
+                                       std::min<size_t>(32, copy->dcb_dwords - from) * 4);
+    }
+    kept_bytes += copy->data.size() * sizeof(u32);
+    history.push_back({number, std::move(copy)});
+    while (history.size() > 512 || kept_bytes > (64u << 20)) {
+        kept_bytes -= history.front().copy->data.size() * sizeof(u32);
+        history.pop_front();
+    }
+}
+
+void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq, int depth,
+                     const SubmittedCopy* copy) {
     const uintptr_t address = reinterpret_cast<uintptr_t>(at);
     int prot = 0, type = -1;
     uintptr_t end = 0;
@@ -280,7 +366,54 @@ void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq,
         }
         std::fprintf(stderr, "\n");
     }
-    BbWriteLog::DumpRange(base, dwords * 4);
+    if (copy && depth == 0 &&
+        base == reinterpret_cast<uintptr_t>(copy->data.data())) {
+        const size_t bad = size_t(at - copy->data.data());
+        const double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - copy->submitted).count();
+        std::fprintf(stderr, "  submission source %p, snapshot age %.3f ms; ",
+                     static_cast<const void*>(copy->guest_dcb), ms);
+        if (copy->bad_dcb_at_submit == ~size_t(0)) {
+            std::fprintf(stderr, "snapshot had valid packet boundaries at submit\n");
+        } else {
+            std::fprintf(stderr, "snapshot ALREADY invalid at submit +%#llx bytes\n",
+                         (unsigned long long)(copy->bad_dcb_at_submit * 4));
+        }
+        const size_t from = bad > 16 ? bad - 16 : 0;
+        const size_t count = std::min<size_t>(32, copy->dcb_dwords - from);
+        std::array<u32, 32> source{};
+        iovec local{source.data(), count * 4};
+        iovec remote{const_cast<u32*>(copy->guest_dcb + from), count * 4};
+        const bool read = process_vm_readv(getpid(), &local, 1, &remote, 1, 0) ==
+                              ssize_t(count * 4) ||
+                          ReadGuest(copy->guest_dcb + from, source.data(), u32(count * 4));
+        if (read) {
+            std::fprintf(stderr, "  source now at bad header: %#x (snapshot %#x)\n",
+                         source[bad - from], *at);
+            for (size_t p = 0; p < count; p += 8) {
+                std::fprintf(stderr, "  source +%04llx:", (unsigned long long)((from + p) * 4));
+                for (size_t q = p; q < std::min(p + 8, count); ++q) {
+                    std::fprintf(stderr, from + q == bad ? " [%08x]" : " %08x", source[q]);
+                }
+                std::fprintf(stderr, "\n");
+            }
+        } else {
+            std::fprintf(stderr, "  source memory is no longer readable\n");
+        }
+        // Track writes to guest memory, not the malloc'ed snapshot (which has none by design).
+        BbWriteLog::DumpRange(reinterpret_cast<uintptr_t>(copy->guest_dcb), dwords * 4);
+        BbGnmHooks::ReportDriverWrites(reinterpret_cast<uintptr_t>(copy->guest_dcb + from), count * 4);
+        const char* data_dir = std::getenv("BB_DATA_DIR");
+        const std::string name = std::string(data_dir ? data_dir : ".") +
+                                 "/out/pm4-bad-" + std::to_string(seq) + ".snapshot.bin";
+        if (FILE* file = std::fopen(name.c_str(), "wb")) {
+            const size_t written = std::fwrite(copy->data.data(), sizeof(u32), copy->dcb_dwords, file);
+            std::fclose(file);
+            if (written == copy->dcb_dwords) std::fprintf(stderr, "  full snapshot: %s\n", name.c_str());
+        }
+    } else {
+        BbWriteLog::DumpRange(base, dwords * 4);
+    }
     std::fflush(stderr);
 }
 

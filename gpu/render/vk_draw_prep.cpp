@@ -77,9 +77,12 @@ u32 DefaultWorkerCount() {
     if (const char* env = std::getenv("BB_PREP_WORKERS")) {
         return static_cast<u32>(std::clamp(std::atoi(env), 0, 16));
     }
-    // Workers are SCHED_IDLE and claim whole buffers, so more of them only use more idle
-    // cores: half the hardware threads (Steam Deck 4, 16-thread desktop 8).
-    return std::clamp<u32>(BbThreads::Available() / 2, 1, 8);
+    // Workers are SCHED_IDLE and claim whole buffers, but more of them were slower: CPU-bound
+    // (docs/pipeline_4stage.ru.md, three interleaved runs each) 16 threads with 4 workers +5%
+    // over 8, 4 cores / 8 threads with 1 worker +4% over 4. A quarter of the hardware threads
+    // from 12 (16-thread desktop 4), else one (Steam Deck).
+    const u32 available = BbThreads::Available();
+    return available >= 12 ? std::min<u32>(available / 4, 8) : 1;
 }
 
 /// Flattened user data of one submission: chunks never move, so the GPU thread can read a

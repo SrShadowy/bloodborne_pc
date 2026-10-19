@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "render/runtime.h"
 
+#include <bit>
 #include <algorithm>
 
 #include <boost/container/small_vector.hpp>
@@ -229,6 +230,20 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
         needs_flush = IsBufferAccessed(src, src_min, src_max - src_min) ||
                       IsBufferAccessed(dst, dst_min, dst_max - dst_min, true);
     }
+    // BB_GPU_PROFILE: buffer copies get a mark of their own (by size class), as image transfers.
+    GpuProfiler* profiler = GpuProfiler::Get();
+    u64 resume = 0;
+    if (profiler && profiler->Records(&scheduler)) {
+        u64 total = 0;
+        for (const auto& copy : copies) {
+            total += copy.size;
+        }
+        const u32 log2 = total ? u32(std::bit_width(total) - 1) : 0;
+        resume = profiler->Current();
+        profiler->Mark(0xB0FC'0000ull + log2, [log2] {
+            return fmt::format("buffer copy, {} KiB class", (1ull << log2) >> 10);
+        });
+    }
     if (needs_flush) {
         FlushBarriers();
     }
@@ -236,6 +251,9 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
                       regions = scheduler.RecordData(copies)](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyBuffer(src, dst, u32(regions.size()), regions.data());
     });
+    if (resume) {
+        profiler->Resume(resume);
+    }
     if (bounded) {
         AccessBuffer(src, src_min, src_max - src_min, Stage::eCopy, AccessBit::eTransferRead);
         AccessBuffer(dst, dst_min, dst_max - dst_min, Stage::eCopy, AccessBit::eTransferWrite);

@@ -119,6 +119,16 @@ class NativeUiTests(unittest.TestCase):
 
 
 class DebugPatchTests(unittest.TestCase):
+    def test_ssr_uses_complete_startup_patch_with_live_effects(self):
+        for env in ({}, {'BB_HOT_EFFECTS': '0'}):
+            names = effect_patches({'effect_ssr': '1'}, env)
+            writes = dict(compile_patches(XML, names, '01.09', SEGMENTS))
+            # Replace both dimension-halving instructions before allocation.
+            self.assertEqual(writes[0x22c428d], bytes.fromhex('0f1f4000'))
+            self.assertEqual(len(writes), 10)
+            self.assertEqual(effect_patches({'effect_ssr': '0'}, env), [])
+        self.assertEqual(effect_patches({'effect_bloom': '0'}, {}), [])
+
     def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
         self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0'}), [])
         camera = effect_patches({'debug_camera': '1'})
@@ -230,6 +240,14 @@ class IntelTonemapTests(unittest.TestCase):
         xml = ET.parse(ROOT / 'patches/Bloodborne.xml')
         names = [m.get('Name') for m in xml.iter('Metadata')]
         self.assertIn(patches.INTEL_TONEMAP, names)
+
+
+class GxCommandHeapTests(unittest.TestCase):
+    def test_compiled_patch_changes_only_the_two_heap_size_operands(self):
+        writes = dict(compile_patches(XML, [patches.GX_COMMAND_HEAP], '01.09', SEGMENTS))
+        expected = {0x2195c0a: struct.pack('<I', 1024 * 1024),
+                    0x2195c47: struct.pack('<I', 1024 * 1024)}
+        self.assertEqual(writes, expected)
 
 
 if __name__ == '__main__':

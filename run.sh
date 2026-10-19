@@ -242,6 +242,18 @@ fi
 # Online play (BB_ONLINE=1, launcher: Online; the online module gpu/bbnet): the game's own server
 # goes to the community server, summon signs to the shadNet WebAPI (scripts/online.py).
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
+    # The shadPS4 0.20 module (gpu/bbnet20) answers both pools: Seamless Hunt (shadNet with BBSC) and
+    # The Hunter's Dream (BB_NET_BACKEND=thd, without BBSC). BB_NET_GEN=19: the older shadp2p module
+    # (gpu/bbnet) with BBSC, kept as a fallback.
+    export BB_NET_GEN=${BB_NET_GEN:-20}
+    if [[ ${BB_NET_BACKEND:-} == thd ]]; then
+        BB_NET_GEN=20
+        unset BB_BBSC
+    fi
+    if [[ $BB_NET_GEN == 20 && -z ${BB_NET_MODULE:-} ]]; then
+        if [[ -n ${BB_PREBUILT:-} ]]; then BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so; else BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so; fi
+        export BB_NET_MODULE
+    fi
     export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-play.seamlesshunt.com:31313}
     # HTTPS needs CA certificates: OpenSSL from Nix looks only in its own store path (the
     # packaged wrapper brings a bundle; from source the system's is taken).
@@ -275,8 +287,21 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
             export BB_COMMUNITY_SERVER=http://127.0.0.1
         fi
     fi
-    SHADPS4_HTTP_HOST_OVERRIDES_JSON=$("$PYTHON" scripts/online.py overrides --user "${BB_USER_DIR:-$data/user}") || true
-    export SHADPS4_HTTP_HOST_OVERRIDES_JSON
+    user_data=${BB_USER_DIR:-$data/user}
+    if [[ ${BB_NET_BACKEND:-} == thd ]]; then
+        # The Hunter's Dream (bbhost's protocol): the account comes from the launcher's Discord sign-in.
+        if [[ -z ${BB_THD_TOKEN:-} || -z ${BB_THD_ONLINE_ID:-} ]]; then
+            echo "The Hunter's Dream: not signed in (launcher: Online -> Sign in with Discord)." >&2; exit 1
+        fi
+        thd_out=$("$PYTHON" scripts/online.py thd-overrides --user "$user_data") || exit 1
+        SHADPS4_HTTP_HOST_OVERRIDES_JSON=$(sed -n 1p <<<"$thd_out")
+        thd_base=$(sed -n 2p <<<"$thd_out")
+        export SHADPS4_HTTP_HOST_OVERRIDES_JSON BB_THD_SERVER=${BB_THD_SERVER:-$thd_base:18671} BB_THD_AUTH=${BB_THD_AUTH:-$thd_base}
+        unset BB_SHADNET_SERVER BB_SHADNET_WEBAPI BB_SHADNET_NPID BB_SHADNET_PASSWORD BB_SHADNET_TOKEN
+    else
+        SHADPS4_HTTP_HOST_OVERRIDES_JSON=$("$PYTHON" scripts/online.py overrides --user "$user_data") || true
+        export SHADPS4_HTTP_HOST_OVERRIDES_JSON
+    fi
 fi
 probe_args=("$out/boot-linked.bin" --content-profile "$out/content.bin" --patches "$out/patches.bin" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
 if [[ -n ${mod_game:-} ]]; then

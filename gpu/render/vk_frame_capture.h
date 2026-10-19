@@ -30,6 +30,11 @@ public:
     static bool IsDisplayBuffer(VAddr address);
 
     /// GPU thread: whether passes are being looked at (armed or recording; cheap).
+    /// Flips seen so far (frame numbers in diagnostics).
+    static u64 Flips() {
+        return flips.load(std::memory_order_relaxed);
+    }
+
     static bool Active() {
         return state.load(std::memory_order_relaxed) != Idle;
     }

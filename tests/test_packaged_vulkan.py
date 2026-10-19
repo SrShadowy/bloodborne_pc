@@ -82,6 +82,24 @@ class PackagedVulkanTests(unittest.TestCase):
         self.configure()
         self.assertEqual(self.env, before)
 
+    def test_debian_nvidia_siblings_one_level_up_are_linked(self):
+        # Debian 13: the ICD in nvidia/current/, glsi/tls/glcore in the multiarch directory (#205).
+        current = self.libs / "nvidia" / "current"
+        current.mkdir(parents=True)
+        driver = current / "libGLX_nvidia.so.550.163.01"
+        driver.write_bytes(self.library("tmp").read_bytes())
+        (self.libs / "tmp").unlink()
+        (self.libs / "libGLX_nvidia.so.0").symlink_to(driver)
+        glsi = self.library("libnvidia-glsi.so.550.163.01")
+        own = current / "libnvidia-glcore.so.550.163.01"
+        own.write_bytes(glsi.read_bytes())
+        self.library("libnvidia-glcore.so.550.163.01")  # the ICD directory's copy wins
+        self.manifest()
+        self.configure()
+        cache = Path(self.env["LD_LIBRARY_PATH"].split(":")[0])
+        self.assertEqual((cache / glsi.name).resolve(), glsi)
+        self.assertEqual((cache / own.name).resolve(), own)
+
     def nvidia_host(self):
         driver = self.library("libGLX_nvidia.so.580.1")
         (self.libs / "libGLX_nvidia.so.0").symlink_to(driver.name)

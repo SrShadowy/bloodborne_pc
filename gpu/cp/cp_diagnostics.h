@@ -5,6 +5,7 @@
 #pragma once
 
 #include <chrono>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -12,6 +13,10 @@
 #include "common/types.h"
 
 namespace BbCp::Diagnostics {
+
+struct SubmittedCopy;
+/// BB_GNM_WRITES_TRACE: retain bounded recent snapshots to identify reused command storage.
+void RememberSubmittedCopy(std::shared_ptr<const SubmittedCopy> copy);
 
 /// A type-3 opcode's name (its number in hex if unknown).
 std::string OpName(u32 op);
@@ -23,7 +28,8 @@ void ScanDcb(std::span<const u32> dcb, int depth);
 void NoteWait(int outcome, double ms = 0);
 
 /// A packet that cannot be decoded: where, in which buffer, what surrounds it.
-void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq, int depth);
+void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq, int depth,
+                     const SubmittedCopy* copy = nullptr);
 
 /// Where a label for the guest is (a fence, an end-of-pipe or release event's value).
 enum class LabelStep : u8 {
@@ -48,7 +54,10 @@ struct SubmittedCopy {
     const u32* guest_ccb{};
     std::size_t ccb_dwords{};
     std::chrono::steady_clock::time_point submitted;
+    std::size_t bad_dcb_at_submit = ~std::size_t(0);
 };
+/// Record whether the submitted snapshot already contains a malformed top-level packet.
+void InspectSubmittedCopy(SubmittedCopy& copy);
 /// After it was decoded: whether the guest changed its command buffers since.
 void CheckSubmittedCopy(const SubmittedCopy& copy, u64 seq);
 

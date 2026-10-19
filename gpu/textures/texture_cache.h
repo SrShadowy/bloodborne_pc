@@ -179,6 +179,7 @@ public:
     /// The guest wrote [addr, addr + size): the images there are dirty (or maybe dirty).
     void InvalidateMemory(VAddr addr, size_t size);
     /// The GPU wrote the memory of the image starting at `address` as a buffer.
+    /// GPU buffer write: refresh images starting here and wholly covered by max_size.
     void InvalidateMemoryFromGPU(VAddr address, size_t max_size);
     /// The range was unmapped: its images go.
     void UnmapMemory(VAddr cpu_addr, size_t size);
@@ -233,6 +234,13 @@ public:
 
     /// Calls `func(id, image)` once for each image overlapping [addr, addr + size); a `func`
     /// returning bool stops at true.
+    /// ForEachImageInRegion under the registry mutex (diagnostics from other threads).
+    template <typename Func>
+    void ForEachImageInRegionLocked(VAddr addr, size_t size, Func&& func) {
+        std::scoped_lock lock{mutex};
+        ForEachImageInRegion(addr, size, std::forward<Func>(func));
+    }
+
     template <typename Func>
     void ForEachImageInRegion(VAddr addr, size_t size, Func&& func) {
         using Result = std::invoke_result_t<Func, ImageId, Image&>;

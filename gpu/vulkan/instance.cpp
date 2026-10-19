@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include <fmt/ranges.h>
 #include <vk_mem_alloc.h>
@@ -117,6 +118,17 @@ Instance::~Instance() {
 void Instance::PickPhysicalDevice(s32 device_index) {
     const auto devices = Check<"enumerate GPUs">(instance->enumeratePhysicalDevices());
     ASSERT_MSG(!devices.empty(), "no GPU with Vulkan found");
+    // The launcher found the host's NVIDIA driver (bbport_vulkan.py), yet it gave no device: it
+    // failed to load, and the game would quietly run on another GPU (#205).
+    const char* drivers = std::getenv("VK_DRIVER_FILES");
+    if (drivers && std::strstr(drivers, "/vulkan/nvidia/") &&
+        std::ranges::none_of(devices, [](vk::PhysicalDevice device) {
+            return device.getProperties().vendorID == 0x10de;
+        })) {
+        std::printf("GPU: WARNING: the host's NVIDIA Vulkan driver did not load, another GPU is "
+                    "used (see the loader's errors above; --vulkan-info lists the NVIDIA "
+                    "libraries it could not find)\n");
+    }
     if (device_index >= 0) {
         ASSERT_MSG(u32(device_index) < devices.size(), "GPU {} asked for; there are {}",
                    device_index, devices.size());
@@ -252,6 +264,9 @@ void Instance::CreateDevice() {
     ext.memory_fd = enable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
     ext.dma_buf = ext.memory_fd && enable(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
     ext.memory_host = enable(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+    if (const char* env = std::getenv("BB_GUEST_UNCACHED"); env && env[0] == '1') {
+        ext.guest_uncached = enable(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
+    }
     // FSR 4: quad derivatives in compute shaders; FSR 4.1.1: mixed float dot products, and
     // FP8 cooperative matrices for its RDNA4 variant (FP16 ones run it emulated, for tests).
     ext.compute_derivatives = enable(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
@@ -409,6 +424,7 @@ void Instance::CreateDevice() {
     vk::PhysicalDeviceCooperativeMatrixFeaturesKHR matrix{.cooperativeMatrix = true};
     vk::PhysicalDeviceShaderFloat8FeaturesEXT float8{.shaderFloat8 = true,
                                                       .shaderFloat8CooperativeMatrix = true};
+    vk::PhysicalDeviceCoherentMemoryFeaturesAMD coherent{.deviceCoherentMemory = true};
 
     vk::DeviceCreateInfo create_info{
         .queueCreateInfoCount = u32(queues.size()),
@@ -447,6 +463,7 @@ void Instance::CreateDevice() {
     link_if(ext.mixed_float_dot, mixed_dot);
     link_if(ext.cooperative_matrix, matrix);
     link_if(ext.float8, float8);
+    link_if(ext.guest_uncached, coherent);
 
     // DLSS (optional bridge library) needs its own device extensions on NVIDIA GPUs.
     const size_t own_extensions = enabled.size();

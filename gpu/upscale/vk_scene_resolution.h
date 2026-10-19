@@ -74,6 +74,7 @@ public:
         return !copying && tracked.contains(image_uid);
     }
     void ResolveAll();
+    void CleanupStaleEntries(); ///< Remove proxy entries for images no longer in texture cache
     bool debug = false; ///< BB_SCENE_DEBUG frame: print resolves and fills
 private:
     struct Entry {

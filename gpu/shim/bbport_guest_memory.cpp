@@ -32,6 +32,13 @@ bool whole_only = false; // the driver's dma-buf maps at offset 0 only: a chunk 
 enum class Mode { DmaBuf, HostImport };
 Mode mode = Mode::DmaBuf;
 std::atomic<u64> chunk_bytes{0};
+// BB_GUEST_UNCACHED=1 (Instance::IsGuestUncached): only memory types the GPU reads past its caches.
+bool uncached = false;
+
+/// A type the guest memory may use: AMD's device-uncached types exactly when asked for.
+bool TypeAllowed(vk::MemoryPropertyFlags flags) {
+    return bool(flags & vk::MemoryPropertyFlagBits::eDeviceUncachedAMD) == uncached;
+}
 
 bool GuestInVram() {
     // bbport BB_GUEST_VRAM=1 (experiment): the game's direct memory in VRAM the CPU maps through
@@ -57,7 +64,7 @@ std::uint32_t FindType(std::uint32_t bits) {
     for (std::uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i) {
         const auto flags = memory_properties.memoryTypes[i].propertyFlags;
         if ((bits & (1u << i)) && (flags & want) == want &&
-            !(flags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
+            !(flags & vk::MemoryPropertyFlagBits::eDeviceLocal) && TypeAllowed(flags)) {
             return i;
         }
     }
@@ -186,8 +193,8 @@ std::uint32_t FindHostType(std::uint32_t bits) {
         for (std::uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i) {
             const auto flags = memory_properties.memoryTypes[i].propertyFlags;
             if (!(bits & (1u << i)) || !(flags & vk::MemoryPropertyFlagBits::eHostVisible) ||
-                (flags & vk::MemoryPropertyFlagBits::eDeviceLocal) ||
-                (cached && !(flags & vk::MemoryPropertyFlagBits::eHostCached))) {
+                (flags & vk::MemoryPropertyFlagBits::eDeviceLocal) || !TypeAllowed(flags) ||
+                (cached &&!(flags & vk::MemoryPropertyFlagBits::eHostCached))) {
                 continue;
             }
             return i;
@@ -684,6 +691,12 @@ bool Usable(const Vulkan::Instance& instance) {
     static const bool usable = [&] {
         device = instance.GetDevice();
         memory_properties = instance.GetPhysicalDevice().getMemoryProperties();
+        uncached = instance.IsGuestUncached();
+        if (uncached) {
+            std::printf("Guest memory: the GPU reads it uncached (BB_GUEST_UNCACHED=1, "
+                        "VK_AMD_device_coherent_memory): a diagnostic, as on NVIDIA's imported "
+                        "host memory\n");
+        }
         // BB_GUEST_MEMORY=dmabuf|host chooses; else AMD uses dma-buf chunks (tested the most) and
         // other GPUs host memory import first (NVIDIA: its dma-buf maps at offset 0 only, and
         // CPU access through it may be slow).

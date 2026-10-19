@@ -653,8 +653,36 @@ struct Upscaler::Impl {
         if (!uploaded) {
             Upload(cmd);
         }
+
+        // Clear recurrent buffers on scene change to prevent white screen / corruption
+        // from stale temporal data from the previous scene.
+        if (f.reset) {
+            // Use a full pipeline barrier to avoid WAW hazards if these buffers
+            // were written in the previous frame.
+            VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 0, 1, &mb, 0, nullptr, 0, nullptr);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const VkClearColorValue zero{};
+            for (Img* img : {&recurrent, &history, &reprojected}) {
+                vkCmdClearColorImage(cmd, img->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+            }
+            mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 0, 1, &mb, 0, nullptr, 0, nullptr);
+            std::printf("FSR 4.1.1: cleared recurrent buffers on reset (scene change)\n");
+        }
+
         const uint32_t aw = (ow + 7) & ~7u, ah = (oh + 7) & ~7u;
         const float pre_exposure = f.pre_exposure > 0.0f ? f.pre_exposure : 1.0f;
+
+        // Reset state on scene change: previous exposure must match the new scene, not the old one.
+        if (f.reset) {
+            previous_pre_exposure = 0.0f;
+        }
 
         // Constant buffers of this frame: MLSR, SPD, RCAS.
         const uint32_t ring = uint32_t(frame_index++ % kFramesInFlight);

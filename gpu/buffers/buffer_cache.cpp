@@ -126,6 +126,81 @@ GpuWriteTicks& WriteTicks() {
     return write_ticks;
 }
 
+// bbport: GPU writes known to the byte (the copy shader's control list, CopyShaderDestinations): a
+// few KiB at a time anywhere in 3.5 GiB, ~4000 times a second. In 64 KiB pages they marked the
+// constants beside them as written by the GPU: bound in place instead of copied, a later constant
+// RAM dump changed them before the GPU read them (single frames with another draw's quad).
+// Small queries look at 256-byte granules (hashed; a collision only says "written" more often),
+// larger ones at 64 KiB pages of their own.
+struct PreciseWriteTicks {
+    static constexpr u64 Shift = 8, Bits = 20;
+    static constexpr u64 SmallLimit = 16_KB;
+    std::vector<std::atomic<u64>> granules = std::vector<std::atomic<u64>>(1ull << Bits);
+    GpuWriteTicks pages;
+    static u64 Slot(u64 granule) {
+        return (granule * 0x9E3779B97F4A7C15ull) >> (64 - Bits);
+    }
+    void Note(u64 address, u64 size, u64 tick) {
+        if (size == 0) {
+            return;
+        }
+        for (u64 g = address >> Shift; g <= (address + size - 1) >> Shift; ++g) {
+            auto& slot = granules[Slot(g)];
+            if (slot.load(std::memory_order_relaxed) < tick) {
+                slot.store(tick, std::memory_order_release);
+            }
+        }
+        pages.Note(address, size, tick);
+    }
+    u64 Newest(u64 address, u64 size) const {
+        if (size == 0) {
+            return 0;
+        }
+        if (size > SmallLimit) {
+            return pages.Newest(address, size);
+        }
+        u64 newest = 0;
+        for (u64 g = address >> Shift; g <= (address + size - 1) >> Shift; ++g) {
+            newest = std::max(newest, granules[Slot(g)].load(std::memory_order_acquire));
+        }
+        return newest;
+    }
+};
+PreciseWriteTicks& PreciseTicks() {
+    static PreciseWriteTicks ticks;
+    return ticks;
+}
+/// A GPU command write (WRITE_DATA, DMA): small ones to the byte. In 64 KiB pages the 192 bytes the
+/// game writes each frame beside its constant RAM dump ring marked the ring as written by the GPU:
+/// the final pass's constants were bound in place, the next dump replaced them before the GPU read
+/// them (single frames with the scene shifted or cut to a quarter; docs/Flicker_video_2026-10-17.ru.md).
+void NoteCommandWriteTick(u64 address, u64 size, u64 tick) {
+    if (size <= PreciseWriteTicks::SmallLimit) {
+        PreciseTicks().Note(address, size, tick);
+    } else {
+        WriteTicks().Note(address, size, tick);
+    }
+}
+
+/// BB_GPU_WRITE_WATCH=address (diagnostics): GPU writes noted over the 64 KiB page holding it.
+void WatchGpuWrite(u64 address, u64 size, int line) {
+    static const u64 watched = [] {
+        const char* env = std::getenv("BB_GPU_WRITE_WATCH");
+        return env ? std::strtoull(env, nullptr, 16) & ~0xFFFFull : 0ull;
+    }();
+    static std::atomic<u32> printed{0};
+    if (watched && address < watched + 0x10000 && address + size > watched &&
+        printed.fetch_add(1, std::memory_order_relaxed) < 2000) {
+        std::printf("GPU write watch: line %d %#llx+%llu frame %llu\n", line,
+                    (unsigned long long)address, (unsigned long long)size,
+                    (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed));
+    }
+}
+/// The newest GPU write tick in the range: page-granular writes and those known to the byte.
+u64 NewestGpuWrite(u64 address, u64 size) {
+    return std::max(WriteTicks().Newest(address, size), PreciseTicks().Newest(address, size));
+}
+
 // bbport (BB_READBACK_LOG): the newest GPU-written bindings, to show which writes a readback that
 // waited for the GPU overlapped (a binding wider than what the shader writes would show here).
 struct WrittenBinding {
@@ -522,15 +597,18 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
                     "in VRAM (as BB_GUEST_IN_PLACE=0)\n");
     }
     // Hooks in the game's own code, from its profile (games/). BB_GUEST_HOOKS=0: none, as for a
-    // game the port knows nothing about.
+    // game the port knows nothing about. Guards, aspect ratio and input hooks also apply to
+    // the old memory model; only GPU-range notifications require memory in place (#214).
     const char* hooks_env = std::getenv("BB_GUEST_HOOKS");
     const Game::Profile* game = Game::Active();
-    if (GuestInPlace() && game && game->install_hooks && !(hooks_env && hooks_env[0] == '0')) {
+    if (game && game->install_hooks && !(hooks_env && hooks_env[0] == '0')) {
         static BufferCache* hooked_cache = this;
         game->install_hooks(Game::CoreServices{
-            .fresh_range = [](u64 address, u64 size) { hooked_cache->NoteFreshRange(address, size); },
+            .fresh_range = GuestInPlace() ? +[](u64 address, u64 size) {
+                hooked_cache->NoteFreshRange(address, size);
+            } : nullptr,
         });
-    } else if (GuestInPlace() && game) {
+    } else if (game && game->install_hooks) {
         std::printf("Guest hooks: off (BB_GUEST_HOOKS=0): nothing in the game's own code is hooked\n");
     }
     if (LayerMode()) {
@@ -686,7 +764,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             gpu_modified_ranges.ForEachInRange(page_begin, page_end - page_begin,
                                                [&](VAddr start, VAddr end) {
                                                    gpu_bytes += end - start;
-                                                   tick = std::max(tick, WriteTicks().Newest(
+                                                   tick = std::max(tick, NewestGpuWrite(
                                                                              start, end - start));
                                                });
             if (gpu_bytes != 0 && gpu_bytes <= TwinsMaxBytes() && tick != 0 &&
@@ -721,7 +799,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
             u64 window_tick = 0;
             gpu_modified_ranges.ForEachInRange(
                 window_start, window_end - window_start, [&](VAddr start, VAddr end) {
-                    window_tick = std::max(window_tick, WriteTicks().Newest(start, end - start));
+                    window_tick = std::max(window_tick, NewestGpuWrite(start, end - start));
                 });
             if (window_tick != 0 && !scheduler.IsFree(window_tick)) {
                 download_start = Common::AlignDown(device_addr, BbMem::PageSize);
@@ -777,7 +855,7 @@ void BufferCache::LayerCopyBackForCpu(VAddr address, bool may_record) {
             copies.push_back({mirror_buffer->Offset(start), total, end - start});
             guests.push_back(start);
             total += Common::AlignUp(end - start, 64);
-            tick = std::max(tick, WriteTicks().Newest(start, end - start));
+            tick = std::max(tick, NewestGpuWrite(start, end - start));
         });
     }
     bool copied = copies.empty();
@@ -894,7 +972,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     // memory a GPU pass had written).
     u64 write_tick = 0;
     for (const auto& copy : copies) {
-        write_tick = std::max(write_tick, WriteTicks().Newest(arena_base + copy.srcOffset, copy.size));
+        write_tick = std::max(write_tick, NewestGpuWrite(arena_base + copy.srcOffset, copy.size));
     }
     const bool write_done = write_tick != 0 && scheduler.IsFree(write_tick);
     bool fast = false;
@@ -1139,16 +1217,21 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         }
         if (IsInPlace(device_addr, size)) {
             if (is_written) {
-                WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+                WatchGpuWrite(device_addr, size, __LINE__), WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
             }
             BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
             if (is_written) {
                 BbStats::bound_in_place_written_bytes.fetch_add(size, std::memory_order_relaxed);
             }
+            std::pair<const Buffer*, u64> vram_copy{};
             if (is_texel_buffer && !is_written) {
-                SynchronizeMemoryFromImage(arena, arena->Offset(device_addr), device_addr, size);
+                SynchronizeMemoryFromImage(arena, arena->Offset(device_addr), device_addr, size,
+                                           &vram_copy);
             }
             TraceBinding(device_addr, size, is_written, is_written ? 0 : 2);
+            if (vram_copy.first) {
+                return vram_copy; // the image tiled in VRAM (SynchronizeMemoryFromImage)
+            }
             if (!is_written && !is_texel_buffer) {
                 if (const auto shadow = ShadowCopy(device_addr, size)) {
                     return *shadow;
@@ -1160,8 +1243,11 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             return {arena, arena->Offset(device_addr)};
         }
     }
+    // BB_EXP_NO_STREAM=1 (experiment, the flicker): never through the stream buffer.
+    static const bool no_stream = std::getenv("BB_EXP_NO_STREAM") != nullptr;
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
-    if (!is_written && size <= STREAM_THRESHOLD && !IsRegionGpuModified(device_addr, size)) {
+    if (!is_written && size <= STREAM_THRESHOLD && !IsRegionGpuModified(device_addr, size) &&
+        !no_stream) {
         BB_SECTION(ObtainStream);
         if (stats) {
             auto& region = Stats().regions[RegionKey(device_addr)];
@@ -1212,7 +1298,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     }
     if (is_written) {
         gpu_modified_ranges.Add(device_addr, size);
-        WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+        WatchGpuWrite(device_addr, size, __LINE__), WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
         if (Readbacks()) {
             written_bindings[written_head.fetch_add(1) % written_bindings.size()] =
                 WrittenBinding{device_addr, size, scheduler.CurrentTick()};
@@ -1257,7 +1343,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
         }
         const auto target = LayerInPlace(device_addr, size);
         if (target) {
-            WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+            NoteCommandWriteTick(device_addr, size, scheduler.CurrentTick());
         }
         return target;
     }
@@ -1268,7 +1354,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
     if (!IsInPlace(device_addr, size)) {
         return std::nullopt;
     }
-    WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+    NoteCommandWriteTick(device_addr, size, scheduler.CurrentTick());
     return std::pair<const Buffer*, u64>{arena, arena->Offset(device_addr)};
 }
 
@@ -1378,7 +1464,7 @@ bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
         return true;
     }
     if (GuestInPlace()) {
-        const u64 tick = WriteTicks().Newest(addr, size);
+        const u64 tick = NewestGpuWrite(addr, size);
         if (tick == 0 || scheduler.GetWorkSemaphore()->IsFree(tick)) {
             return false;
         }
@@ -1621,9 +1707,15 @@ std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes, bool 
         vk::Result result = vk::Result::eErrorOutOfDeviceMemory;
         vk::DeviceMemory memory{};
         // FixedArena: no VRAM in the arena (system memory, as the guest chunks it is bound with).
+        // Out of memory here too returns none (AllocateResidency waits and tries again):
+        // Vulkan::Check stopped the game (#173: "Check: ErrorOutOfDeviceMemory"; PR #206).
         if (FixedArena() && arena_fallback_type_index) {
-            memory = Vulkan::Check(device.allocateMemory(
-                {.allocationSize = size, .memoryTypeIndex = *arena_fallback_type_index}));
+            auto host = device.allocateMemory(
+                {.allocationSize = size, .memoryTypeIndex = *arena_fallback_type_index});
+            if (host.result != vk::Result::eSuccess) {
+                return vk::DeviceMemory{};
+            }
+            memory = host.value;
             BbStats::device_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
             BbStats::residency_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
             return memory;
@@ -1645,8 +1737,12 @@ std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes, bool 
                             "go to system memory (slower)\n",
                             vk::to_string(result).c_str());
             }
-            memory = Vulkan::Check(device.allocateMemory(
-                {.allocationSize = size, .memoryTypeIndex = *arena_fallback_type_index}));
+            auto host = device.allocateMemory(
+                {.allocationSize = size, .memoryTypeIndex = *arena_fallback_type_index});
+            if (host.result != vk::Result::eSuccess) {
+                return vk::DeviceMemory{};
+            }
+            memory = host.value;
         } else {
             // No system-memory type for the arena (NVIDIA's sparse buffers take VRAM only):
             // AllocateResidency tries a smaller block and the other memory types.
@@ -1677,19 +1773,45 @@ std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes, bool 
             size = bytes;
             memory = allocate(size);
         }
-        const auto& types = instance.GetMemoryProperties();
-        for (u32 i = 0; !memory && i < types.memoryTypeCount; ++i) {
-            if (((arena_memory_type_bits >> i) & 1) && i != arena_memory_type_index) {
-                auto other = instance.GetDevice().allocateMemory({.allocationSize = size, .memoryTypeIndex = i});
-                if (other.result == vk::Result::eSuccess) {
-                    memory = other.value;
-                    BbStats::device_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
-                    BbStats::residency_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
+        // Just the request's size, then any other memory type the arena can be bound to.
+        const auto other_types = [&] {
+            const auto& types = instance.GetMemoryProperties();
+            vk::DeviceMemory any{};
+            for (u32 i = 0; !any && i < types.memoryTypeCount; ++i) {
+                if (((arena_memory_type_bits >> i) & 1) && i != arena_memory_type_index) {
+                    auto other = instance.GetDevice().allocateMemory({.allocationSize = size, .memoryTypeIndex = i});
+                    if (other.result == vk::Result::eSuccess) {
+                        any = other.value;
+                        BbStats::device_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
+                        BbStats::residency_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
+                    }
                 }
             }
+            return any;
+        };
+        if (!memory) {
+            memory = other_types();
         }
         if (!memory && may_fail) {
             return {vk::DeviceMemory{}, 0}; // the caller makes room (EnsureResident)
+        }
+        if (!memory) {
+            // Still full (#163, #173: 4 GB cards on area loads; PR #206): the images the
+            // collector evicted are destroyed only once the GPU is past them (DeleteImage), so
+            // their VRAM was still taken. Wait for the submitted work (not the one being
+            // recorded), run those deletions, try again.
+            scheduler.WaitSubmittedWork();
+            scheduler.PopPendingOperations();
+            memory = allocate(size);
+            if (!memory) {
+                memory = other_types();
+            }
+            static std::atomic<u32> waited{0};
+            if (memory && waited.fetch_add(1, std::memory_order_relaxed) < 8) {
+                std::printf("Guest memory: VRAM is full: waited for the GPU to free evicted "
+                            "textures (%llu MiB)\n",
+                            (unsigned long long)(size >> 20));
+            }
         }
         ASSERT_MSG(memory, "Failed to allocate {} MiB for guest memory copies: VRAM is full", size >> 20);
         residency_memory = memory;
@@ -1851,8 +1973,17 @@ void BufferCache::EvictVramBlock(u64 block) {
     const VAddr address = block << block_shift;
     for (const auto& arena : arenas) {
         if (arena.cpu_addr <= address && address - arena.cpu_addr < arena.size_bytes) {
-            BindsForArena(&arena)->binds.emplace_back(vk::SparseMemoryBind{
-                .resourceOffset = address - arena.cpu_addr,
+            // One unbind for neighbouring blocks: NVIDIA's vkQueueBindSparse is slow per range
+            // (PR #206).
+            auto& binds = BindsForArena(&arena)->binds;
+            const u64 offset_in_arena = address - arena.cpu_addr;
+            if (!binds.empty() && !binds.back().memory &&
+                binds.back().resourceOffset + binds.back().size == offset_in_arena) {
+                binds.back().size += block_size;
+                continue;
+            }
+            binds.emplace_back(vk::SparseMemoryBind{
+                .resourceOffset = offset_in_arena,
                 .size = block_size,
                 .memory = {},
                 .memoryOffset = 0,
@@ -3438,7 +3569,8 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
 }
 
 bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offset,
-                                             VAddr device_addr, u32 size) {
+                                             VAddr device_addr, u32 size,
+                                             std::pair<const Buffer*, u64>* vram_copy) {
     if (auto type = texture_cache.IsMeta(device_addr)) {
         if (*type == TextureCache::MetaType::HTile) {
             static constexpr u32 ZmaskUncompressed = 0xf;
@@ -3512,7 +3644,30 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
         }
     }
     auto& tile_manager = texture_cache.GetTileManager();
-    tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
+    // bbport: tiled in VRAM on its way to host memory (BB_LAYER_MEMORY): the shader reads that
+    // copy, not the game's memory over the bus (uncached for the GPU on NVIDIA). Measured small
+    // on its own (3.6 -> 3.5 ms a frame of copy dispatches with BB_GUEST_UNCACHED on an RX 7800
+    // XT: their writes cost, see IsComputeImageCopy). The bytes past the image come from where
+    // they are.
+    // BB_TILE_BIND_VRAM=0: read in place.
+    static const bool bind_vram = [] {
+        const char* env = std::getenv("BB_TILE_BIND_VRAM");
+        return !(env && env[0] == '0');
+    }();
+    const bool want_vram = vram_copy && bind_vram && device_addr == image.info.guest_address;
+    const auto tiled = tile_manager.TileImage(image, buffer_copies, arena, arena_offset,
+                                              want_vram ? size : 0);
+    if (want_vram && tiled.first) {
+        // A binding may end at the end of its chunk's buffer (LayerInPlace).
+        const u64 end = std::min<u64>(size, arena->SizeBytes() - arena_offset);
+        if (end > image.info.guest_size) {
+            const vk::BufferCopy tail{.srcOffset = arena_offset + image.info.guest_size,
+                                      .dstOffset = tiled.second + image.info.guest_size,
+                                      .size = end - image.info.guest_size};
+            runtime.CopyBuffer(arena, tiled.first, {&tail, 1});
+        }
+        *vram_copy = tiled;
+    }
     DropShadows(device_addr, size);
     // A GPU write like any other: what the GPU copies there each frame (a render target read as a
     // texel buffer) goes to VRAM instead of crossing PCIe twice (written there, read back).
@@ -3757,6 +3912,26 @@ void BufferCache::ReportArenaBinds() {
 
 namespace VideoCore {
 void BufferCache::NoteWriteTick(VAddr address, u64 size) {
+    // BB_TICK_LOG=1 (diagnostics): the ranges marked written by the GPU most often, per 5 s.
+    static const bool tick_log = std::getenv("BB_TICK_LOG") != nullptr;
+    if (tick_log) {
+        static std::mutex mutex;
+        static std::unordered_map<u64, u64> counts;
+        static auto last = std::chrono::steady_clock::now();
+        std::scoped_lock lk{mutex};
+        ++counts[address << 8 ^ std::min<u64>(size, 0xff)];
+        if (std::chrono::steady_clock::now() - last > std::chrono::seconds(5)) {
+            last = std::chrono::steady_clock::now();
+            std::vector<std::pair<u64, u64>> top(counts.begin(), counts.end());
+            std::ranges::sort(top, std::greater{}, [](const auto& e) { return e.second; });
+            std::string text;
+            for (size_t i = 0; i < std::min<size_t>(top.size(), 12); ++i) {
+                text += fmt::format(" {:#x}(sz~{}):{}", top[i].first >> 8, top[i].first & 0xff, top[i].second);
+            }
+            std::printf("GPU write ticks (5 s, %zu ranges):%s\n", counts.size(), text.c_str());
+            counts.clear();
+        }
+    }
     // The same range again in the same submission changes nothing: the copy shader's paged
     // bindings over nearly all memory (~60 a frame, ~10 a submission) were a store per MiB each.
     thread_local VAddr last_address = 0;
@@ -3768,7 +3943,7 @@ void BufferCache::NoteWriteTick(VAddr address, u64 size) {
     last_address = address;
     last_size = size;
     last_tick = tick;
-    WriteTicks().Note(address, size, tick);
+    WatchGpuWrite(address, size, __LINE__), WriteTicks().Note(address, size, tick);
 }
 } // namespace VideoCore
 
@@ -3831,5 +4006,25 @@ bool BufferCache::VramPromotionsPaused() {
         full = now_full;
     }
     return full;
+}
+} // namespace VideoCore
+
+namespace VideoCore {
+void BufferCache::NoteBindingWriteTick(VAddr address, u64 size) {
+    if (!precise_writes || !force_writes_in_place) {
+        NoteWriteTick(address, size);
+        return;
+    }
+    const VAddr end = address + size;
+    const auto& ranges = *precise_writes;
+    auto it = std::lower_bound(ranges.begin(), ranges.end(), address,
+                               [](const auto& r, VAddr a) { return r.first + r.second <= a; });
+    for (; it != ranges.end() && it->first < end; ++it) {
+        const VAddr from = std::max<VAddr>(it->first, address);
+        const VAddr to = std::min<VAddr>(it->first + it->second, end);
+        if (from < to) {
+            WatchGpuWrite(from, to - from, __LINE__), PreciseTicks().Note(from, to - from, scheduler.CurrentTick());
+        }
+    }
 }
 } // namespace VideoCore

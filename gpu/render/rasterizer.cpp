@@ -2,7 +2,12 @@
 // bbport render: Rasterizer, the draw and dispatch entry points: pipeline selection, then recording here or on the
 // draw recording thread (raster_pipe.cpp), and the per-frame bookkeeping.
 
+#include <mutex>
+#include <set>
+#include <string>
+#include <filesystem>
 #include "render/raster_internal.h"
+#include <vk_mem_alloc.h>
 
 namespace Vulkan {
 
@@ -49,6 +54,19 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     if (DrawPipeWanted()) {
         constant_ring = std::make_unique<ConstantRing>(instance, scheduler);
         draw_pipe = std::make_unique<DrawPipe>(&RunDrawPacket, this);
+        // BB_RESOLVE_WORKERS=n (stage 2, docs/pipeline_4stage.ru.md): threads that check and copy
+        // the constants of draws between the GPU command thread and the recording thread.
+        static const u32 resolvers = [] {
+            const char* env = std::getenv("BB_RESOLVE_WORKERS");
+            return env ? u32(std::clamp(std::atoi(env), 0, 4)) : 0u;
+        }();
+        if (resolvers != 0) {
+            for (u32 i = 0; i < resolvers; ++i) {
+                worker_rings.push_back(std::make_unique<ConstantRing>(instance, scheduler));
+            }
+            draw_pipe->StartResolvers(&ResolvePacket, resolvers);
+            std::printf("GPU: %u constant resolve workers (BB_RESOLVE_WORKERS)\n", resolvers);
+        }
     }
     // bbport: this thread joins the texture binding helper before it changes image state.
     runtime.SetImageAccessHook(&JoinBindHelper, this);
@@ -59,6 +77,166 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
 }
 
 Rasterizer::~Rasterizer() = default;
+
+namespace {
+/// BB_PASS_DUMP=addr,addr (hex guest addresses of render targets) with BB_PASS_DUMP_TRIGGER=<file>
+/// (diagnostics, the flicker): while the file exists, every 8th row of those images is saved at
+/// each display pass (BB_DUMP_DIR/pNNNNN_<addr>_<w>x<h>_<bits>.raw), little enough not to change
+/// the frame's timing much.
+std::vector<VAddr> PassDumpAddresses() {
+    std::vector<VAddr> out;
+    if (const char* env = std::getenv("BB_PASS_DUMP")) {
+        for (const char* at = env; *at;) {
+            char* end = nullptr;
+            out.push_back(std::strtoull(at, &end, 16));
+            at = *end ? end + 1 : end;
+        }
+    }
+    return out;
+}
+} // namespace
+
+void Rasterizer::DumpTracedInputs() {
+    if (traced_inputs.empty()) {
+        return;
+    }
+    static const std::string dir = [] {
+        const char* env = std::getenv("BB_DUMP_DIR");
+        return std::string{env && env[0] ? env : "out/dump"};
+    }();
+    VkDeviceSize total = 0;
+    for (const auto& r : traced_inputs) total += r.size;
+    const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                       .size = total,
+                                       .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const VmaAllocationCreateInfo alloc_ci{
+        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+    VkBuffer buffer{};
+    VmaAllocation allocation{};
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                        &info) != VK_SUCCESS) {
+        traced_inputs.clear();
+        return;
+    }
+    scheduler.EndRendering();
+    auto ranges = traced_inputs;
+    scheduler.Record([ranges, buffer](vk::CommandBuffer cmd) {
+        const vk::MemoryBarrier2 before{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+        };
+        cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &before});
+        VkDeviceSize at = 0;
+        for (const auto& r : ranges) {
+            cmd.copyBuffer(r.buffer, buffer, vk::BufferCopy{r.offset, at, r.size});
+            at += r.size;
+        }
+    });
+    std::string header;
+    for (const auto& r : traced_inputs) {
+        header += fmt::format("{:x}+{:x}:{} ", (u64)(VkBuffer)r.buffer, r.offset, r.size);
+    }
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/g%06llu.bin", dir.c_str(),
+                  (unsigned long long)traced_inputs_frame);
+    scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation, info,
+                                      total, file = std::string{path}, header] {
+        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+        if (FILE* f = std::fopen(file.c_str(), "wb")) {
+            const u32 n = u32(header.size());
+            std::fwrite(&n, 4, 1, f);
+            std::fwrite(header.data(), 1, n, f);
+            std::fwrite(info.pMappedData, 1, total, f);
+            std::fclose(f);
+        }
+        vmaDestroyBuffer(allocator, buffer, allocation);
+    });
+    traced_inputs.clear();
+}
+
+void Rasterizer::DumpPassImages(char tag) {
+    static const std::vector<VAddr> addresses = PassDumpAddresses();
+    static const char* trigger = std::getenv("BB_PASS_DUMP_TRIGGER");
+    if (addresses.empty() || !trigger || !std::filesystem::exists(trigger)) {
+        return;
+    }
+    static const std::string dir = [] {
+        const char* env = std::getenv("BB_DUMP_DIR");
+        return std::string{env && env[0] ? env : "out/dump"};
+    }();
+    static u32 indices[2] = {};
+    const u32 n = indices[tag == 'p' ? 0 : 1]++;
+    std::printf("Pass dump %c %u: GPU frame %llu\n", tag, n,
+                (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed));
+    scheduler.EndRendering();
+    for (const VAddr address : addresses) {
+        VideoCore::Image* found = nullptr;
+        texture_cache.ForEachImageInRegion(address, 1, [&](VideoCore::ImageId, VideoCore::Image& image) {
+            if (image.info.guest_address == address &&
+                (!found || image.info.size.width > found->info.size.width)) {
+                found = &image;
+            }
+        });
+        if (!found || found->info.num_bits == 0) {
+            continue;
+        }
+        const u32 width = found->info.size.width, height = found->info.size.height;
+        const u32 bytes = found->info.num_bits / 8;
+        static const u32 step = [] {
+            const char* env = std::getenv("BB_PASS_DUMP_STEP");
+            return env ? std::max(1, std::atoi(env)) : 8;
+        }();
+        const u32 rows = (height + step - 1) / step;
+        const VkDeviceSize size = VkDeviceSize(width) * rows * bytes;
+        const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                           .size = size,
+                                           .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        const VmaAllocationCreateInfo alloc_ci{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+        VkBuffer buffer{};
+        VmaAllocation allocation{};
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                            &info) != VK_SUCCESS) {
+            continue;
+        }
+        runtime.Transit(found, vk::ImageLayout::eTransferSrcOptimal,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+        runtime.FlushBarriers();
+        const vk::Image image = found->GetImage();
+        const vk::ImageAspectFlags aspect = found->aspect_mask & ~vk::ImageAspectFlagBits::eStencil;
+        scheduler.Record([=](vk::CommandBuffer cmd) {
+            std::vector<vk::BufferImageCopy> regions;
+            regions.reserve(rows);
+            for (u32 r = 0; r < rows; ++r) {
+                regions.push_back({
+                    .bufferOffset = VkDeviceSize(r) * width * bytes,
+                    .imageSubresource = {aspect, 0, 0, 1},
+                    .imageOffset = {0, s32(r * step), 0},
+                    .imageExtent = {width, 1, 1},
+                });
+            }
+            cmd.copyImageToBuffer(image, vk::ImageLayout::eTransferSrcOptimal, buffer, regions);
+        });
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/%c%05u_%llx_%ux%u_%u.raw", dir.c_str(), tag, n,
+                      (unsigned long long)address, width, rows, found->info.num_bits);
+        scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
+                                          info, size, file = std::string{path}] {
+            vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+            if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                std::fwrite(info.pMappedData, 1, size, f);
+                std::fclose(f);
+            }
+            vmaDestroyBuffer(allocator, buffer, allocation);
+        });
+    }
+}
 
 
 namespace {
@@ -122,6 +300,46 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     DrawRecord(pipeline, used_prepared, is_indexed, index_offset);
 }
 
+/// The guest memory a draw reads, in its breadcrumb: a GPU stuck in the draw is reported with it
+/// (a stalled read of the game's memory on NVIDIA, whose hangs show no fault).
+static void NoteCrumbReads(Breadcrumbs::Crumb& crumb, const GraphicsPipeline* pipeline,
+                           const auto& regs, bool is_indexed, u32 index_offset) {
+    u32 n = 0;
+    const auto add = [&](char kind, u64 address, u32 size) {
+        if (address && n < Breadcrumbs::Crumb::MaxReads) {
+            crumb.read_kinds[n] = kind;
+            crumb.reads[n] = address;
+            crumb.read_sizes[n++] = size;
+        }
+    };
+    if (is_indexed) {
+        const u32 index_size = regs.index_buffer_type.index_type == Gcn::IndexType::Index16 ? 2u : 4u;
+        add('i', regs.index_base_address.template Address<VAddr>() + u64(index_offset) * index_size,
+            regs.num_indices * index_size);
+    }
+    const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
+    if (const auto& fetch = pipeline->GetFetchShader()) {
+        for (const auto& attribute : fetch->attributes) {
+            const auto sharp = attribute.GetSharp(vs);
+            add('v', sharp.base_address, sharp.GetSize());
+        }
+    }
+    for (const auto* stage : {&vs, pipeline->GetStages()[u32(Shader::SwStage::Fragment)]}) {
+        if (!stage) {
+            continue;
+        }
+        for (const auto& buffer : stage->buffers) {
+            if (!buffer.IsSpecial()) {
+                const auto sharp = buffer.GetSharp(*stage);
+                add('b', sharp.base_address, sharp.GetSize());
+            }
+        }
+        for (const auto& image : stage->images) {
+            add('t', image.GetSharp(*stage).Address(), 0);
+        }
+    }
+}
+
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
     BB_SECTION(DrawRecord);
@@ -148,6 +366,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (camera_motion->Enabled() && regs.color_buffers[0] &&
         FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
         scene_started = false;
+        DumpTracedInputs();
+        DumpPassImages('p');
         upscaler->OnDisplayPassStart(regs.color_buffers[0].Address());
         camera_motion->OnDisplayPass(cb_descs[0].first);
         if (upscaler->OnFrameStart()) {
@@ -185,6 +405,66 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     motion_draw = pipeline->GetGraphicsKey().motion_vectors;
     motion_geometry = 0;
 
+    // BB_EXP_FINISH_BEFORE_TARGET=addr (experiment, the flicker): the GPU runs everything before
+    // a draw into that color target before the draw is recorded.
+    static const VAddr finish_target = [] {
+        const char* env = std::getenv("BB_EXP_FINISH_BEFORE_TARGET");
+        return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+    }();
+    if (finish_target && Regs().color_buffers[0] &&
+        Regs().color_buffers[0].Address() == finish_target) {
+        scheduler.Finish();
+    }
+    // BB_PASS_DUMP_AT=addr (diagnostics): BB_PASS_DUMP's images also before the first draw of a
+    // pass into that color target ('q' files).
+    static const VAddr dump_at = [] {
+        const char* env = std::getenv("BB_PASS_DUMP_AT");
+        return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+    }();
+    if (dump_at && Regs().color_buffers[0] && Regs().color_buffers[0].Address() == dump_at &&
+        !scheduler.IsRendering()) {
+        const auto* q_ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+        std::printf("Pass dump q stages vs %08x ps %08x\n",
+                    u32(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash), u32(q_ps ? q_ps->pgm_hash : 0));
+        DumpPassImages('q');
+    }
+    // BB_EXP_TRANSIT_TARGET=addr (experiment): the target image goes through TransferSrcOptimal
+    // before the first draw of a pass into it (what BB_PASS_DUMP_AT does, without the copy).
+    static const VAddr transit_target = [] {
+        const char* env = std::getenv("BB_EXP_TRANSIT_TARGET");
+        return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+    }();
+    if (transit_target && Regs().color_buffers[0] &&
+        Regs().color_buffers[0].Address() == transit_target && !scheduler.IsRendering()) {
+        VideoCore::Image* found = nullptr;
+        texture_cache.ForEachImageInRegion(transit_target, 1, [&](VideoCore::ImageId, VideoCore::Image& image) {
+            if (image.info.guest_address == transit_target) found = &image;
+        });
+        if (found) {
+            runtime.Transit(found, vk::ImageLayout::eTransferSrcOptimal,
+                            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+            runtime.FlushBarriers();
+        }
+    }
+    // BB_EXP_BARRIER_TARGET=addr (experiment): a full memory barrier before each draw into that
+    // color target (its render pass is ended first).
+    static const VAddr barrier_target = [] {
+        const char* env = std::getenv("BB_EXP_BARRIER_TARGET");
+        return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+    }();
+    if (barrier_target && Regs().color_buffers[0] &&
+        Regs().color_buffers[0].Address() == barrier_target) {
+        scheduler.EndRendering();
+        scheduler.Record([](vk::CommandBuffer cmd) {
+            const vk::MemoryBarrier2 all{
+                .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
+            };
+            cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &all});
+        });
+    }
     PrepareRenderState(pipeline);
     NoteUpscalerDraw(pipeline);
     const PreparedDraw* draw_prepared = bind_prepared;
@@ -300,8 +580,39 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             });
         }
     }
+    // BB_TRACE_SHADER with BB_GPU_PROFILE: a mark before the traced vertex shader's draws too.
+    if (auto* profiler = GpuProfiler::Get()) {
+        static const char* traced = std::getenv("BB_TRACE_SHADER");
+        const u64 vs_hash = pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash;
+        if (traced && std::strtoull(traced, nullptr, 16) == vs_hash) {
+            profiler->Mark(vs_hash ^ 0xBEF0'0000ull, [&] {
+                return fmt::format("the draw of vs {:016x} (from before its pass begins)", vs_hash);
+            });
+        }
+    }
     // Geometry drawn with the scene depth is jittered, full-screen passes are not (a shifted
     // full-screen quad leaves an edge column unwritten).
+    // BB_TRACE_GPU_INPUTS=vs hash (diagnostics, the flicker): the buffer ranges this draw reads
+    // (descriptors and vertex streams), copied by the GPU at the next display pass (DumpPassImages).
+    if (static const u64 trace_inputs = [] {
+            const char* env = std::getenv("BB_TRACE_GPU_INPUTS");
+            return env ? std::strtoull(env, nullptr, 16) : 0ull;
+        }();
+        trace_inputs && pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash == trace_inputs) {
+        traced_inputs.clear();
+        for (const auto& info : buffer_infos) {
+            if (info.buffer && info.range != VK_WHOLE_SIZE && info.range <= 65536) {
+                traced_inputs.push_back({info.buffer, info.offset, info.range});
+            }
+        }
+        for (u32 i = 0; i < vertex_binds.num_buffers; ++i) {
+            if (vertex_binds.host_buffers[i] && vertex_binds.host_sizes[i] <= 65536) {
+                traced_inputs.push_back({vertex_binds.host_buffers[i], vertex_binds.host_offsets[i],
+                                         vertex_binds.host_sizes[i]});
+            }
+        }
+        traced_inputs_frame = BbStats::gpu_frames.load(std::memory_order_relaxed);
+    }
     BeginDraw(pipeline, state, is_indexed,
               regs.num_indices > 6 || regs.num_instances.NumInstances() > 1);
 
@@ -311,11 +622,34 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
 
     const vk::Pipeline handle = pipeline->Handle();
     const u32 num_indices = regs.num_indices;
+    // BB_TRACE_PIPELINE=vs hash (diagnostics, the flicker): its pipeline handle and push data,
+    // printed when they differ from its previous draw.
+    if (static const u64 traced_pipeline = [] {
+            const char* env = std::getenv("BB_TRACE_PIPELINE");
+            return env ? std::strtoull(env, nullptr, 16) : 0ull;
+        }();
+        traced_pipeline && vs_info.pgm_hash == traced_pipeline) {
+        static VkPipeline last_handle{};
+        static std::array<float, 4> last_push{};
+        const std::array<float, 4> push{push_data.xscale, push_data.xoffset, push_data.yscale,
+                                        push_data.yoffset};
+        static u32 prints = 0;
+        if ((VkPipeline(handle) != last_handle || push != last_push) && prints++ < 2000) {
+            std::printf("Pipeline trace: gpu frame %llu vs %016llx handle %p push %g %g %g %g "
+                        "clipoff %d vte %#x\n",
+                        (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed),
+                        (unsigned long long)vs_info.pgm_hash, (void*)VkPipeline(handle), push[0],
+                        push[1], push[2], push[3], int(regs.IsClipDisabled()),
+                        std::bit_cast<u32>(regs.viewport_control));
+            last_handle = handle;
+            last_push = push;
+        }
+    }
     const u32 num_instances = regs.num_instances.NumInstances();
     const u32 first_vertex = vertex_offset;
     const u32 first_instance = instance_offset;
     const auto* ps_info = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
-    const Breadcrumbs::Crumb crumb{
+    Breadcrumbs::Crumb crumb{
         .kind = is_indexed ? Breadcrumbs::Kind::DrawIndexed : Breadcrumbs::Kind::Draw,
         .hash = {vs_info.pgm_hash, ps_info ? ps_info->pgm_hash : 0},
         .program = {vs_info.ProgramBase(), ps_info ? ps_info->ProgramBase() : 0},
@@ -324,17 +658,44 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const bool hide_ui_draw = BbSettings::Get().hide_hud.load(std::memory_order_relaxed) &&
                               upscaler->Enabled() && upscaler->InUiPhase() &&
                               !(regs.color_buffers[0] && FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address()));
+    // On NVIDIA by default (its hangs give no fault address): it costs the recording thread a
+    // few T# and V# reads a draw. BB_BREADCRUMB_READS=1 / 0: on / off everywhere.
+    static const bool crumb_reads = [&] {
+        const char* env = std::getenv("BB_BREADCRUMB_READS");
+        return env ? env[0] == '1' : instance.GetVendorID() == 0x10de;
+    }();
+    if (crumb_reads && Breadcrumbs::Enabled()) {
+        NoteCrumbReads(crumb, pipeline, regs, is_indexed, index_offset);
+    }
+    const Scissors check_scissors =
+        DynCheck::Enabled() ? scheduler.GetDynamicState().CurrentScissors() : Scissors{};
+    const Viewports check_viewports =
+        DynCheck::Enabled() ? scheduler.GetDynamicState().CurrentViewports() : Viewports{};
+    const u64 check_vs = vs_info.pgm_hash, check_ps = ps_info ? ps_info->pgm_hash : 0;
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         if (hide_ui_draw) {
             return;
         }
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+        if (DynCheck::Enabled()) {
+            DynCheck::Draw(cmdbuf, check_viewports, check_scissors, check_vs, check_ps);
+        }
         if (is_indexed) {
             cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex), first_instance);
         } else {
             cmdbuf.draw(num_indices, num_instances, first_vertex, first_instance);
         }
     });
+    // BB_TRACE_SHADER with BB_GPU_PROFILE: a mark right after the traced vertex shader's draws,
+    // so the profile splits their pass into the draw and what follows it unlabeled.
+    if (auto* profiler = GpuProfiler::Get()) {
+        static const char* traced = std::getenv("BB_TRACE_SHADER");
+        if (traced && std::strtoull(traced, nullptr, 16) == vs_info.pgm_hash) {
+            profiler->Mark(vs_info.pgm_hash ^ 0xAF7E'0000ull, [&] {
+                return fmt::format("after the draw of vs {:016x}", vs_info.pgm_hash);
+            });
+        }
+    }
     if (!hide_ui_draw && FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
@@ -347,6 +708,14 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                           u32(regs.depth_control.depth_write_enable));
             FrameCapture::Note(note);
         }
+    }
+
+    static const bool watch = [] {
+        const char* env = std::getenv("BB_DRAW_WATCH");
+        return env && env[0] == '1';
+    }();
+    if (watch) {
+        WatchDraw(pipeline, state);
     }
 
     BB_SECTION(Kick);
@@ -375,23 +744,72 @@ void Rasterizer::ScaleToTarget(const GraphicsPipeline* pipeline) {
 
 void Rasterizer::BeginDraw(const GraphicsPipeline* pipeline, const RenderState& state,
                            bool is_indexed, bool jitter_eligible) {
-    {
-        BB_SECTION(PipelineBind);
-        pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
-                                {buffer_infos.data(), buffer_infos.size()});
-    }
     // The upscaler's sub-pixel jitter, for geometry drawn with the scene depth.
     draw_jitter = {};
     if (jitter_eligible && upscaler->Enabled() && db_desc.first &&
         db_desc.first == camera_motion->Depth()) {
         draw_jitter = upscaler->Jitter();
     }
+    // A new render pass sets its viewports and scissors again, even when the state tracker has
+    // them already: single frames were drawn with the 960x540 viewport of the passes before (the
+    // final picture in the top-left quarter, black around it; docs/Flicker_video_2026-10-17.ru.md).
+    // BB_DYNAMIC_STATE_ALWAYS=1 (diagnostics): all dynamic state again at every draw.
+    static const bool dynamic_always = [] {
+        const char* env = std::getenv("BB_DYNAMIC_STATE_ALWAYS");
+        return env && env[0] == '1';
+    }();
+    if (dynamic_always) {
+        scheduler.GetDynamicState().Invalidate();
+    } else if (scheduler.WillBeginRendering(state)) {
+        scheduler.GetDynamicState().InvalidateViewports();
+    }
     UpdateDynamicState(pipeline, is_indexed);
+    // BB_DISPLAY_WATCH=1 (diagnostics): every draw into a display buffer, with its sizes and state.
+    static const bool display_watch = std::getenv("BB_DISPLAY_WATCH") != nullptr;
+    // BB_DISPLAY_WATCH_TARGET=addr: also every draw into that color target.
+    static const VAddr watch_target = [] {
+        const char* env = std::getenv("BB_DISPLAY_WATCH_TARGET");
+        return env ? VAddr(std::strtoull(env, nullptr, 16)) : VAddr{0};
+    }();
+    if (display_watch && Regs().color_buffers[0] &&
+        (FrameCapture::IsDisplayBuffer(Regs().color_buffers[0].Address()) ||
+         Regs().color_buffers[0].Address() == watch_target)) {
+        const auto& rvp = Regs().viewports[0];
+        std::printf("Display watch regs: vp0 %g %g %g %g vte %#x jitter %g,%g new pass %d\n", rvp.xscale,
+                    rvp.xoffset, rvp.yscale, rvp.yoffset, std::bit_cast<u32>(Regs().viewport_control),
+                    draw_jitter[0], draw_jitter[1], int(scheduler.WillBeginRendering(state)));
+        const auto& ds = scheduler.GetDynamicState();
+        const auto& vps = ds.CurrentViewports();
+        const auto& scs = ds.CurrentScissors();
+        const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+        const auto& image = texture_cache.GetImage(cb_descs[0].first).info;
+        std::printf("Display watch: gpu frame %llu flips %llu vs %08x ps %08x pass %ux%u image %ux%u scale %g,%g "
+                    "vp %g,%g %gx%g sc %d,%d %ux%u clipoff %d push %g,%g,%g,%g\n",
+                    (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed),
+                    (unsigned long long)FrameCapture::Flips(),
+                    u32(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash), u32(ps ? ps->pgm_hash : 0),
+                    state.width, state.height, image.size.width, image.size.height, target_scale[0],
+                    target_scale[1], vps.empty() ? 0.f : vps[0].x, vps.empty() ? 0.f : vps[0].y,
+                    vps.empty() ? 0.f : vps[0].width, vps.empty() ? 0.f : vps[0].height,
+                    scs.empty() ? 0 : scs[0].offset.x, scs.empty() ? 0 : scs[0].offset.y,
+                    scs.empty() ? 0u : scs[0].extent.width, scs.empty() ? 0u : scs[0].extent.height,
+                    int(Regs().IsClipDisabled()), push_data.xscale, push_data.xoffset,
+                    push_data.yscale, push_data.yoffset);
+    }
     MarkPass(pipeline, state);
     if (occlusion) {
         occlusion->SetPassScale(target_scale[0] * target_scale[1]); // samples at the game's size
     }
     scheduler.BeginRendering(state);
+    // Push constants after the pass begins: beginning it may record the occlusion results' compute
+    // dispatch (OcclusionQueries::Suspend), and the driver keeps one set of push constants for
+    // compute and graphics. Its 8 bytes over xoffset/yoffset drew single frames shifted by half the
+    // screen (docs/Flicker_2026-10-18.ru.md).
+    {
+        BB_SECTION(PipelineBind);
+        pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
+                                {buffer_infos.data(), buffer_infos.size()});
+    }
 }
 
 void Rasterizer::NoteCopyIntoMemory(VAddr address, u64 size) {
@@ -578,6 +996,18 @@ void Rasterizer::DispatchDirect() {
     if (!pipeline) {
         return;
     }
+    // BB_DISPATCH_START_LOG=1 (diagnostics, the flicker): dispatches with a nonzero thread
+    // group start (COMPUTE_START_X/Y/Z), which the translation does not apply.
+    if (static const bool start_log = std::getenv("BB_DISPATCH_START_LOG") != nullptr; start_log) {
+        const auto& cs = CsRegs();
+        static std::atomic<u32> printed{0};
+        if ((cs.start_x | cs.start_y | cs.start_z) != 0 && printed.fetch_add(1) < 5000) {
+            std::printf("Dispatch start: gpu frame %llu cs %016llx start %u,%u,%u dims %u,%u,%u\n",
+                        (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed),
+                        (unsigned long long)pipeline->GetStage(Shader::SwStage::Compute).pgm_hash,
+                        cs.start_x, cs.start_y, cs.start_z, cs.dim_x, cs.dim_y, cs.dim_z);
+        }
+    }
     if (pipelined) {
         PostDraw(pipeline, nullptr, false, 0, &CsRegs());
         return;
@@ -622,8 +1052,17 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     // copy list read on the CPU (vk_shader_hle.cpp) kept them in place too.
     buffer_cache.force_writes_in_place =
         Game::BufferCopyShader() != 0 && cs.pgm_hash == Game::BufferCopyShader();
+    // What it writes, from its control list: GPU-written marks on those bytes only (the bound
+    // destination spans tens of MiB, marked whole it kept the constants there in place).
+    thread_local std::vector<std::pair<unsigned long long, unsigned long long>> copy_writes;
+    copy_writes.clear();
+    if (buffer_cache.force_writes_in_place && CopyDestinationsPrecise() &&
+        CopyShaderDestinations(cs, cs_program.dim_x, CopyDestinationGap(), copy_writes)) {
+        buffer_cache.precise_writes = &copy_writes;
+    }
     const bool bound = BindResources(pipeline);
     buffer_cache.force_writes_in_place = false;
+    buffer_cache.precise_writes = nullptr;
     if (!bound) {
         return;
     }
@@ -634,6 +1073,40 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
 
     scheduler.EndRendering();
     mark();
+    // BB_DISPATCH_LOG=1 (diagnostics): the shape of each kind of real compute dispatch, once: the
+    // buffers (size, formatted, written), the groups, and what the image clear detector thinks.
+    {
+        static const bool log = [] {
+            const char* env = std::getenv("BB_DISPATCH_LOG");
+            return env && env[0] == '1';
+        }();
+        if (log) {
+            static std::mutex mutex;
+            static std::set<std::string> told;
+            std::string key = fmt::format("{:016x} x{} y{} z{}", cs.pgm_hash, cs_program.dim_x,
+                                          cs_program.dim_y, cs_program.dim_z);
+            for (const auto& b : cs.buffers) {
+                key += fmt::format(" [{}{}{} {}]", b.is_formatted ? "F" : "R", b.is_written ? "W" : "r",
+                                   b.is_formatted ? "" : "", b.GetSharp(cs).GetSize());
+            }
+            if (cs.buffers.size() >= 2 && cs.buffers[1].is_formatted && cs.buffers[1].is_written) {
+                const auto target = cs.buffers[1].GetSharp(cs);
+                const auto id = texture_cache.FindImageFromRange(target.base_address, target.GetSize(), false);
+                if (id) {
+                    const auto& image = texture_cache.GetImage(id);
+                    key += fmt::format(" image(size {} bits {} depth {} fmt {})", image.info.guest_size,
+                                       image.info.num_bits, image.info.props.is_depth ? 1 : 0,
+                                       Gcn::NumBitsPerBlock(target.GetDataFmt()));
+                } else {
+                    key += fmt::format(" NO-IMAGE at {:#x}", target.base_address);
+                }
+            }
+            std::scoped_lock lock{mutex};
+            if (told.size() < 400 && told.insert(key).second) {
+                std::printf("Dispatch shape: %s\n", key.c_str());
+            }
+        }
+    }
     pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
                             {buffer_infos.data(), buffer_infos.size()});
 
@@ -826,6 +1299,80 @@ void Rasterizer::NoteFrameStart() {
         std::printf("\n");
         lag_histogram = {};
     }
+}
+
+} // namespace Vulkan
+
+namespace Vulkan {
+
+void Rasterizer::WatchDraw(const GraphicsPipeline* pipeline, const RenderState& state) {
+    // GPU thread only. Per (vs, ps, first target): the last fields seen and how many draws in a
+    // row had them. A change after a stable run is printed with the frame number, and so is the
+    // change back, which marks a one-frame anomaly (docs/Flicker_video_2026-10-17.ru.md).
+    const auto& regs = Regs();
+    const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
+    const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    const VAddr target = cb_descs[0].first ? texture_cache.GetImage(cb_descs[0].first).info.guest_address : 0;
+    const u64 key = vs.pgm_hash * 0x9E3779B97F4A7C15ull ^ (ps ? ps->pgm_hash : 0) ^ target;
+    const auto bits = [](float f) { return u64(std::bit_cast<u32>(f)); };
+    std::vector<u64> fields;
+    const auto& vp = regs.viewports[0];
+    fields.push_back(bits(vp.xscale) << 32 | bits(vp.xoffset));
+    fields.push_back(bits(vp.yscale) << 32 | bits(vp.yoffset));
+    fields.push_back(u64(std::bit_cast<u32>(regs.viewport_control)) << 32 | u64(regs.IsClipDisabled()));
+    const auto& sc = regs.screen_scissor;
+    fields.push_back(u64(u16(sc.top_left_x)) << 48 | u64(u16(sc.top_left_y)) << 32 |
+                     u64(u16(sc.bottom_right_x)) << 16 | u16(sc.bottom_right_y));
+    fields.push_back(bits(target_scale[0]) << 32 | bits(target_scale[1]));
+    fields.push_back(bits(push_data.xoffset) << 32 | bits(push_data.yoffset));
+    fields.push_back(u64(state.width) << 32 | state.height);
+    static const bool textures = std::getenv("BB_DRAW_WATCH_TEXTURES") != nullptr;
+    for (const auto id : textures ? bound_images : decltype(bound_images){}) {
+        const auto& info = texture_cache.GetImage(id).info;
+        fields.push_back(info.guest_address);
+        fields.push_back(u64(info.size.width) << 32 | info.size.height);
+    }
+    struct Seen {
+        std::vector<u64> fields;
+        std::vector<u64> stable_fields;
+        u32 run = 0;
+        u64 changed_frame = 0;
+    };
+    static std::unordered_map<u64, Seen> seen;
+    static u32 printed = 0;
+    auto& s = seen[key];
+    const u64 frame = FrameCapture::Flips();
+    if (s.fields == fields) {
+        ++s.run;
+        return;
+    }
+    const auto print = [&](const char* what) {
+        if (printed++ > 4000) {
+            return;
+        }
+        std::string text = fmt::format("Draw watch: frame {} {} vs {:016x} ps {:016x} target {:#x}:",
+                                       frame, what, vs.pgm_hash, ps ? ps->pgm_hash : 0, target);
+        const size_t n = std::max(fields.size(), s.fields.size());
+        for (size_t i = 0; i < n; ++i) {
+            const u64 now = i < fields.size() ? fields[i] : 0;
+            const u64 was = i < s.fields.size() ? s.fields[i] : 0;
+            if (now != was) {
+                text += fmt::format(" [{}] {:#x}->{:#x}", i, was, now);
+            }
+        }
+        std::printf("%s\n", text.c_str());
+    };
+    if (s.run >= 8) {
+        // A stable run broke.
+        s.stable_fields = s.fields;
+        s.changed_frame = frame;
+        print("changed");
+    } else if (!s.stable_fields.empty() && fields == s.stable_fields && frame - s.changed_frame <= 2) {
+        print("back after a short change");
+        s.stable_fields.clear();
+    }
+    s.fields = std::move(fields);
+    s.run = 0;
 }
 
 } // namespace Vulkan

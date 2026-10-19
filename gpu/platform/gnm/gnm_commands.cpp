@@ -68,7 +68,7 @@ u32 ApplyModifier(u32 rsrc1, u32 modifier, u32 allowed) {
 }
 
 u32 HwInit(u32* cmdbuf, u32 size, std::span<const u32> state) {
-    Observe observe{cmdbuf, size};
+    Observe observe{cmdbuf, std::min(size, InitState::HwInitWords)};
     if (size < InitState::HwInitWords) {
         return 0;
     }
@@ -147,7 +147,7 @@ s32 PS4_SYSV_ABI sceGnmDispatchIndirectOnMec(u32* cmdbuf, u32 size, u64 args, u3
 }
 
 u32 PS4_SYSV_ABI sceGnmDispatchInitDefaultHardwareState(u32* cmdbuf, u32 size) {
-    Observe observe{cmdbuf, size};
+    Observe observe{cmdbuf, std::min(size, InitState::HwInitWords)};
     if (size < InitState::HwInitWords) {
         return 0;
     }

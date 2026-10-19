@@ -13,10 +13,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
+#include "bbport_guest_hooks.h"
 #include "bbport_settings.h"
+#include <fmt/format.h>
 
 namespace BbGameMenu {
 namespace {
@@ -351,8 +355,8 @@ void DefineTexts() {
          AddText("Lower", "Menor", "Ниже"), AddText("Lowest", "Mínima", "Минимальная")},
         Kind::Select);
 
-    page("Effects", "Efeitos", "Эффекты", "The game's effects (bbport; after a restart)",
-         "Os efeitos do jogo (bbport; após reiniciar)", "Эффекты игры (bbport; после перезапуска)",
+    page("Effects", "Efeitos", "Эффекты", "The game's effects (bbport; the first seven at once)",
+         "Os efeitos do jogo (bbport; os primeiros sete de uma vez)", "Эффекты игры (bbport; первые семь сразу)",
          ControlsLayout);
 
     // Short names for the game's narrow name column (BbSettings::Effects order); the help line
@@ -405,11 +409,12 @@ void DefineTexts() {
             continue; // the overlay menu and the launcher have it
         }
         // A new effect without a short name: its full label.
-        const std::string help_en = std::string(name ? name->help_en : effect.label) + " (after a restart)";
+        const bool live = BbSettings::IsHotEffect(e);
+        const std::string help_en = std::string(name ? name->help_en : effect.label) + (live ? "" : " (after a restart)");
         const std::string help_pt =
-            std::string(name ? name->help_pt : effect.label) + " (após reiniciar)";
+            std::string(name ? name->help_pt : effect.label) + (live ? "" : " (após reiniciar)");
         const std::string help_ru =
-            std::string(name ? name->help_ru : effect.label_ru) + " (после перезапуска)";
+            std::string(name ? name->help_ru : effect.label_ru) + (live ? "" : " (после перезапуска)");
         row(Field(FirstEffect + e), name ? name->en : effect.label, name ? name->pt : effect.label,
             name ? name->ru : effect.label_ru, help_en.c_str(), help_pt.c_str(), help_ru.c_str(),
             toggle);
@@ -648,6 +653,45 @@ const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 categor
         if (pages[p].layout->subtitle && id == pages[p].layout->subtitle) return TextOf(pages[p].help);
     }
     const char16_t* text = lookup_original(repository, table, category, id);
+    // BB_MSG_TRACE=1 (diagnostics): the game's text lookups per 2 s by category, with an example
+    // id and caller and its text (which menu is on screen, issue #255).
+    static const bool msg_trace = [] {
+        const char* env = std::getenv("BB_MSG_TRACE");
+        return env && env[0] == '1';
+    }();
+    if (msg_trace) {
+        struct Seen {
+            u64 count = 0;
+            u32 id = 0;
+            u64 caller = 0;
+            std::string text;
+        };
+        static std::mutex mutex;
+        static std::map<std::pair<u32, u32>, Seen> seen;
+        static long long printed = 0;
+        std::scoped_lock lock{mutex};
+        auto& s = seen[{table, category}];
+        if (s.count++ == 0) {
+            s.id = id;
+            s.caller = reinterpret_cast<u64>(__builtin_return_address(0)) - image_base;
+            for (const char16_t* c = text; c && *c && s.text.size() < 40; ++c) {
+                s.text += *c < 0x80 ? char(*c) : '?';
+            }
+        }
+        const long long now = std::chrono::duration_cast<std::chrono::seconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count();
+        if (now - printed >= 2) {
+            printed = now;
+            std::string line;
+            for (const auto& [key, v] : seen) {
+                line += fmt::format(" [{}/{:#x}: {} e.g. {} from {:#x} \"{}\"]", key.first, key.second,
+                                    v.count, v.id, v.caller, v.text);
+            }
+            std::printf("Msg trace (2 s):%s\n", line.c_str());
+            seen.clear();
+        }
+    }
     static const bool trace = [] {
         const char* env = std::getenv("BB_GAME_MENU_TRACE");
         return env && env[0] == '1';
@@ -855,6 +899,7 @@ void Poll() {
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         s.effects[e] = now_values[FirstEffect + e] != 0;
     }
+    BbGuestHooks::ApplyGameEffects();
     std::memcpy(applied, now_values, sizeof(now_values));
     BbSettings::Save();
 }

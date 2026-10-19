@@ -39,7 +39,7 @@ sys.path.insert(0, str(PORT_DIR / 'tools'))
 import game_check  # noqa: E402
 import fsr4_wizard  # noqa: E402
 from bbport_config import (
-    PORT_DIR, PACKAGED, DATA_DIR, CONFIG_FILE,
+    PORT_DIR, PACKAGED, DATA_DIR, CONFIG_FILE, DEFAULTS,
     PC_MODEL_SUBTITLE, PACKAGE_ONLY_ENV,
     UI_LANGUAGES, UPSCALERS, PRESETS, OUTPUT_RES, EFFECTS, MODEL_LOD,
     FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
@@ -49,6 +49,7 @@ from bbport_config import (
     load_settings, save_settings, load_ini, save_ini,
     game_environment,
 )
+from bbport_devices import connected_gpus
 from bbport_fsr_builder import (
     FSR4CAP_DIR, FSR411_BUILD_ERRORS, Fsr411Manager, fsr411_dir, fsr411_build_command,
 )
@@ -66,8 +67,10 @@ from bbport_game_runner import GameRunnerMixin
 from bbport_gamepad import GamepadNavigator
 
 
+_AdwWindowBase = Adw.ApplicationWindow if isinstance(Adw.ApplicationWindow, type) else object
+
+
 class LauncherWindow(
-    Adw.ApplicationWindow,
     ControlsMixin,
     ModsMixin,
     OnlineMixin,
@@ -76,6 +79,7 @@ class LauncherWindow(
     DlssMixin,
     GameRunnerMixin,
     LogMixin,
+    _AdwWindowBase,
 ):
     def __init__(self, app):
         super().__init__(application=app, title="Bloodborne")
@@ -550,14 +554,39 @@ class LauncherWindow(
         game.add(self.ui_language_row)
         page.add(game)
 
-        # Auto: the new memory model on AMD, the 0.3 one elsewhere; or either by hand.
+        # Auto: the new memory model on every GPU; or either by hand.
         mode = Adw.PreferencesGroup(title=tr("Режим работы"))
         self.memory_model_row = combo_row(tr("Модель памяти и трансляции"), tr(PC_MODEL_SUBTITLE),
                                           MEMORY_MODELS, self.settings.get("memory_model", "auto"))
         mode.add(self.memory_model_row)
+        # The GPU the game runs on, as in shadPS4 (laptops with two GPUs).
+        self.gpu_row = Adw.ComboRow(title=tr("Видеокарта"))
+        self.gpu_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
+                                            lambda _button: self.fill_gpus()))
+        self.fill_gpus()
+        mode.add(self.gpu_row)
         page.add(mode)
 
         return page
+
+    def fill_gpus(self):
+        """The GPU choices: the port's own (named), the GPUs found, and the saved one while it is
+        not found."""
+        current = self.settings.get("gpu", "")
+        gpus = connected_gpus()
+        best = [name for _index, _vendor, _kind, name, is_best in gpus if is_best]
+        auto = tr("Авто") + (f" ({best[0]})" if best else "")
+        choices = [(auto, "")]
+        for _index, _vendor, kind, name, _best in gpus:
+            note = {"integrated": tr("встроенная"), "cpu": tr("программная, очень медленно")}.get(kind)
+            choices.append((f"{name} ({note})" if note else name, name))
+        if current and current not in [value for _, value in choices]:
+            choices.append((tr("{} (не найдена)").format(current), current))
+        self.gpu_row.set_model(Gtk.StringList.new([label for label, _ in choices]))
+        self.gpu_row.values = [value for _, value in choices]
+        self.gpu_row.set_selected(self.gpu_row.values.index(current) if current in self.gpu_row.values else 0)
+        self.gpu_row.set_subtitle(tr("На ноутбуке с двумя видеокартами — дискретная; применяется при запуске игры"))
+
 
     # --- Graphics page -------------------------------------------------------------------
 
@@ -971,6 +1000,7 @@ class LauncherWindow(
         s["gamepad"] = combo_value(self.gamepad_row)
         s["gamepad_name"] = self.gamepad_row.names[self.gamepad_row.get_selected()]
         s["display"] = combo_value(self.display_row)
+        s["gpu"] = combo_value(self.gpu_row)
         s["skip_network_choice"] = self.skip_network_row.get_active()
         s["language"] = combo_value(self.language_row)
         s["fullscreen"] = self.fullscreen_row.get_active()
@@ -993,14 +1023,22 @@ class LauncherWindow(
         s["extra_env"] = self.extra_row.get_text().strip()
         s["mods_enabled"] = self.mods_enabled_row.get_active()
         s["online"] = self.online_row.get_active()
+        s["online_bbsc"] = self.bbsc_row.get_active() if hasattr(self, "bbsc_row") else s.get("online_bbsc", False)
         s["online_community"] = self.community_row.get_text().strip()
         s["online_server"] = self.server_row.get_text().strip()
         s["online_webapi"] = self.webapi_row.get_text().strip()
         s["online_npid"] = self.npid_row.get_text().strip()
         s["online_password"] = self.password_row.get_text()
         s["online_upnp"] = self.upnp_row.get_active()
-        s["online_backend"] = combo_value(self.backend_row)
-        s["online_bbhost_server"] = self.bbhost_server_row.get_text().strip()
+        if hasattr(self, "pool_row"):
+            s["online_pool"] = self.online_pool()
+        if hasattr(self, "thd_server_row"):
+            s["thd_server"] = self.thd_server_row.get_text().strip()
+            s["thd_online_id"], s["thd_token"] = self.thd_id, self.thd_token
+        if hasattr(self, "backend_row"):
+            s["online_backend"] = combo_value(self.backend_row)
+        if hasattr(self, "bbhost_server_row"):
+            s["online_bbhost_server"] = self.bbhost_server_row.get_text().strip()
         self.save_mod_profile()
         self.save_patch_profile()
         save_settings(s)

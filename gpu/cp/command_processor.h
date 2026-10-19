@@ -66,7 +66,8 @@ public:
     CommandProcessor();
     ~CommandProcessor();
 
-    void SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb);
+    /// force_copy owns transient internal commands even when guest buffer copying is disabled.
+    void SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb, bool force_copy = false);
     void SubmitAsc(u32 gnm_vqid, std::span<const u32> acb);
     /// sceGnmSubmitDone. `frame`: the guest's frame number, reported finished
     /// (BbGnm::NoteFramesRetired) once the GPU has done everything submitted so far.
@@ -154,6 +155,9 @@ private:
         int depth;
         bool prepared; ///< the submission's own buffer: its direct draws were prepared ahead
         bool entered;  ///< its start seen (statistics scan, constant engine counters reset)
+        const u32* prev_at = nullptr; ///< the packet walked before this one, and the header it was walked with
+        u32 prev_header = 0;
+        int recoveries = 0;
     };
     /// A command buffer and the indirect buffers it called, as a stack.
     struct Walk {
@@ -162,7 +166,7 @@ private:
         void Push(std::span<const u32> buffer, int depth, bool prepared = false) {
             ASSERT_MSG(top + 1 < int(levels.size()), "indirect buffers nested too deep");
             const u32* begin = buffer.data();
-            levels[++top] = {begin, begin, begin + buffer.size(), depth, prepared, false};
+            levels[++top] = {begin, begin, begin + buffer.size(), depth, prepared, false, nullptr, 0, 0};
         }
         bool Done() const {
             return top < 0;

@@ -20,10 +20,11 @@ other addresses puts them in DIR/host_overrides.custom.json, which is then used 
 """
 import argparse
 import json
-import os
 from pathlib import Path
+import os
 import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -85,7 +86,7 @@ def summon_service(webapi):
         return False
 
 
-def write_overrides(user_dir, community, webapi):
+def write_overrides(user_dir, community, webapi, plain=False):
     """The host overrides file for this launch; returns its path."""
     user_dir = Path(user_dir)
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -95,9 +96,11 @@ def write_overrides(user_dir, community, webapi):
         return custom
     community = community_address(community)
     host = community.split('://', 1)[1]
-    overrides = {GAME_SERVER: community}
     backend = os.environ.get('BB_ONLINE_BACKEND', '').strip().lower()
-    if backend not in ('bbhost', 'hosts', 'thehuntersdream', 'hd') and summon_service(webapi):
+    if plain or backend in ('bbhost', 'hosts', 'thehuntersdream', 'hd'):
+        # The shadPS4 0.20 module (BB_NET_GEN=20): the game server only; summons stay on shadNet.
+        print(f'Co-op: game server {community}', file=sys.stderr)
+    elif summon_service(webapi):
         overrides.update({f'{scheme}://{host}:{COMMUNITY_API_PORT}/summon_messenger': webapi
                           for scheme in ('https', 'http')})
         print(f'Co-op: summon signs through {webapi}', file=sys.stderr)
@@ -132,6 +135,109 @@ def check(server, webapi, community):
     return results
 
 
+# ---- The Hunter's Dream pool (BB_NET_BACKEND=thd, gpu/bbnet20/thd; bbhost's protocol) ------------
+
+HUNTERS_DREAM_SERVER = 'https://thehuntersdream.com'
+# The play logs the game sends to FromSoftware's old storage buckets go to the game server's API.
+PLAY_LOG_HOSTS = ('bb-playlog-prod.s3.amazonaws.com', 'bb-playlog-test.s3.amazonaws.com')
+
+
+def thd_base(value):
+    """The Hunter's Dream's address as scheme://host (https unless a scheme is given)."""
+    value = str(value or '').strip().rstrip('/') or HUNTERS_DREAM_SERVER
+    if '://' not in value:
+        value = 'https://' + value
+    scheme, rest = value.split('://', 1)
+    return f'{scheme}://{rest.split('/')[0]}'
+
+
+def thd_call(url, body):
+    """A call to The Hunter's Dream's account service (bbhost's): its reply, or ValueError with the
+    server's reason."""
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
+                                     headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            text = response.read()
+    except urllib.error.HTTPError as error:
+        text = error.read()
+    except (OSError, ValueError) as error:
+        raise ValueError(f'{url}: {error}') from error
+    try:
+        reply = json.loads(text)
+    except ValueError:
+        reply = None
+    if not isinstance(reply, dict) or 'ResKind' not in reply:
+        raise ValueError(f'{url} has no account service')
+    if reply['ResKind'] != 0:
+        raise ValueError(reply.get('Message') or 'refused')
+    return reply
+
+
+def thd_sign_in(server, on_code, device='bbport', cancelled=lambda: False):
+    """Discord sign-in the way bbhost does it: a code to approve on the website. on_code(page, code)
+    shows it. Returns (online id, token); raises ValueError."""
+    auth = thd_base(server)
+    start = thd_call(auth + '/auth/device/start', {'DeviceName': device})
+    code, user_code = start.get('DeviceCode', ''), start.get('UserCode', '')
+    if not code or not user_code:
+        raise ValueError('no code in the reply')
+    interval = max(1, int(start.get('Interval') or 5))
+    deadline = time.monotonic() + int(start.get('ExpiresIn') or 600)
+    on_code(start.get('VerificationUri') or auth + '/link', user_code)
+    while time.monotonic() < deadline:
+        for _ in range(interval * 4):  # a cancel is noticed within a quarter of a second
+            if cancelled():
+                raise ValueError('cancelled')
+            time.sleep(0.25)
+        poll = thd_call(auth + '/auth/device/poll', {'DeviceCode': code})
+        status = poll.get('Status')
+        if status == 'approved':
+            if not poll.get('OnlineId') or not poll.get('Token'):
+                raise ValueError('no token in the reply')
+            return poll['OnlineId'], poll['Token']
+        if status == 'slow_down':
+            interval += 5
+        elif status == 'denied':
+            raise ValueError('the sign-in was denied')
+        elif status == 'expired':
+            break
+    raise ValueError('the code expired; try again')
+
+
+def write_thd_overrides(user_dir, community):
+    """The host overrides file for this launch (the game's servers and play logs -> The Hunter's
+    Dream); returns (path, base address). host_overrides.custom.json is used as it is."""
+    user_dir = Path(user_dir)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    base = thd_base(community)
+    custom = user_dir / 'host_overrides.custom.json'
+    if custom.exists():
+        print(f'Co-op: addresses from {custom}', file=sys.stderr)
+        return custom, base
+    overrides = {'*.scej-network.jp': base}
+    overrides.update({host: f'{base}:{COMMUNITY_API_PORT}' for host in PLAY_LOG_HOSTS})
+    path = user_dir / 'host_overrides.json'
+    path.write_text(json.dumps(overrides, indent=2) + '\n', encoding='utf-8')
+    print(f"Co-op: The Hunter's Dream {base}", file=sys.stderr)
+    return path, base
+
+
+def check_thd(community):
+    """(name, address, ok, detail) for The Hunter's Dream's game server and co-op service."""
+    base = thd_base(community)
+    results = []
+    for name, url in (('game', base + ':20443/bb-eu/ss.info'), ('service', base + f':{COMMUNITY_API_PORT}/')):
+        try:
+            urllib.request.urlopen(url, timeout=6).close()
+            results.append((name, url.split('/')[2], True, ''))
+        except urllib.error.HTTPError:
+            results.append((name, url.split('/')[2], True, ''))  # it answered
+        except (OSError, ValueError) as error:
+            results.append((name, url.split('/')[2], False, str(error)))
+    return results
+
+
 def bbsc_local_server():
     """The shadNet host for a local BBSC game server, or '' (see the module's description)."""
     mode = os.environ.get('BB_BBSC_LOCAL_SERVER', 'auto').strip().lower()
@@ -159,17 +265,41 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     overrides = sub.add_parser('overrides')
     overrides.add_argument('--user', required=True)
+    overrides.add_argument('--plain', action='store_true')
     sub.add_parser('check')
+    thd = sub.add_parser('thd-overrides')
+    thd.add_argument('--user', required=True)
+    sub.add_parser('thd-check')
+    sub.add_parser('thd-signin')
     sub.add_parser('bbsc-local')
     a = parser.parse_args()
     server = os.environ.get('BB_SHADNET_SERVER') or SHADNET_SERVER
     community = community_address(os.environ.get('BB_COMMUNITY_SERVER'))
     webapi = webapi_setting(os.environ.get('BB_SHADNET_WEBAPI'), server, community)
+    if a.command == 'thd-overrides':
+        path, base = write_thd_overrides(a.user, os.environ.get('BB_COMMUNITY_SERVER'))
+        print(path)
+        print(base)
+        return
+    if a.command == 'thd-check':
+        for name, address, ok, detail in check_thd(os.environ.get('BB_COMMUNITY_SERVER')):
+            print(f'{name}: {address}: {"reachable" if ok else "not reachable"} {detail}'.rstrip())
+        return
+    if a.command == 'thd-signin':
+        try:
+            name, token = thd_sign_in(os.environ.get('BB_COMMUNITY_SERVER'),
+                                      lambda page, code: print(f'Open {page} and enter {code}',
+                                                               file=sys.stderr, flush=True))
+        except ValueError as error:
+            sys.exit(f'The Hunter\'s Dream sign-in: {error}')
+        print(name)
+        print(token)
+        return
     if a.command == 'bbsc-local':
         print(bbsc_local_server())
         return
     if a.command == 'overrides':
-        print(write_overrides(a.user, community, webapi))
+        print(write_overrides(a.user, community, webapi, a.plain))
     else:
         for name, address, ok, detail in check(server, webapi, community):
             print(f'{name}: {address}: {"reachable" if ok else "not reachable"} {detail}'.rstrip())

@@ -227,15 +227,19 @@ void TextureCache::WatchImage(const Image& image, const char* what) {
         return;
     }
     static std::atomic<u32> printed{0};
-    if (printed.fetch_add(1) < 300) {
-        std::printf("Image watch %#llx: %s, flags %#x\n", (unsigned long long)watched, what,
-                    u32(image.flags));
+    if (printed.fetch_add(1) < 200000) {
+        std::printf("Image watch %#llx: frame %llu %s, flags %#x, %ux%u fmt %u, image %p\n",
+                    (unsigned long long)watched,
+                    (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed), what,
+                    u32(image.flags), image.info.size.width, image.info.size.height,
+                    u32(image.info.pixel_format), static_cast<const void*>(&image));
     }
 }
 
 void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
     std::scoped_lock lock{mutex};
-    // Only an image starting at `address` is affected: those over its first byte are enough.
+    // Only fully overwritten images starting at `address` can be refreshed wholesale.
+    // A partial overwrite must preserve the image's other GPU-only texels.
     ForEachImageInRegion(address, 1, [&](ImageId, Image& image) {
         static const bool log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
         if (log) {
@@ -249,7 +253,7 @@ void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
                             image.info.guest_address == address ? "" : " (not at its start: kept)");
             }
         }
-        if (image.info.guest_address != address) {
+        if (image.info.guest_address != address || image.info.guest_size > max_size) {
             return;
         }
         WatchImage(image, "GPU write (marked for refresh)");

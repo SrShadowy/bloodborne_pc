@@ -119,6 +119,28 @@ void SceneTargets::ResolveAll() {
         }
     }
 }
+void SceneTargets::CleanupStaleEntries() {
+    // Remove proxy entries whose native image no longer exists in the texture cache.
+    // Called periodically to prevent VRAM leak when textures are evicted during level transitions.
+    const size_t entries_before = entries.size();
+    std::vector<u64> to_remove;
+    for (auto& [key, entry] : entries) {
+        // If lookup returns nullptr, the native image was evicted from texture cache
+        if (!lookup(entry->source, entry->uid)) {
+            to_remove.push_back(key);
+        }
+    }
+    if (!to_remove.empty()) {
+        scheduler.Finish(); // no command buffer can reference these views
+        for (u64 key : to_remove) {
+            entries.erase(key);
+        }
+        // Clear recent cache since some entries may be deleted
+        recent = {};
+        std::printf("SceneTargets: cleaned up %zu/%zu stale proxy entries (VRAM leak prevention)\n",
+                    to_remove.size(), entries_before);
+    }
+}
 void SceneTargets::NativeAccess(VideoCore::Image& image, vk::AccessFlags2 access,
                                 std::source_location caller) {
     if (copying || !image.scene_proxy) return; // most images never had a proxy
@@ -321,6 +343,10 @@ void SceneTargets::Resample(vk::Image src, vk::Image dst, const VideoCore::Image
         cmd.setViewportWithCount(vk::Viewport{0.f, 0.f, float(dst_size.width),
                                               float(dst_size.height), 0.f, 1.f});
         cmd.setScissorWithCount(vk::Rect2D{{0, 0}, dst_size});
+        if (DynCheck::Enabled()) {
+            DynCheck::Set(cmd, {vk::Rect2D{{0, 0}, dst_size}}, "scene resample");
+            DynCheck::SetViewports(cmd, {vk::Viewport{0.f, 0.f, float(dst_size.width), float(dst_size.height), 0.f, 1.f}}, "scene resample");
+        }
         if (stencil_bits) {
             // Copy depth first, then reconstruct all eight stencil bits without needing
             // VK_EXT_shader_stencil_export (e.g. Pascal). Discard keeps unset bits clear.

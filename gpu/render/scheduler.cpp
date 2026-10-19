@@ -107,6 +107,9 @@ u32 RecordingThreadCount() {
 vk::CommandBuffer BeginCommandBuffer(CommandPool& pool) {
     const vk::CommandBuffer cmdbuf = pool.Commit();
     Check(cmdbuf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
+    if (DynCheck::Enabled()) {
+        DynCheck::Begin(cmdbuf);
+    }
     return cmdbuf;
 }
 
@@ -855,6 +858,9 @@ void Scheduler::AllocateWorkerCommandBuffers() {
         };
         current_cmdbuf = command_pool.Commit();
         Check(current_cmdbuf.begin(begin_info));
+        if (DynCheck::Enabled()) {
+            DynCheck::Begin(current_cmdbuf);
+        }
         // The first segment (worker 0, whose pool this is) of the next submission.
         if (!batch) {
             batch = AcquireBatch();
@@ -872,9 +878,12 @@ void Scheduler::AllocateWorkerCommandBuffers() {
 }
 
 void Scheduler::QueueSubmit(std::span<const vk::CommandBuffer> cmdbufs, SubmitInfo& info) {
-    // The presenter's waits: the swapchain image (binary, before color output) and frames.
+    // A prepared frame is first read by the present blit (Transfer), and diagnostic
+    // dumps also read it before ColorAttachmentOutput. Waiting only at color output
+    // lets those reads race the encode that produces the frame. All submission waits
+    // cover their earliest consumers, regardless of their index in SubmitInfo.
     static constexpr std::array<vk::PipelineStageFlags, SubmitInfo::MaxSemaphores> wait_stages{
-        vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands,
         vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eAllCommands};
     const vk::TimelineSemaphoreSubmitInfo timeline{
         .waitSemaphoreValueCount = info.num_wait_semas,

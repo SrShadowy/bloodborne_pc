@@ -284,6 +284,17 @@ void CopyDataTask(Vulkan::Rasterizer& rasterizer, const u8* data) {
 
 void FlipTask(Vulkan::Rasterizer& rasterizer, const u8*) {
     rasterizer.WaitDeferredSignals();
+    // BB_EXP_FLIP_FINISH=1 (experiment): the flip is signalled once the GPU has run the frame.
+    static const bool finish = std::getenv("BB_EXP_FLIP_FINISH") != nullptr;
+    if (finish) {
+        rasterizer.Finish();
+    }
+    // BB_EXP_FLIP_LAG=1 (experiment): the GPU has finished the frame before this one (one frame in
+    // flight at most).
+    static const bool lag = std::getenv("BB_EXP_FLIP_LAG") != nullptr;
+    if (lag) {
+        rasterizer.WaitPreviousFrame();
+    }
     BbIrq::Raise(BbIrq::Line::GfxFlip);
 }
 

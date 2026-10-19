@@ -44,6 +44,8 @@ enum Id : std::uint32_t {
     ARing,         ///< constants copied into the ring (CollectRingBindings)
     ARingChecks,   ///< its checks of each buffer (GPU-written, pending writes, VRAM copies)
     ARingCopy,     ///< its copies (memcpy and flush)
+    ARingSharp,    ///< its V# reads and range clamps
+    ARingNote,     ///< its pending read notes (NotePendingRead)
     ADecode,       ///< decoding a whole submission (everything of stage A)
     Count,
 };
@@ -54,7 +56,7 @@ inline constexpr const char* Names[Count] = {
     "flush",        "motion",      "descriptors",   "kick",         "preupload",
     "EnsureResident", "stream copy", "VRAM path", "layer bind",
     "A: draw", "A: pipeline", "A: prepared", "A: post", "A: ring", "A: ring checks",
-    "A: ring copy", "A: decode",
+    "A: ring copy", "A: ring sharp", "A: ring note", "A: decode",
 };
 inline std::array<std::atomic<std::uint64_t>, Count> cycles{};
 /// Constant buffers stage A looked at and bytes it copied into the ring (with the sections).

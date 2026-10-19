@@ -13,4 +13,10 @@ void PatchImage(unsigned char* image, std::uint64_t size);
 /// Whether the hooks run the game's frame rate: the video out then shows a frame as soon as the
 /// game submits it (the game's own flip rate asks for 30 FPS).
 bool Unlocked();
+/// A frame rate limit while the game runs (30..480; 0: the launched mode and limit). The game's
+/// frame pacer waits for it itself. Lowers a running game to 30 FPS for what the unlocked rate
+/// breaks (the cinematic of Laurence, the optional boss: a hang above 30 FPS, as with the
+/// community 60 FPS patch).
+void SetLimit(int fps);
+int Limit();
 } // namespace BbFrameRate

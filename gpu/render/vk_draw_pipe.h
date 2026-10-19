@@ -21,7 +21,9 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <cstdio>
 #include <thread>
+#include <vector>
 #include <x86intrin.h>
 
 #include "common/assert.h"
@@ -42,6 +44,12 @@ public:
 
     ~DrawPipe() {
         Drain();
+        for (auto& worker : resolvers) {
+            worker.request_stop();
+        }
+        resolve_wake.fetch_add(1, std::memory_order_seq_cst);
+        resolve_wake.notify_all();
+        resolvers.clear(); // joined before the ring goes
         thread.request_stop();
         published.fetch_add(0, std::memory_order_seq_cst);
         wake.fetch_add(1, std::memory_order_seq_cst);
@@ -78,17 +86,62 @@ public:
         return reinterpret_cast<u8*>(header + 1);
     }
 
-    /// Stage A: hands the packet from Begin() to stage B.
-    void Commit(u32 payload_size) {
+    /// Stage A: hands the packet from Begin() to stage B. `resolve`: a resolve worker completes
+    /// it first (StartResolvers; without workers the flag is ignored).
+    void Commit(u32 payload_size, bool resolve = false) {
         reinterpret_cast<Header*>(ring.get() + head % Capacity)->payload = payload_size;
+        if (!resolvers.empty()) {
+            auto& slot = slots[(packets + 1) & SlotMask];
+            slot.at = head;
+            slot.state.store(resolve ? SlotPending : SlotDone, std::memory_order_release);
+        }
         head += pending_size;
         published.store(head, std::memory_order_seq_cst);
         ++packets;
+        if (!resolvers.empty()) {
+            published_packets.store(packets, std::memory_order_seq_cst);
+            if (resolvers_sleeping.load(std::memory_order_seq_cst)) {
+                resolve_wake.fetch_add(1, std::memory_order_seq_cst);
+                resolve_wake.notify_all();
+            }
+        }
         if (sleeping.load(std::memory_order_seq_cst)) {
             wake.fetch_add(1, std::memory_order_seq_cst);
             wake.notify_one();
         }
     }
+
+    /// Stage 2 (docs/pipeline_4stage.ru.md): `count` threads complete the packets committed with
+    /// `resolve` in packet order of claim (each worker sees its own packets in increasing order),
+    /// before stage B runs them. Called once, before any packet.
+    using Resolver = void (*)(void* context, u8* packet, u32 size, u64 number, u32 worker);
+    void StartResolvers(Resolver resolver_, u32 count) {
+        resolver = resolver_;
+        slots = std::make_unique<Slot[]>(SlotMask + 1);
+        for (u32 i = 0; i < count; ++i) {
+            resolvers.emplace_back([this, i](std::stop_token stop) { ResolverRun(stop, i); });
+        }
+    }
+    [[nodiscard]] u32 ResolverCount() const noexcept {
+        return static_cast<u32>(resolvers.size());
+    }
+    /// Stage A: waits until every packet up to `number` is resolved.
+    void WaitResolved(u64 number) {
+        if (resolvers.empty()) {
+            return;
+        }
+        number = std::min(number, packets);
+        while (resolved_prefix < number) {
+            if (slots[(resolved_prefix + 1) & SlotMask].state.load(std::memory_order_acquire) ==
+                SlotDone) {
+                ++resolved_prefix;
+            } else {
+                ++resolve_waits;
+                __builtin_ia32_pause();
+            }
+        }
+    }
+    u64 resolve_waits = 0; ///< statistics (stage A): spins waiting for resolve workers
 
     /// Why stage A drained (statistics): a PM4 opcode, or one of these.
     enum Reason : u32 {
@@ -131,6 +184,10 @@ public:
     }
     [[nodiscard]] bool ReachedPacket(u64 number) const noexcept {
         return consumed_packets.load(std::memory_order_acquire) >= number;
+    }
+    /// Stage B: the number of the packet it runs.
+    [[nodiscard]] u64 RunningPacket() const noexcept {
+        return consumed_packets.load(std::memory_order_relaxed) + 1;
     }
     /// Stage A: waits until stage B has run the packet `number` (Drain: all of them).
     void WaitForPacket(u64 number, u32 reason) {
@@ -240,6 +297,19 @@ private:
                 consumed.store(at, std::memory_order_release);
                 continue;
             }
+            if (!resolvers.empty()) {
+                // Its resolve worker may still be completing it.
+                const auto& slot = slots[(consumed_packets.load(std::memory_order_relaxed) + 1) &
+                                         SlotMask];
+                for (u32 spins = 0; slot.state.load(std::memory_order_acquire) != SlotDone;
+                     ++spins) {
+                    if (spins < 4096) {
+                        __builtin_ia32_pause();
+                    } else {
+                        std::this_thread::yield();
+                    }
+                }
+            }
             const u64 start = __rdtsc();
             handler(context, reinterpret_cast<const u8*>(header + 1), header->payload);
             busy_cycles.fetch_add(__rdtsc() - start, std::memory_order_relaxed);
@@ -248,6 +318,68 @@ private:
             consumed.store(at, std::memory_order_release);
         }
     }
+
+    void ResolverRun(std::stop_token stop, u32 worker) {
+        char name[16];
+        std::snprintf(name, sizeof(name), "bb:Resolve%u", worker);
+        Common::SetCurrentThreadName(name);
+        static const auto spin_time = std::chrono::microseconds([] {
+            if (const char* env = std::getenv("BB_PIPE_SPIN_US")) {
+                return std::max(0, std::atoi(env));
+            }
+            return BbThreads::Available() >= 12 ? 200 : 50;
+        }());
+        while (!stop.stop_requested()) {
+            u64 number = next_claim.load(std::memory_order_relaxed);
+            if (number > published_packets.load(std::memory_order_acquire)) {
+                const auto spin_until = std::chrono::steady_clock::now() + spin_time;
+                for (u32 spins = 1;
+                     number > published_packets.load(std::memory_order_acquire); ++spins) {
+                    if (stop.stop_requested()) {
+                        return;
+                    }
+                    __builtin_ia32_pause();
+                    if (!(spins & 255) && std::chrono::steady_clock::now() >= spin_until) {
+                        const u32 seen = resolve_wake.load(std::memory_order_seq_cst);
+                        resolvers_sleeping.fetch_add(1, std::memory_order_seq_cst);
+                        if (number > published_packets.load(std::memory_order_seq_cst) &&
+                            !stop.stop_requested()) {
+                            resolve_wake.wait(seen, std::memory_order_seq_cst);
+                        }
+                        resolvers_sleeping.fetch_sub(1, std::memory_order_relaxed);
+                    }
+                    number = next_claim.load(std::memory_order_relaxed);
+                }
+                continue;
+            }
+            if (!next_claim.compare_exchange_weak(number, number + 1, std::memory_order_acq_rel)) {
+                continue;
+            }
+            auto& slot = slots[number & SlotMask];
+            if (slot.state.load(std::memory_order_acquire) == SlotPending) {
+                auto* header = reinterpret_cast<Header*>(ring.get() + slot.at % Capacity);
+                resolver(context, reinterpret_cast<u8*>(header + 1), header->payload, number,
+                         worker);
+                slot.state.store(SlotDone, std::memory_order_release);
+            }
+        }
+    }
+
+    // Packet slots of the resolve stage: as many as packets fit in the ring (64-byte minimum).
+    static constexpr u64 SlotMask = (Capacity / 64) - 1;
+    enum : u32 { SlotPending = 1, SlotDone = 2 };
+    struct Slot {
+        u64 at = 0; ///< the packet's header position
+        std::atomic<u32> state{0};
+    };
+    std::unique_ptr<Slot[]> slots;
+    Resolver resolver = nullptr;
+    u64 resolved_prefix = 0; ///< stage A
+    alignas(64) std::atomic<u64> published_packets{0};
+    alignas(64) std::atomic<u64> next_claim{1};
+    alignas(64) std::atomic<u32> resolve_wake{0};
+    std::atomic<u32> resolvers_sleeping{0};
+    std::vector<std::jthread> resolvers;
 
     static inline thread_local bool on_stage_b = false;
     Handler handler;

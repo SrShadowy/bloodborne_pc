@@ -26,6 +26,12 @@ struct Crumb {
     u64 address = 0;            ///< indirect arguments
     u32 count[3]{};             ///< indices or vertices and instances, or groups
     u32 args_slot = ~0u;        ///< indirect dispatches: where the GPU copies its arguments
+    /// Draws: guest memory the draw reads (index buffer 'i', vertex streams 'v', shader
+    /// buffers 'b', textures 't' with size 0), for the report of a stuck draw.
+    static constexpr u32 MaxReads = 8;
+    u64 reads[MaxReads]{};
+    u32 read_sizes[MaxReads]{};
+    char read_kinds[MaxReads]{};
 };
 
 /// A stream for a new scheduler (`name` a string literal); the first call creates the buffer.

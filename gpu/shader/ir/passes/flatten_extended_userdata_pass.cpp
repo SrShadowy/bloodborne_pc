@@ -8,7 +8,8 @@
 //
 // Reads that compute the same value (global value numbering over the pointer and offset
 // arithmetic) share a slot. A walker load from unmapped memory (a stale pointer) faults; the
-// fault handler patches that load to produce 0 and resumes.
+// fault handler supplies 0 for that invocation and resumes without changing shared code.
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -44,11 +45,12 @@ namespace {
 
 using namespace Xbyak::util;
 
-/// All walkers live in one executable (and patchable) buffer.
+/// All walkers live in one executable buffer. Published instructions are immutable.
 struct WalkerCode {
     std::mutex mutex;
     Xbyak::CodeGenerator code{32_MB};
     const u8* start{};
+    std::atomic<size_t> published_size{0};
 };
 
 WalkerCode& Walkers() {
@@ -56,42 +58,43 @@ WalkerCode& Walkers() {
     return walkers;
 }
 
-/// A walker load faulted: `mov reg, [mem]` becomes `xor reg, reg` (rdi or r10d, the only
-/// registers walkers load into), padded with nops.
-bool PatchFaultingWalkerLoad(void* context, void* fault_address) {
+/// Supply zero for this failed load only. Patching the shared MOV raced with other threads'
+/// fault handlers and permanently discarded valid data on later draws using the same walker.
+bool HandleFaultingWalkerLoad(void* context, void* fault_address) {
     WalkerCode& walkers = Walkers();
     const u8* const code = static_cast<const u8*>(Common::GetRip(context));
-    if (!walkers.start || code < walkers.start ||
-        code >= walkers.start + walkers.code.getSize()) {
+    const size_t published_size = walkers.published_size.load(std::memory_order_acquire);
+    if (!published_size || code < walkers.start || code >= walkers.start + published_size) {
         return false;
     }
     ZydisDecodedInstruction instruction;
     ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
     const ZyanStatus status = Common::Decoder::Instance()->decodeInstruction(
         instruction, operands, const_cast<u8*>(code), 15);
-    ASSERT(ZYAN_SUCCESS(status) && instruction.mnemonic == ZYDIS_MNEMONIC_MOV &&
-           operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER &&
-           operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY);
-
-    u8* const patch = const_cast<u8*>(code);
-    constexpr size_t PatchSize = 3;
+    if (!ZYAN_SUCCESS(status) || instruction.mnemonic != ZYDIS_MNEMONIC_MOV ||
+        operands[0].type != ZYDIS_OPERAND_TYPE_REGISTER ||
+        operands[1].type != ZYDIS_OPERAND_TYPE_MEMORY) {
+        return false;
+    }
+    auto& registers = static_cast<ucontext_t*>(context)->uc_mcontext.gregs;
     switch (operands[0].reg.value) {
-    case ZYDIS_REGISTER_RDI: // xor rdi, rdi
-        patch[0] = 0x48;
-        patch[1] = 0x31;
-        patch[2] = 0xFF;
+    case ZYDIS_REGISTER_RDI:
+        registers[REG_RDI] = 0;
         break;
-    case ZYDIS_REGISTER_R10D: // xor r10d, r10d
-        patch[0] = 0x45;
-        patch[1] = 0x31;
-        patch[2] = 0xD2;
+    case ZYDIS_REGISTER_R10D:
+        registers[REG_R10] = 0; // a 32-bit MOV also clears the upper half
         break;
     default:
-        UNREACHABLE_MSG("Unsupported register for SRT walker patch");
+        return false;
     }
-    std::memset(patch + PatchSize, 0x90, instruction.length - PatchSize);
-    LOG_WARNING(Render_Recompiler, "Patched SRT walker at {}, fault address {}",
-                static_cast<const void*>(code), fault_address);
+    registers[REG_RIP] += instruction.length;
+    static std::atomic<u64> faults{0};
+    const u64 count = faults.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (count <= 5 || (count & (count - 1)) == 0) {
+        LOG_WARNING(Render_Recompiler, "SRT walker read unavailable memory at {} (instruction {}, "
+                    "{} reads so far); supplied zero for this draw", fault_address,
+                    static_cast<const void*>(code), count);
+    }
     return true;
 }
 
@@ -101,7 +104,7 @@ Xbyak::CodeGenerator& WalkerBuffer(WalkerCode& walkers) {
         walkers.start = walkers.code.getCurr();
         // After the memory tracking handler.
         constexpr u32 Priority = 2;
-        Core::Signals::Instance()->RegisterAccessViolationHandler(PatchFaultingWalkerLoad,
+        Core::Signals::Instance()->RegisterAccessViolationHandler(HandleFaultingWalkerLoad,
                                                                   Priority);
     }
     return walkers.code;
@@ -134,6 +137,7 @@ PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     const auto func = c.getCurr<PFN_SrtWalker>();
     c.db(ptr, size);
     c.ready();
+    walkers.published_size.store(c.getSize(), std::memory_order_release);
     return func;
 }
 
@@ -741,6 +745,7 @@ void FlattenExtendedUserdataPass(IR::Program& program) {
         }
         c.ret();
         c.ready();
+        walkers.published_size.store(c.getSize(), std::memory_order_release);
         const auto* const code = reinterpret_cast<const u8*>(info.srt_info.walker_func);
         info.srt_info.walker_func_size = c.getCurr() - code;
         if (EmulatorSettings.IsDumpShaders()) {

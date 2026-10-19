@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -76,6 +77,21 @@ public:
     }
     u32 ApiVersion() const {
         return properties.apiVersion;
+    }
+    /// AMD GCN 3/4 (GFX8: Polaris, Tonga, Fiji, Carrizo, Stoney): RADV puts the chip in the device
+    /// name ("... (RADV POLARIS10)"). The proprietary and PAL drivers name the card only.
+    bool IsAmdGfx8() const {
+        if (properties.vendorID != 0x1002) {
+            return false;
+        }
+        const std::string_view name{properties.deviceName.data()};
+        for (const std::string_view chip :
+             {"POLARIS", "TONGA", "FIJI", "ICELAND", "CARRIZO", "STONEY", "VEGAM"}) {
+            if (name.find(chip) != std::string_view::npos) {
+                return true;
+            }
+        }
+        return false;
     }
     bool IsIntegrated() const {
         return properties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
@@ -284,6 +300,11 @@ public:
     bool IsHostMemoryImportSupported() const {
         return ext.memory_host;
     }
+    /// BB_GUEST_UNCACHED=1 (AMD, diagnostic): the GPU reads the game's memory past its caches
+    /// (VK_AMD_device_coherent_memory), as NVIDIA reads imported host memory.
+    bool IsGuestUncached() const {
+        return ext.guest_uncached;
+    }
 
     // Upscalers.
     /// FSR 4 v07 INT8/DOT4: Float16, Int8, Int16, int8 dot products, linear compute derivatives,
@@ -347,7 +368,7 @@ private:
             trinary_minmax, nv_mixed_samples, amd_mixed_samples, atomic_float, atomic_float2,
             workgroup_layout, view_2d_of_3d, image_view_min_lod, memory_budget, memory_fd,
             dma_buf, memory_host, compute_derivatives, mixed_float_dot, cooperative_matrix,
-            float8, shader_clock;
+            float8, shader_clock, guest_uncached;
     };
 
     vk::UniqueInstance instance;

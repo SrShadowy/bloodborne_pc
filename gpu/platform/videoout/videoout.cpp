@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <cstring>
 #include <memory>
+#include <utility>
 
 #include "bbport_frame_rate.h"
 #include "common/assert.h"
@@ -138,6 +139,15 @@ s32 PS4_SYSV_ABI sceVideoOutSetFlipRate(s32 handle, s32 rate) {
     // With the frame rate free (bbport_frame_rate) a frame is shown as soon as it comes; the
     // game asks for every second vblank (30 FPS).
     port->flip_rate = BbFrameRate::Unlocked() ? 0 : rate;
+    // BB_FLIP_RATE=n: the rate asked for is replaced (0: every vblank; games without frame rate
+    // hooks, e.g. 60 FPS where a game asks for 30).
+    if (const char* forced = std::getenv("BB_FLIP_RATE"); forced && *forced) {
+        port->flip_rate = std::atoi(forced);
+        static s32 reported = -1;
+        if (std::exchange(reported, rate) != rate) {
+            std::printf("VideoOut: flip rate %d asked, %d forced (BB_FLIP_RATE)\n", rate, port->flip_rate);
+        }
+    }
     return BbErr::Ok;
 }
 

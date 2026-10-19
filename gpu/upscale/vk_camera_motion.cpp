@@ -8,6 +8,8 @@
 #include <cstring>
 
 #include "bbport_toggles.h"
+#include <fmt/format.h>
+#include <string>
 
 #include "bbgpu/shaders/camera_motion_comp.h"
 #include "bbgpu/shaders/camera_motion_debug_comp.h"
@@ -350,6 +352,17 @@ void CameraMotion::OnConstants(const float* data) {
     // whose depth the motion vectors use (CommitFrameCamera), not with the frame's first pass.
     if (pass_has_camera) {
         return;
+    }
+    // BB_CAMERA_FRAME_LOG=1 (diagnostics): the projection block of every G-buffer pass's camera, with
+    // the GPU frame (one-frame anomalies: docs/Flicker_video_2026-10-17.ru.md).
+    static const bool frame_log = std::getenv("BB_CAMERA_FRAME_LOG") != nullptr;
+    if (frame_log) {
+        std::string text = fmt::format("Camera frame {}:",
+                                       BbStats::gpu_frames.load(std::memory_order_relaxed));
+        for (int i = 48; i < 68; ++i) {
+            text += fmt::format(" {:.6g}", data[i]);
+        }
+        std::printf("%s\n", text.c_str());
     }
     std::memcpy(pass_camera.view.data(), data + 8, 12 * sizeof(float));
     std::memcpy(pass_camera.inv_view.data(), data + 180, 12 * sizeof(float));

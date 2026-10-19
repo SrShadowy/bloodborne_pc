@@ -53,3 +53,20 @@ def connected_displays():
              parse_size(size, None), primary == "1")
             for number, (name, size, primary) in enumerate(rows, 1)]
 
+
+def connected_gpus():
+    """(index, vendor ID, type, name, the port's own choice) of the GPUs in Vulkan's order
+    (bb-gpu-capabilities --gpus; BB_GPU_ID is the index), [] if unknown."""
+    import os
+    tool = PORT_DIR / ("bin" if PACKAGED else "out") / "bb-gpu-capabilities"
+    env = {key: value for key, value in os.environ.items() if key != "BB_GPU_ID"}
+    try:
+        run = subprocess.run([str(tool), "--gpus"], capture_output=True, text=True, timeout=10,
+                             env=env)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    rows = [line.split("\t") for line in run.stdout.splitlines() if line.count("\t") == 4]
+    return [(int(index), vendor, kind, name, best == "1")
+            for index, vendor, kind, name, best in rows if index.isdigit()]
+
+

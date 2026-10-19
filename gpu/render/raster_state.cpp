@@ -3,6 +3,9 @@
 // stencil, primitive assembly, rasterization, blending), set on the scheduler's DynamicState
 // (only what changed is recorded), and debug markers.
 
+#include <mutex>
+#include <unordered_map>
+
 #include "render/raster_internal.h"
 
 namespace Vulkan {
@@ -352,3 +355,103 @@ u32 Rasterizer::GetGpuCommandProcessorThreadId() {
 #endif
 
 } // namespace Vulkan
+
+namespace Vulkan::DynCheck {
+namespace {
+/// Per command buffer, without locks (a global mutex hid the race): open addressing on the
+/// handle; a buffer is recorded by one thread at a time, which alone touches its entry.
+struct Shadow {
+    std::atomic<VkCommandBuffer> key{VK_NULL_HANDLE};
+    Viewports viewports;
+    Scissors scissors;
+    const char* viewports_by = "nothing";
+    const char* scissors_by = "nothing";
+};
+constexpr u32 Slots = 4096;
+Shadow shadows[Slots];
+std::atomic<u64> draws{0}, reported{0};
+Shadow* Find(vk::CommandBuffer cmd) {
+    const VkCommandBuffer key = VkCommandBuffer(cmd);
+    u32 at = u32((reinterpret_cast<uintptr_t>(key) * 0x9E3779B97F4A7C15ull) >> 52) & (Slots - 1);
+    for (u32 i = 0; i < Slots; ++i, at = (at + 1) & (Slots - 1)) {
+        VkCommandBuffer seen = shadows[at].key.load(std::memory_order_acquire);
+        if (seen == key) {
+            return &shadows[at];
+        }
+        if (seen == VK_NULL_HANDLE &&
+            shadows[at].key.compare_exchange_strong(seen, key, std::memory_order_acq_rel)) {
+            return &shadows[at];
+        }
+        if (seen == key) {
+            return &shadows[at];
+        }
+    }
+    return nullptr;
+}
+std::string Text(const Scissors& s) {
+    std::string out;
+    for (const auto& r : s) {
+        out += fmt::format("({},{} {}x{})", r.offset.x, r.offset.y, r.extent.width, r.extent.height);
+    }
+    return out.empty() ? std::string{"none"} : out;
+}
+std::string Text(const Viewports& v) {
+    std::string out;
+    for (const auto& r : v) {
+        out += fmt::format("({:g},{:g} {:g}x{:g})", r.x, r.y, r.width, r.height);
+    }
+    return out.empty() ? std::string{"none"} : out;
+}
+} // namespace
+
+bool Enabled() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_DYNSTATE_CHECK");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+
+void Begin(vk::CommandBuffer cmd) {
+    if (Shadow* s = Find(cmd)) {
+        s->viewports.clear();
+        s->scissors.clear();
+        s->viewports_by = s->scissors_by = "begin";
+    }
+}
+
+void Set(vk::CommandBuffer cmd, const Scissors& scissors, const char* who) {
+    if (Shadow* s = Find(cmd)) {
+        s->scissors = scissors;
+        s->scissors_by = who;
+    }
+}
+
+void SetViewports(vk::CommandBuffer cmd, const Viewports& viewports, const char* who) {
+    if (Shadow* s = Find(cmd)) {
+        s->viewports = viewports;
+        s->viewports_by = who;
+    }
+}
+
+void Draw(vk::CommandBuffer cmd, const Viewports& viewports, const Scissors& scissors, u64 vs,
+          u64 ps) {
+    const u64 n = draws.fetch_add(1, std::memory_order_relaxed) + 1;
+    const Shadow* s = Find(cmd);
+    if (s && (!std::ranges::equal(s->viewports, viewports) ||
+              !std::ranges::equal(s->scissors, scissors))) {
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 400) {
+            std::printf("Dynstate check: frame %llu draw vs %016llx ps %016llx expects vp %s sc %s, "
+                        "command buffer has vp %s (by %s) sc %s (by %s)\n",
+                        (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
+                        (unsigned long long)vs, (unsigned long long)ps, Text(viewports).c_str(),
+                        Text(scissors).c_str(), Text(s->viewports).c_str(), s->viewports_by,
+                        Text(s->scissors).c_str(), s->scissors_by);
+        }
+    }
+    if (n % 1000000 == 0) {
+        std::printf("Dynstate check: %llu draws, %llu mismatches\n", (unsigned long long)n,
+                    (unsigned long long)reported.load(std::memory_order_relaxed));
+    }
+}
+} // namespace Vulkan::DynCheck

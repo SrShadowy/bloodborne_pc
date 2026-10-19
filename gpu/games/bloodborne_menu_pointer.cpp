@@ -438,6 +438,12 @@ bool InMenu() {
     const Addr flow = Get<Addr>(At(MenuFlow));
     const bool title = flow && !Get<std::uint8_t>(flow + 0xb11, 1);
     const bool menu = flow && Get<Addr>(flow + 0xa88);
+    // The menu object going away is the menu closing: the list-focus tail (400 ms, for pop-up
+    // lists that have no menu object) would keep the pointer ~0.4 s over the game after it.
+    static std::atomic<bool> had_menu{false};
+    if (had_menu.exchange(menu, std::memory_order_relaxed) && !menu) {
+        list_focus_ms.store(0, std::memory_order_relaxed);
+    }
     return title || menu || NowMs() - list_focus_ms.load(std::memory_order_relaxed) < 400;
 }
 
@@ -554,6 +560,24 @@ void SetPointer(SDL_Window* window, float wx, float wy) {
 }
 
 int PointerWanted() {
+    // BB_MENU_POINTER_LOG=1: each of the signals InMenu is made of, with the time of every change.
+    static const bool log = [] {
+        const char* env = std::getenv("BB_MENU_POINTER_LOG");
+        return env && env[0] == '1';
+    }();
+    if (log) {
+        static int last = -1;
+        const Addr flow = Get<Addr>(At(MenuFlow));
+        const int title = flow && !Get<std::uint8_t>(flow + 0xb11, 1);
+        const int object = flow && Get<Addr>(flow + 0xa88) ? 1 : 0;
+        const int focus = NowMs() - list_focus_ms.load(std::memory_order_relaxed) < 400;
+        const int state = title | object << 1 | focus << 2;
+        if (state != last) {
+            last = state;
+            std::printf("Menu pointer signals at %lld ms: title %d, menu object %d, list focus %d\n",
+                        static_cast<long long>(NowMs()), title, object, focus);
+        }
+    }
     const bool menu = InMenu();
     static bool was = false;
     if (menu != was) {

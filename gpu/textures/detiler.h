@@ -30,9 +30,13 @@ public:
     ~Detiler();
 
     /// The image's levels in `buffer_copies` copied out and tiled into `out_buffer` at
-    /// `out_offset` (as the guest lays them out).
-    void TileImage(Image& image, std::span<vk::BufferImageCopy> buffer_copies,
-                   const Buffer* out_buffer, u64 out_offset);
+    /// `out_offset` (as the guest lays them out). Tiled in VRAM first when `out_buffer` is host
+    /// memory: that copy is returned (`vram_size` bytes or the image's, whichever is more; only
+    /// the image's bytes are written), else {nullptr, 0}. Valid for the current submission.
+    std::pair<const Buffer*, u64> TileImage(Image& image,
+                                            std::span<vk::BufferImageCopy> buffer_copies,
+                                            const Buffer* out_buffer, u64 out_offset,
+                                            u64 vram_size = 0);
     /// The surface at `in_offset` of `in_buffer`, linear: a staging buffer with it, or the input
     /// when it is not tiled.
     std::pair<const Buffer*, u64> DetileImage(const Buffer* in_buffer, u64 in_offset,

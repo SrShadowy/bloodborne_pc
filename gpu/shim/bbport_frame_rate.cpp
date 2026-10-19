@@ -62,6 +62,8 @@ struct alignas(64) Live {
     float cloth = 1.0f;               ///< cloth constraints' stiffness
 };
 Live* live = nullptr;
+int base_rate = 0;               /// the launched mode's rate (with BB_FPS_LIMIT)
+std::atomic<int> live_limit{0};
 
 /// The pacer at the main loop's step (rdi: it): this frame's values.
 void PS4_SYSV_ABI FrameStep(u64 pacer) {
@@ -351,6 +353,7 @@ void PatchImage(unsigned char* image, std::uint64_t) {
         rate = std::min(rate, std::clamp(std::atoi(limit), 30, MaxRate));
     }
     live->shortest = 1.0f / float(rate);
+    base_rate = rate;
     // The core first: without all three the game keeps its own frame rate.
     if (!(HookPacerMode() && HookPacerLate() && HookStep())) {
         std::printf("Frame rate: the game's frame pacer is not the expected code: 30 FPS\n");
@@ -379,5 +382,17 @@ void PatchImage(unsigned char* image, std::uint64_t) {
 
 bool Unlocked() {
     return unlocked.load(std::memory_order_relaxed);
+}
+void SetLimit(int fps) {
+    live_limit.store(fps, std::memory_order_relaxed);
+    if (!unlocked.load(std::memory_order_relaxed) || !live) {
+        return;
+    }
+    const int rate = fps > 0 ? std::clamp(fps, 30, MaxRate) : base_rate;
+    live->shortest = 1.0f / float(rate);
+    std::printf("Frame rate: limit %d FPS (live)\n", rate);
+}
+int Limit() {
+    return live_limit.load(std::memory_order_relaxed);
 }
 } // namespace BbFrameRate

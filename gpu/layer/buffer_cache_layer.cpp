@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <xxhash.h>
 #include "bbport_guest_memory.h"
+#include "bbport_write_log.h"
 #include "bbport_sections.h"
 #include "bbport_toggles.h"
 #include "buffers/buffer_cache.h"
@@ -330,11 +331,15 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         if (const auto in_place = LayerInPlace(address, size, true)) {
             BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
             layer_volatile_in_pass_bytes += size;
+            std::pair<const Buffer*, u64> vram_copy{};
             if (is_texel_buffer) {
                 SynchronizeMemoryFromImage(in_place->first, in_place->second, address,
-                                           static_cast<u32>(size));
+                                           static_cast<u32>(size), &vram_copy);
             }
             TraceBinding(address, size, false, 2);
+            if (vram_copy.first) {
+                return vram_copy; // the image tiled in VRAM (SynchronizeMemoryFromImage)
+            }
             return in_place;
         }
     }
@@ -365,7 +370,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         if (is_written) {
             // The GPU's data is in VRAM only: copied back before the blocks go in place.
             gpu_modified_ranges.Add(address, size);
-            NoteWriteTick(address, size);
+            NoteBindingWriteTick(address, size);
             LayerArmReadTraps(address, size); // and before the CPU reads it
         }
         TraceBinding(address, size, is_written, is_written ? 1 : 4);
@@ -406,7 +411,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
     }
     const auto [buffer, offset] = *in_place;
     if (is_written) {
-        NoteWriteTick(address, size);
+        NoteBindingWriteTick(address, size);
         BbStats::bound_in_place_written_bytes.fetch_add(size, std::memory_order_relaxed);
         // What the GPU writes often moves to VRAM once its blocks are all known data
         // (NoteGpuWrite: written in 3 of 60 frames). Some writers stay in place (the copy
@@ -416,8 +421,9 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         }
     }
     BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
+    std::pair<const Buffer*, u64> vram_copy{};
     if (is_texel_buffer && !is_written) {
-        SynchronizeMemoryFromImage(buffer, offset, address, static_cast<u32>(size));
+        SynchronizeMemoryFromImage(buffer, offset, address, static_cast<u32>(size), &vram_copy);
     }
     // Small constants stay out (ObtainBuffer copies them when not GPU-written: decode order).
     if (!is_written && !is_texel_buffer && may_promote && pure_in_place &&
@@ -425,6 +431,9 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         StoreBindMemo(address, size, epoch, buffer, offset, false);
     }
     TraceBinding(address, size, is_written, is_written ? 0 : 2);
+    if (vram_copy.first) {
+        return vram_copy; // the image tiled in VRAM (SynchronizeMemoryFromImage)
+    }
     return in_place;
 }
 
@@ -1121,9 +1130,21 @@ void BufferCache::LayerWriteEntries(u64 first, u64 end) {
     }
     lap(9);
     std::copy_n(guest_entries, end - first, entries);
+    // BB_EXP_PAGED_IN_PLACE=1 (experiment, missing map geometry after area loads): paged
+    // bindings read the game's memory itself, never a VRAM copy.
+    static const bool paged_in_place = [] {
+        const char* env = std::getenv("BB_EXP_PAGED_IN_PLACE");
+        const bool on = env && env[0] == '1';
+        if (on) {
+            std::printf("Layer memory: paged bindings read in place (BB_EXP_PAGED_IN_PLACE=1)\n");
+        }
+        return on;
+    }();
     // Valid blocks (not volatile) are read from their mirror.
     std::vector<std::pair<u64, u64>> valid;
-    Layer().ForEachValid(first, end, [&](u64 a, u64 b) { valid.emplace_back(a, b); });
+    if (!paged_in_place) {
+        Layer().ForEachValid(first, end, [&](u64 a, u64 b) { valid.emplace_back(a, b); });
+    }
     for (const auto& [a, b] : valid) {
         std::optional<BbLayer::MemorySource> mirror;
         const bool any_volatile = layer_volatile.Overlaps(a, b);
@@ -1245,6 +1266,11 @@ std::pair<const Buffer*, u64> BufferCache::LayerPagedRecord(VAddr address, u64 s
     const u64 first = address >> block_shift;
     const u64 end = ((address + size - 1) >> block_shift) + 1;
     NoteUse(address, size);
+    // BB_LAYER_VERIFY: the mirrors a paged binding reads too (every 16th frame: it may span GiB).
+    if (!is_written && LayerVerifyOn() &&
+        BbStats::frame_number.load(std::memory_order_relaxed) % 16 == 0) {
+        LayerVerifyMirror(address, size, false);
+    }
     // Page table entries for the blocks not published yet (those mapped now: an unmapped block
     // is tried again next time).
     std::vector<std::pair<u64, u64>> gaps;
@@ -1263,7 +1289,7 @@ std::pair<const Buffer*, u64> BufferCache::LayerPagedRecord(VAddr address, u64 s
         }
     }
     if (is_written) {
-        NoteWriteTick(address, size);
+        NoteBindingWriteTick(address, size);
         // Where it writes is unknown: what is in VRAM there may now differ from the game's
         // memory; it is copied back before it goes in place (LayerDemote).
         if (!force_writes_in_place) {
@@ -1377,6 +1403,7 @@ void BufferCache::LayerCopyBack(u64 first, u64 end) {
         gpu_modified_ranges.ForEachInRange(from, bytes, [&](VAddr w_from, VAddr w_to) {
             if (const auto target = LayerInPlace(w_from, w_to - w_from)) {
                 const vk::BufferCopy copy{buffer->Offset(w_from), target->second, w_to - w_from};
+                BbWriteLog::NoteMirrorCopy(w_from, w_to - w_from);
                 runtime.CopyBuffer(buffer, target->first, std::span{&copy, 1});
                 layer_copied_back_bytes += w_to - w_from;
                 layer_copy_back_tick = scheduler.CurrentTick();
@@ -1829,7 +1856,7 @@ bool BufferCache::LayerMirrored(VAddr addr, u64 size) {
 bool BufferCache::LayerVerifyOn() {
     static const bool on = [] {
         const char* env = std::getenv("BB_LAYER_VERIFY");
-        const bool enabled = env && env[0] == '1';
+        const bool enabled = env && (env[0] == '1' || env[0] == '2');
         if (enabled) {
             std::printf("Layer verify: VRAM copies checked against the game's memory at every "
                         "binding (BB_LAYER_VERIFY=1, slow)\n");
@@ -1909,7 +1936,12 @@ void BufferCache::LayerVerifyMirror(VAddr address, u64 size, bool is_texel_buffe
             const bool vma = runtime_memory_vma_info(a, &prot, &type, &vma_end);
             // Only a trap that should have seen the write: armed with pages open (a refresh
             // uploaded meanwhile also changes the bytes with nothing pending; not reported).
-            if (armed && open_pages != 0) {
+            // BB_LAYER_VERIFY=2: every unannounced change of a mirrored block (refreshes too).
+            static const bool verify_all = [] {
+                const char* env = std::getenv("BB_LAYER_VERIFY");
+                return env && env[0] == '2';
+            }();
+            if ((armed && open_pages != 0) || verify_all) {
                 ++layer_verify_reports;
                 std::printf(
                     "Layer verify: STALE %#llx (binding %#llx+%#llx%s): %llu bytes changed at "
@@ -1944,4 +1976,3 @@ void BufferCache::LayerVerifyMirror(VAddr address, u64 size, bool is_texel_buffe
 }
 
 } // namespace VideoCore
-

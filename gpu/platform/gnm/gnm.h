@@ -15,6 +15,8 @@ namespace BbGnm {
 
 /// Creates the command processor and presenter and registers the library's functions.
 void RegisterLib(Core::Loader::SymbolsResolver* sym);
+/// Initialize a small FX target without changing a guest graphics context's cursor or state.
+bool SubmitFxInitZero(u64 address, u32 bytes);
 
 /// The submission lock is released when the command processor has decoded a frame (instead of
 /// when the GPU went idle): only with honest labels.

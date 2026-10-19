@@ -167,6 +167,13 @@ bool Rasterizer::WriteDataOnGpu(VAddr address, const void* data, u32 size) {
         runtime.UpdateBuffer(mirror->first, mirror->second, {static_cast<const u8*>(data), size});
     }
     runtime.UpdateBuffer(target->first, target->second, {static_cast<const u8*>(data), size});
+    // Bulk WRITE_DATA can initialize texture memory (including the private FX-history
+    // clears). A cached Vulkan image at this address must be reuploaded from the new
+    // buffer contents if fully overwritten. Otherwise a reload can keep the previous owner's image despite
+    // the clear. Scalar fence/label writes retain their fast path.
+    if (size > sizeof(u64)) {
+        texture_cache.InvalidateMemoryFromGPU(address, size);
+    }
     if (size <= sizeof(u64) && HonestLabels()) {
         u64 value = 0;
         std::memcpy(&value, data, size);
@@ -261,8 +268,16 @@ bool Rasterizer::WriteTimestampOnGpu(VAddr address, bool end_of_pipe) {
 }
 
 bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
-    static const bool enabled = [] {
+    // Off by default on GFX8 (Polaris, RX 4xx/5xx): the guest stalls there with labels written by
+    // the GPU (#203, RX 580: nothing submitted for 5 s after the first cutscene; BB_FREE_CHECK=1,
+    // which also turns them off, fixes it). BB_GPU_LABELS=1 forces them on.
+    static const bool enabled = [this] {
         const char* env = std::getenv("BB_GPU_LABELS");
+        if (!env && instance.IsAmdGfx8()) {
+            std::printf("GPU: end-of-pipe labels are written by a CPU thread after the GPU "
+                        "(GFX8; BB_GPU_LABELS=1: by the GPU)\n");
+            return false;
+        }
         return !env || env[0] != '0';
     }();
     if (!enabled || !VideoCore::GuestInPlace() || !HonestLabels() ||
@@ -509,4 +524,17 @@ void Rasterizer::GpuWatchdog(u64 tick) {
     std::fflush(stdout);
 }
 
+} // namespace Vulkan
+
+namespace Vulkan {
+void Rasterizer::WaitPreviousFrame() {
+    static u64 previous = 0;
+    auto* semaphore = scheduler.GetWorkSemaphore();
+    const u64 now = scheduler.CurrentTick();
+    if (previous != 0 && previous < now) {
+        semaphore->Wait(previous);
+    }
+    scheduler.Flush(); // this frame's commands go to the GPU, their tick is the next wait
+    previous = now;
+}
 } // namespace Vulkan

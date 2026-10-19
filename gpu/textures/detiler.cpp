@@ -11,6 +11,7 @@
 #include "vulkan/instance.h"
 #include "render/runtime.h"
 #include "render/scheduler.h"
+#include "render/vk_gpu_profiler.h"
 #include "vulkan/shader_module.h"
 
 #include "bbgpu/shaders/detile_macro_128_comp.h"
@@ -224,15 +225,17 @@ std::pair<const Buffer*, u64> Detiler::DetileImage(const Buffer* in_buffer, u64 
     return {staging.buffer, staging.offset};
 }
 
-void Detiler::TileImage(Image& image, std::span<vk::BufferImageCopy> buffer_copies,
-                        const Buffer* out_buffer, u64 out_offset) {
+std::pair<const Buffer*, u64> Detiler::TileImage(Image& image,
+                                                 std::span<vk::BufferImageCopy> buffer_copies,
+                                                 const Buffer* out_buffer, u64 out_offset,
+                                                 u64 vram_size) {
     const auto& info = image.info;
     if (!info.props.is_tiled) {
         for (auto& copy : buffer_copies) {
             copy.bufferOffset += out_offset;
         }
         runtime.DownloadImage(&image, out_buffer, buffer_copies);
-        return;
+        return {nullptr, 0};
     }
     const auto levels = LevelTable(info, u32(buffer_copies.size()));
     const auto staging = runtime.GetStagingPool().Request(info.guest_size, MemoryType::DeviceLocal);
@@ -241,12 +244,60 @@ void Detiler::TileImage(Image& image, std::span<vk::BufferImageCopy> buffer_copi
     }
     runtime.DownloadImage(&image, staging.buffer, buffer_copies);
     runtime.FlushBarriers();
+    // BB_GPU_PROFILE: the tiler's dispatch gets a mark of its own (without it its time went to
+    // the pass or dispatch before: the light shafts' passes looked slow in #204, #210).
+    auto* profiler = Vulkan::GpuProfiler::Get();
+    const u64 resume = profiler ? profiler->Current() : 0;
+    if (profiler) {
+        profiler->Mark(0x711E'0000ull ^ info.guest_size, [&] {
+            return fmt::format("tile image {}x{} fmt {} ({} bytes)", info.size.width,
+                               info.size.height, u32(info.pixel_format), info.guest_size);
+        });
+    }
+    struct ResumeMark {
+        Vulkan::GpuProfiler* profiler;
+        u64 key;
+        ~ResumeMark() {
+            if (profiler && key) {
+                profiler->Resume(key);
+            }
+        }
+    } resume_mark{profiler, resume};
+    const u32 texels = info.guest_size / (info.num_bits / 8);
+    // bbport: the tiler writes a texel at a time at swizzled addresses. Into host memory (the
+    // game's memory in place, BB_LAYER_MEMORY) each of those writes crossed the bus on its own:
+    // ~4.8 ms for a 1280x720 RGBA8 render target that a compute shader reads as a texel buffer,
+    // four times a frame at 1440p, on an RTX 5090 (PCIe 5; the dispatches themselves took
+    // ~0.1 ms). Tiled into VRAM and copied over in one transfer instead. Only where the tiler
+    // writes every byte of the copy: all levels back to back over guest_size and whole
+    // workgroups (else bytes it leaves alone would be overwritten).
+    const bool host_destination = out_buffer->mem_type == MemoryType::HostCached ||
+                                  out_buffer->mem_type == MemoryType::HostUncached;
+    u64 covered = 0;
+    for (u32 level = 0; level < buffer_copies.size(); ++level) {
+        const auto& mip = info.mips_layout[level];
+        covered = mip.offset == covered ? covered + mip.size : ~0ULL;
+    }
+    if (host_destination && covered == info.guest_size && texels % 64 == 0) {
+        const auto tiled =
+            runtime.GetStagingPool().Request(std::max<u64>(info.guest_size, vram_size),
+                                             MemoryType::DeviceLocal);
+        Dispatch(Pipeline(info, true), {tiled.buffer->Handle(), tiled.offset, info.guest_size},
+                 {staging.buffer->Handle(), staging.offset, info.guest_size}, levels, texels);
+        runtime.AccessBuffer(tiled.buffer, tiled.offset, info.guest_size,
+                             vk::PipelineStageFlagBits2::eComputeShader,
+                             vk::AccessFlagBits2::eShaderWrite);
+        const vk::BufferCopy copy{
+            .srcOffset = tiled.offset, .dstOffset = out_offset, .size = info.guest_size};
+        runtime.CopyBuffer(tiled.buffer, out_buffer, {&copy, 1});
+        return {tiled.buffer, tiled.offset};
+    }
     Dispatch(Pipeline(info, true), {out_buffer->Handle(), out_offset, info.guest_size},
-             {staging.buffer->Handle(), staging.offset, info.guest_size}, levels,
-             info.guest_size / (info.num_bits / 8));
+             {staging.buffer->Handle(), staging.offset, info.guest_size}, levels, texels);
     runtime.AccessBuffer(out_buffer, out_offset, info.guest_size,
                          vk::PipelineStageFlagBits2::eComputeShader,
                          vk::AccessFlagBits2::eShaderWrite);
+    return {nullptr, 0};
 }
 
 } // namespace VideoCore

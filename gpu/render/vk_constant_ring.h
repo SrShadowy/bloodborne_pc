@@ -19,7 +19,12 @@ namespace Vulkan {
 
 class ConstantRing {
 public:
-    static constexpr u64 Capacity = 32ull << 20;
+    /// 32 MiB; BB_CONSTANT_RING_MB (diagnostics) another size.
+    static inline const u64 Capacity = [] {
+        const char* env = std::getenv("BB_CONSTANT_RING_MB");
+        const u64 mb = env ? std::strtoull(env, nullptr, 10) : 0;
+        return (mb ? mb : 32ull) << 20;
+    }();
 
     ConstantRing(const Instance& instance, Scheduler& scheduler_)
         : scheduler{scheduler_},

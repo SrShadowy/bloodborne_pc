@@ -7,11 +7,14 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <unordered_map>
+#include <utility>
 
 #include <xxhash.h>
 
 #include "bbport_button_prompts.h"
+#include "bbport_toggles.h"
 #include "buffers/buffer_cache.h"
 #include "render/runtime.h"
 #include "render/scheduler.h"
@@ -91,6 +94,22 @@ void NoteRefresh(const Image& image) {
     static const bool log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
     if (!log) {
         return;
+    }
+    // Render-target-sized images: every refresh, with the GPU frame (flicker hunting).
+    if (image.info.size.width >= 640 && image.info.size.height >= 360) {
+        static std::mutex big_mutex;
+        static std::unordered_map<VAddr, u64> last_frame;
+        static u32 big = 0;
+        const u64 frame = BbStats::gpu_frames.load(std::memory_order_relaxed);
+        std::scoped_lock big_lock{big_mutex};
+        const u64 last = std::exchange(last_frame[image.info.guest_address], frame);
+        if (last + 1 < frame && big++ < 3000) {
+            std::printf("Image sync: big refresh %#llx %ux%u fmt %u tile %u flags %#x frame %llu\n",
+                        (unsigned long long)image.info.guest_address, image.info.size.width,
+                        image.info.size.height, u32(image.info.pixel_format),
+                        u32(image.info.tile_mode), u32(image.flags),
+                        (unsigned long long)BbStats::gpu_frames.load(std::memory_order_relaxed));
+        }
     }
     if (True(image.flags & ImageFlagBits::GpuDirty)) {
         static std::atomic<u32> printed{0};

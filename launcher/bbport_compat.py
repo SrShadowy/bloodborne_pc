@@ -10,23 +10,23 @@ def apply_shims():
     # When older PyGObject (3.42) runs against newer host GTK 4.14+ typelibs,
     # new uninitialized interfaces (e.g. AccessibleText) can raise TypeError: must be an interface.
     try:
-        import gi.module
-        orig_get_interfaces = gi.module.get_interfaces_for_object
+        import sys
+        gi_mod = sys.modules.get("gi.module")
+        if gi_mod and hasattr(gi_mod, "get_interfaces_for_object"):
+            def safe_get_interfaces_for_object(object_info):
+                interfaces = []
+                for interface_info in object_info.get_interfaces():
+                    try:
+                        namespace = interface_info.get_namespace()
+                        name = interface_info.get_name()
+                        import importlib
+                        module = importlib.import_module("gi.repository." + namespace)
+                        interfaces.append(getattr(module, name))
+                    except Exception:
+                        pass
+                return interfaces
 
-        def safe_get_interfaces_for_object(object_info):
-            interfaces = []
-            for interface_info in object_info.get_interfaces():
-                try:
-                    namespace = interface_info.get_namespace()
-                    name = interface_info.get_name()
-                    import importlib
-                    module = importlib.import_module("gi.repository." + namespace)
-                    interfaces.append(getattr(module, name))
-                except Exception:
-                    pass
-            return interfaces
-
-        gi.module.get_interfaces_for_object = safe_get_interfaces_for_object
+            gi_mod.get_interfaces_for_object = safe_get_interfaces_for_object
     except Exception:
         pass
 
