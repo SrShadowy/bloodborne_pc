@@ -277,3 +277,15 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 ## 75. Pulo Universal de Cutscenes In-Engine e Vídeos Pré-Renderizados (AvPlayer) via Teclado
 - **Causa**: O primeiro vídeo (`sprj_opening.mp4` / `sprj_advertise.mp4`) é reproduzido pelo `libSceAvPlayer`, antes da inicialização das estruturas de Scaleform menu flow (`kMenuFlow`), fazendo com que `bbgpu_input_blocked()` retornasse 0 e o `apply_keyboard` desviasse o <kbd>Esc</kbd> para `BTN_CIRCLE`.
 - **Solução Arquitetural**: Módulo `BbVideoTrack` (`extra/core/engine_fixes/bbport_video.{h,cpp}`) monitorando o ciclo de vida do player. Ao pressionar <kbd>Enter</kbd> ou <kbd>Esc</kbd>, `bbgpu_video_skip()` executa `player->Stop()` limpo e seguro em thread, disparando `StateStop` para o motor do jogo avançar imediatamente, além de desmascarar `BTN_OPTIONS` (0x8) para cutscenes in-engine.
+
+## 76. Empacotamento de Módulos Online (`libbbnet20.so` e `libbbnet.so`) no Pacote Distribuível
+- **Causa**: `package.py` apenas verificava e copiava `libbbnet.so`, ignorando `libbbnet20.so` (utilizado por padrão no BBPort 0.6+ para *Seamless Hunt* e *The Hunter's Dream*). Sem ele, o launcher desativava o pool online e o `run.sh` falhava para modo offline.
+- **Solução**: `package.py` atualizado para detectar, empacotar em `bin/gpu/`, aplicar strip e rastrear dependências dinâmicas no `lib/` para ambos `libbbnet20.so` e `libbbnet.so`. Adicionado fallback automático bidirecional em `run.sh` caso apenas um dos módulos esteja presente. Stubs em `tests/test_pad.c` e `tests/test_content.c` alinhados para 100% de aprovação na suíte de testes.
+
+## 77. Configuração e Correção do Discord Rich Presence (Client ID Padrão e Controles de Interface)
+- **Causa**: O Client ID padrão em C++ estava definido com o ID do shadPS4 (`1139939140494971051`), exibindo "Jogando shadPS4" sem carregar as artes personalizadas de áreas.
+- **Solução**: Client ID padrão alterado para a aplicação oficial BloodBorne BBPort (`1560890616811102219`), ativando as artes de mapas do Discord. Adicionada configuração na aba Online do launcher (`bbport_online.py`), persistência no `bbport.ini` e seletores rápidos (BBPort / shadPS4) com input editável no menu de overlay do jogo (`bbport_overlay_sections.cpp`).
+
+## 78. Resolução do Host Fault Signal 11 (SIGSEGV) em `BbEngineGraphics::PatchImage`
+- **Causa**: Em `RestoreStartupEffectPatches` (`extra/core/engine_fixes/bbport_engine_graphics.cpp`), a restauração dos bytes originais de aberração cromática (`kCaCopy` em `0x229faa8`) e LoD (`kModelLodSite`) gravava diretamente na página de código RX do hóspede sem chamar `MakeWritable`, disparando SIGSEGV no endereço `0x80229fab0`.
+- **Solução**: Invocação de `BbCodePatch::MakeWritable` antes da escrita de restauração em `kCaCopy` e `kModelLodSite`, garantindo permissão RWX temporária na página antes de copiar os bytes.

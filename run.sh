@@ -252,6 +252,10 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
     fi
     if [[ $BB_NET_GEN == 20 && -z ${BB_NET_MODULE:-} ]]; then
         if [[ -n ${BB_PREBUILT:-} ]]; then BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so; else BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so; fi
+        if [[ ! -f $BB_NET_MODULE && -f ${BB_NET_MODULE%20.so}.so ]]; then
+            BB_NET_MODULE=${BB_NET_MODULE%20.so}.so
+            BB_NET_GEN=19
+        fi
         export BB_NET_MODULE
     fi
     export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-play.seamlesshunt.com:31313}

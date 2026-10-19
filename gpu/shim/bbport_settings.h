@@ -195,7 +195,7 @@ struct Values {
     std::atomic<bool> discord_rpc_show_party{true};
     std::atomic<bool> discord_rpc_show_boss{true};
     std::atomic<bool> discord_rpc_window_open{false};
-    std::string discord_client_id{"1139939140494971051"};
+    std::string discord_client_id{"1560890616811102219"};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

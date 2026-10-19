@@ -1039,6 +1039,10 @@ class LauncherWindow(
             s["online_backend"] = combo_value(self.backend_row)
         if hasattr(self, "bbhost_server_row"):
             s["online_bbhost_server"] = self.bbhost_server_row.get_text().strip()
+        if hasattr(self, "discord_cid_row"):
+            cid = self.discord_cid_row.get_text().strip() or "1560890616811102219"
+            s["discord_client_id"] = cid
+            self.ini["discord_client_id"] = cid
         self.save_mod_profile()
         self.save_patch_profile()
         save_settings(s)

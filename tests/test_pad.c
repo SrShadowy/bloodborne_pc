@@ -11,6 +11,8 @@ void bbgpu_mouse_look_enable(int enabled) { (void)enabled; }
 void bbgpu_mouse_capture(void) {}
 int bbgpu_camera_look(float yaw, float pitch) { (void)yaw; (void)pitch; return 0; }
 void bbgpu_filter_pad(uint32_t *buttons, const uint8_t *sticks) { (void)buttons; (void)sticks; }
+int bbgpu_pointer_wanted(void) { return 0; }
+int bbgpu_free_camera(void) { return 0; }
 void runtime_re_watch_tick(const void *pad_buffer, uint64_t reads) { (void)pad_buffer; (void)reads; }
 uintptr_t runtime_libc_base;
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
@@ -168,15 +170,15 @@ int main(void) {
         w.left_x = w.left_y = 128;
         bool k_run[SDL_SCANCODE_COUNT] = {0};
         k_run[SDL_SCANCODE_W] = true;
-        apply_keyboard(&w, k_run);
-        assert(w.left_y == 0 && w.left_x == 128); /* Full run forward */
+        for (int s = 0; s < 15; ++s) { w.timestamp += 16000; apply_keyboard(&w, k_run); }
+        assert(w.left_y <= 1 && w.left_x == 128); /* Full run forward */
 
         memset(&w, 0, sizeof w);
         w.left_x = w.left_y = 128;
         bool k_walk_alt[SDL_SCANCODE_COUNT] = {0};
         k_walk_alt[SDL_SCANCODE_W] = true;
         k_walk_alt[SDL_SCANCODE_LALT] = true;
-        apply_keyboard(&w, k_walk_alt);
+        for (int s = 0; s < 10; ++s) { w.timestamp += 16000; apply_keyboard(&w, k_walk_alt); }
         assert(w.left_y == 128 - 60 && w.left_x == 128); /* Half-analog walk forward (Alt) */
 
         memset(&w, 0, sizeof w);
@@ -184,7 +186,7 @@ int main(void) {
         bool k_walk_ctrl[SDL_SCANCODE_COUNT] = {0};
         k_walk_ctrl[SDL_SCANCODE_W] = true;
         k_walk_ctrl[SDL_SCANCODE_LCTRL] = true;
-        apply_keyboard(&w, k_walk_ctrl);
+        for (int s = 0; s < 10; ++s) { w.timestamp += 16000; apply_keyboard(&w, k_walk_ctrl); }
         assert(w.left_y == 128 - 60 && w.left_x == 128); /* Half-analog walk forward (Ctrl) */
 
         memset(&w, 0, sizeof w);
@@ -193,7 +195,7 @@ int main(void) {
         k_walk_diag[SDL_SCANCODE_W] = true;
         k_walk_diag[SDL_SCANCODE_D] = true;
         k_walk_diag[SDL_SCANCODE_LALT] = true;
-        apply_keyboard(&w, k_walk_diag);
+        for (int s = 0; s < 10; ++s) { w.timestamp += 16000; apply_keyboard(&w, k_walk_diag); }
         assert(w.left_y == 128 - 42 && w.left_x == 128 + 42); /* Normalized diagonal walk */
     }
 

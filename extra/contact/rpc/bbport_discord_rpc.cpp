@@ -33,7 +33,8 @@
 namespace BbDiscordRpc {
 namespace {
 
-constexpr const char* kClientId = "1139939140494971051";
+constexpr const char* kClientId = "1560890616811102219";
+constexpr const char* kShadps4ClientId = "1139939140494971051";
 
 #pragma pack(push, 1)
 struct DiscordIpcHeader {
@@ -319,7 +320,7 @@ static std::string GetMapAssetKey(const std::string& map_en) {
 ActivityDisplay FormatActivity(const BbGameData::PresenceSnapshot& p, const BbSettings::Values& s, int lang) {
     ActivityDisplay ad;
     const std::string& cid = s.discord_client_id;
-    const bool is_custom_app = (!cid.empty() && cid != kClientId);
+    const bool is_custom_app = (cid != kShadps4ClientId);
 
     if (!p.in_game) {
         ad.details = (lang == 1) ? "Menu Principal" : (lang == 2) ? "Главное меню" : "Main Menu";

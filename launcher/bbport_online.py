@@ -127,6 +127,15 @@ class OnlineMixin:
         self.test_rows = []
         self.connection_group = connection
         page.add(connection)
+
+        discord_grp = Adw.PreferencesGroup(
+            title="Discord Rich Presence",
+            description="Client ID da aplicação Discord. Padrão: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051")
+        self.discord_cid_row = Adw.EntryRow(title="Discord Client ID",
+                                            text=self.ini.get("discord_client_id", s.get("discord_client_id", "1560890616811102219")))
+        discord_grp.add(self.discord_cid_row)
+        page.add(discord_grp)
+
         self.pool_row.connect("notify::selected", self.on_pool_changed)
         self.on_pool_changed()
         return page

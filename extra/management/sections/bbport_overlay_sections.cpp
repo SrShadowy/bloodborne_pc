@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "bbport_discord_rpc.h"
@@ -404,12 +405,40 @@ void RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty) {
          (lang == 2) ? "Показывает размер группы (1 из 3), призванных NPC и вторжения." :
                        "Displays party size (1 of 3), summoned NPC helpers, and invasions.");
 
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "%s",
+                       (lang == 1) ? "Aplicação Discord (Client ID)" :
+                       (lang == 2) ? "Приложение Discord (Client ID)" :
+                                     "Discord Application (Client ID)");
+
+    char cid_buf[64];
+    std::strncpy(cid_buf, s.discord_client_id.c_str(), sizeof(cid_buf) - 1);
+    cid_buf[sizeof(cid_buf) - 1] = '\0';
+    ImGui::SetNextItemWidth(190.0f);
+    if (ImGui::InputText("##discord_cid", cid_buf, sizeof(cid_buf))) {
+        s.discord_client_id = cid_buf;
+        dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button((lang == 1) ? "Padrão (BBPort)" : (lang == 2) ? "Сброс (BBPort)" : "Default (BBPort)")) {
+        s.discord_client_id = "1560890616811102219";
+        dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("shadPS4")) {
+        s.discord_client_id = "1139939140494971051";
+        dirty = true;
+    }
+    Hint((lang == 1) ? "ID da aplicação Discord. '1560890616811102219' exibe BloodBorne BBPort com imagens das áreas. '1139939140494971051' exibe shadPS4." :
+         (lang == 2) ? "ID приложения Discord. '1560890616811102219' показывает BloodBorne BBPort с артами локаций. '1139939140494971051' показывает shadPS4." :
+                       "Discord App ID. '1560890616811102219' displays BloodBorne BBPort with map art. '1139939140494971051' displays shadPS4.");
+
     ImGui::EndDisabled();
 
     ImGui::Spacing();
     ImGui::Separator();
 
-    // Section 5: Live Discord Profile Preview Card!
+    // Section 6: Live Discord Profile Preview Card!
     ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "%s",
                        (lang == 1) ? "Prévia em Tempo Real no Discord" :
                        (lang == 2) ? "Предпросмотр профиля Discord в реальном времени" :
@@ -437,7 +466,8 @@ void RenderDiscordRpcWindow(BbSettings::Values& s, int lang, bool& dirty) {
 
         ImGui::BeginGroup();
         // Game title
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "Bloodborne (BBPort)");
+        const bool is_shad = (s.discord_client_id == "1139939140494971051");
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", is_shad ? "shadPS4" : "Bloodborne (BBPort)");
 
         // Details line
         if (!act.details.empty()) {

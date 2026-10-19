@@ -221,12 +221,14 @@ void RestoreStartupEffectPatches(unsigned char* image, int& installed) {
         0xc7, 0x83, 0xac, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90, 0x90,
     };
     if (std::memcmp(image + kCaCopy, kCaPatched, 12) == 0) {
+        BbCodePatch::MakeWritable(image + kCaCopy, 12);
         std::memcpy(image + kCaCopy, kCaOrig, 12);
         ++installed;
     }
     static constexpr std::uint64_t kModelLodSite = 0x1d6fc09;
     static constexpr std::uint8_t kModelLodOrig[6] = {0x8b, 0x0d, 0x11, 0x81, 0x81, 0x03};
     if (image[kModelLodSite] == 0xb9 && image[kModelLodSite + 5] == 0x90) {
+        BbCodePatch::MakeWritable(image + kModelLodSite, 6);
         std::memcpy(image + kModelLodSite, kModelLodOrig, 6);
     }
 }

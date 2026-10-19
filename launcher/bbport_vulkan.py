@@ -71,6 +71,170 @@ def host_nvidia(manifest_dirs, library_dirs):
     return None
 
 
+# The C runtime a driver shares with the process that dlopens it: already loaded (libc, libstdc++,
+# libgcc_s for this C++ port), or merged into glibc. Never linked from the host — a second libc or
+# libstdc++ beside the package's own would break the process.
+CORE_LIBS = frozenset({
+    "libc.so.6", "libm.so.6", "libpthread.so.0", "libdl.so.2", "librt.so.1", "libresolv.so.2",
+    "libutil.so.1", "libmvec.so.1", "libgcc_s.so.1", "libstdc++.so.6", "ld-linux-x86-64.so.2",
+    "libnss_dns.so.2", "libnss_files.so.2", "libanl.so.1", "libnsl.so.2",
+})
+
+
+def elf_needed(path):
+    """The DT_NEEDED sonames of a 64-bit ELF, from its dynamic section.
+
+    Needed to link a host driver's exact dependency closure (RADV pulls in libLLVM, libelf, libdrm,
+    ...) without exposing the host's whole library directory, whose libc/GTK would replace the
+    package's own."""
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(64)
+            if header[:6] != b"\x7fELF\x02\x01" or header[18:20] != b"\x3e\0":
+                return []
+            phoff = int.from_bytes(header[32:40], "little")
+            phentsize = int.from_bytes(header[54:56], "little")
+            phnum = int.from_bytes(header[56:58], "little")
+            stream.seek(phoff)
+            segments = stream.read(phentsize * phnum)
+            dynamic, loads = None, []
+            for i in range(phnum):
+                seg = segments[i * phentsize:(i + 1) * phentsize]
+                if len(seg) < 48:
+                    return []
+                ptype = int.from_bytes(seg[0:4], "little")
+                if ptype == 2:  # PT_DYNAMIC
+                    dynamic = (int.from_bytes(seg[8:16], "little"),
+                               int.from_bytes(seg[32:40], "little"))
+                elif ptype == 1:  # PT_LOAD, to turn DT_STRTAB's address into a file offset
+                    loads.append((int.from_bytes(seg[16:24], "little"),
+                                  int.from_bytes(seg[8:16], "little"),
+                                  int.from_bytes(seg[32:40], "little")))
+            if dynamic is None:
+                return []
+            stream.seek(dynamic[0])
+            entries = stream.read(dynamic[1])
+    except OSError:
+        return []
+    needed, strtab_va = [], None
+    for i in range(0, len(entries) - 15, 16):
+        tag = int.from_bytes(entries[i:i + 8], "little", signed=True)
+        if tag == 0:  # DT_NULL
+            break
+        if tag == 1:  # DT_NEEDED
+            needed.append(int.from_bytes(entries[i + 8:i + 16], "little"))
+        elif tag == 5:  # DT_STRTAB
+            strtab_va = int.from_bytes(entries[i + 8:i + 16], "little")
+    if not needed or strtab_va is None:
+        return []
+    offset = next((off + strtab_va - vaddr for vaddr, off, size in loads
+                   if vaddr <= strtab_va < vaddr + size), None)
+    if offset is None:
+        return []
+    try:
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            table = stream.read(1 << 16)
+    except OSError:
+        return []
+    names = []
+    for off in needed:
+        end = table.find(b"\0", off)
+        if off < len(table) and end != -1:
+            names.append(table[off:end].decode("utf-8", "replace"))
+    return names
+
+
+def host_system_icds(manifest_dirs, library_dirs):
+    """The host's non-NVIDIA ICDs (RADV/ANV in the minimal package), resolved to absolute 64-bit
+    libraries, as (manifest name, manifest data, driver path) — the minimal variant's own drivers."""
+    found = []
+    for directory in manifest_dirs:
+        for manifest in sorted(directory.glob("*.json")):
+            if "nvidia" in manifest.name.lower():
+                continue
+            try:
+                data = json.loads(manifest.read_text(encoding='utf-8'))
+                library = Path(data["ICD"]["library_path"])
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if library.is_absolute():
+                candidates = [library, *(d / library.name for d in library_dirs)]
+            elif len(library.parts) > 1:
+                candidates = [manifest.parent / library]
+            else:
+                candidates = [d / library for d in library_dirs]
+            for candidate in candidates:
+                if elf64(candidate):
+                    found.append((manifest.name, data, candidate.resolve()))
+                    break
+    return found
+
+
+def system_driver_closure(driver, library_dirs):
+    """The driver and its DT_NEEDED dependencies, each resolvable, core runtime (CORE_LIBS) apart.
+
+    The dependencies are linked into one cache and found there through LD_LIBRARY_PATH; a library
+    already loaded under its soname (libc, libstdc++) is reused by the linker, never linked twice."""
+    queue, seen, resolved = [driver], set(), []
+    while queue:
+        current = queue.pop(0)
+        if current.name in seen:
+            continue
+        seen.add(current.name)
+        resolved.append(current)
+        for soname in elf_needed(current):
+            if soname in CORE_LIBS or soname in seen:
+                continue
+            for directory in dict.fromkeys((current.parent, *library_dirs)):
+                candidate = directory / soname
+                if elf64(candidate):
+                    queue.append(candidate.resolve())
+                    break
+    return resolved
+
+
+def expose_system_drivers(env, manifest_dirs, library_dirs, bundled):
+    """The minimal package: the host's own AMD/Intel drivers, loadable inside the AppImage.
+
+    The loader finds the host's ICD manifests (/usr/share/vulkan/icd.d), but their library_path is
+    often a bare name (Debian/Ubuntu) resolved through the host's /usr/lib/x86_64-linux-gnu, which
+    the AppImage's linker does not search: vkCreateInstance then reports no compatible driver. Link
+    the driver and its dependencies into a cache by absolute path (as for the host's NVIDIA driver)
+    instead of the host's whole directory, whose libc/GTK would shadow the package's."""
+    icds = host_system_icds(manifest_dirs, library_dirs)
+    if not icds:
+        return None
+    data_dir = Path(env.get("BB_DATA_DIR") or
+                    str(Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "bbport"))
+    # One cache for the set of installed drivers: their versions and mtimes decide its name.
+    fingerprint = ":".join(f"{driver}:{driver.stat().st_mtime_ns}" for _, _, driver in icds)
+    key = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
+    cache = data_dir / "vulkan" / "system" / key
+    libraries = cache / "lib"
+    libraries.mkdir(parents=True, exist_ok=True)
+    for _, _, driver in icds:
+        for source in system_driver_closure(driver, library_dirs):
+            link = libraries / source.name
+            try:
+                link.symlink_to(source.resolve())
+            except FileExistsError:
+                pass
+    manifests = []
+    for name, data, driver in icds:
+        data["ICD"]["library_path"] = str(libraries / driver.name)
+        manifest = cache / name
+        temporary = cache / f"{name}.{os.getpid()}.tmp"
+        temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(manifest)
+        manifests.append(str(manifest))
+    env["VK_DRIVER_FILES"] = ":".join(manifests) + (":" + bundled if bundled else "")
+    env["LD_LIBRARY_PATH"] = str(libraries) + (
+        ":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+    return "Vulkan: host system driver(s) " + ", ".join(
+        d.name for _, _, d in icds) + " linked into the cache (no bundled Mesa)"
+
+
 def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS,
               egl_dirs=EGL_VENDOR_DIRS):
     # Steam's Game Mode starts non-Steam shortcuts in pressure-vessel, which sets these to its
@@ -103,9 +267,12 @@ def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS,
         if bundled:
             env["VK_DRIVER_FILES"] = bundled
             return "Vulkan: bundled AMD/Intel drivers; no accessible NVIDIA ICD found"
-        # The minimal package: the loader's own search finds the system's ICDs (its default
-        # /usr/share/vulkan/icd.d and friends; nothing is set here).
-        return "Vulkan: system drivers (no bundled Mesa); no accessible NVIDIA ICD found"
+        # The minimal package: the host's own AMD/Intel drivers. The loader's default search finds
+        # their manifests, but a bare library_path (Debian/Ubuntu) resolves through the host's
+        # /usr/lib/x86_64-linux-gnu, which the AppImage's linker does not search. Link the drivers
+        # and their dependencies into a cache instead (as for the host's NVIDIA driver).
+        return (expose_system_drivers(env, manifest_dirs, library_dirs, bundled)
+                or "Vulkan: system drivers (no bundled Mesa); no accessible NVIDIA ICD found")
 
     data, driver = found
     # The driver version/path and mtime give each installed driver its own small

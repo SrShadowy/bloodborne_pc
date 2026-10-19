@@ -215,10 +215,12 @@ DEFAULTS = {
     "online_bbhost_server": bbhost.DEFAULT_SERVER,
     "aspect": "auto",
     "theme_mode": "dark",
+    "discord_client_id": "1560890616811102219",
 }
 
 # bbport.ini keys the launcher edits; the rest of the file is kept.
 INI_DEFAULTS = {
+    "discord_client_id": "1560890616811102219",
     "upscaler": "fsr4",
     "preset": "4",
     "sharpen": "1",
