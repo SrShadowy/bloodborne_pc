@@ -241,6 +241,19 @@ else
 fi
 # Online play (BB_ONLINE=1, launcher: Online; the online module gpu/bbnet): the game's own server
 # goes to the community server, summon signs to the shadNet WebAPI (scripts/online.py).
+if [[ -z ${BB_ONLINE:-} && -f $BB_CONFIG ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+        if [[ $line =~ ^online=([01])$ ]]; then
+            export BB_ONLINE=${BASH_REMATCH[1]}
+        fi
+        if [[ $line =~ ^online_pool=(.+)$ ]]; then
+            export BB_ONLINE_POOL=${BASH_REMATCH[1]}
+        fi
+        if [[ $line =~ ^online_backend=(.+)$ ]]; then
+            export BB_ONLINE_BACKEND=${BASH_REMATCH[1]}
+        fi
+    done < "$BB_CONFIG"
+fi
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
     # The shadPS4 0.20 module (gpu/bbnet20) answers both pools: Seamless Hunt (shadNet with BBSC) and
     # The Hunter's Dream (BB_NET_BACKEND=thd, without BBSC). BB_NET_GEN=19: the older shadp2p module
@@ -251,9 +264,23 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
         unset BB_BBSC
     fi
     if [[ $BB_NET_GEN == 20 && -z ${BB_NET_MODULE:-} ]]; then
-        if [[ -n ${BB_PREBUILT:-} ]]; then BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so; else BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so; fi
+        if [[ -n ${BB_PREBUILT:-} || -f $PWD/bin/gpu/libbbnet20.so ]]; then
+            BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so
+        else
+            BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so
+        fi
+        if [[ ! -f $BB_NET_MODULE && -f $PWD/bin/gpu/libbbnet20.so ]]; then
+            BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so
+        fi
+        if [[ ! -f $BB_NET_MODULE && -f $PWD/out/gpu/libbbnet20.so ]]; then
+            BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so
+        fi
         if [[ ! -f $BB_NET_MODULE && -f ${BB_NET_MODULE%20.so}.so ]]; then
             BB_NET_MODULE=${BB_NET_MODULE%20.so}.so
+            BB_NET_GEN=19
+        fi
+        if [[ ! -f $BB_NET_MODULE && -f $PWD/bin/gpu/libbbnet.so ]]; then
+            BB_NET_MODULE=$PWD/bin/gpu/libbbnet.so
             BB_NET_GEN=19
         fi
         export BB_NET_MODULE

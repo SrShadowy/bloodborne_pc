@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# AppRun entry point for BBPort Native AppImage
+
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+export APPDIR="$HERE"
+export BB_PORT_DIR="$HERE"
+export BB_PREBUILT=1
+export PATH="$HERE/bin:$PATH"
+
+# Libraries bundled with package.py
+if [[ -d "$HERE/lib" ]]; then
+    export LD_LIBRARY_PATH="$HERE/lib:$HERE/bin/gpu:${LD_LIBRARY_PATH:-}"
+else
+    export LD_LIBRARY_PATH="$HERE/bin/gpu:${LD_LIBRARY_PATH:-}"
+fi
+
+# Shaders
+if [[ -d "$HERE/fsr4_shaders" && -z "${BB_FSR4_SHADERS:-}" ]]; then
+    export BB_FSR4_SHADERS="$HERE/fsr4_shaders"
+fi
+
+# XDG data directory configuration (~/.local/share/bbport)
+export BB_DATA_DIR="${BB_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bbport}"
+mkdir -p "$BB_DATA_DIR"
+export BB_CONFIG="${BB_CONFIG:-$BB_DATA_DIR/bbport.ini}"
+
+cd "$HERE"
+
+# If --play, -p, or --game is specified, route to launcher --play (which loads saved settings and exports BB_ONLINE=1)
+# or fallback to run.sh directly
+if [[ "${1:-}" == "--play" || "${1:-}" == "-p" || "${1:-}" == "--game" ]]; then
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
+        exec python3 "$HERE/launcher/bbport_launcher.py" "$@"
+    elif [[ -x "$HERE/launcher/bbport-launcher" ]]; then
+        exec "$HERE/launcher/bbport-launcher" "$@"
+    else
+        shift
+        exec "$HERE/run.sh" "$@"
+    fi
+fi
+
+# 1. Tenta abrir via Python nativo do sistema se GTK 4 e Libadwaita estiverem instalados
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
+    exec python3 "$HERE/launcher/bbport_launcher.py" "$@"
+# 2. Fallback: Launcher standalone empacotado
+elif [[ -x "$HERE/launcher/bbport-launcher" ]]; then
+    exec "$HERE/launcher/bbport-launcher" "$@"
+elif [[ -x "$HERE/bin/bbport-launcher" ]]; then
+    exec "$HERE/bin/bbport-launcher" "$@"
+elif [[ -x "$HERE/bbport" ]]; then
+    exec "$HERE/bbport" "$@"
+else
+    echo "================================================================="
+    echo "Aviso: Launcher GTK 4/Libadwaita não encontrado."
+    echo "Iniciando Bloodborne diretamente via run.sh..."
+    echo "================================================================="
+    exec "$HERE/run.sh" "$@"
+fi

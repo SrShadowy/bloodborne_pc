@@ -9,6 +9,7 @@
 
 #include "common/singleton.h"
 #include "common/types.h"
+#include "extra/hooks.h" // [extra]
 
 extern "C" int runtime_memory_vma_info(uintptr_t address, int* prot, int* type, uintptr_t* end);
 
@@ -56,6 +57,11 @@ public:
         int p = 0, type = -1;
         uintptr_t mapping_end = 0;
         if (!runtime_memory_vma_info(address, &p, &type, &mapping_end)) {
+            if (extra_query_memory_protection(address, start, end, prot)) { // [extra]
+                auto& slot = cache[next++ % cache.size()]; // [extra]
+                slot = {reinterpret_cast<u64>(*start), reinterpret_cast<u64>(*end), *prot, now}; // [extra]
+                return 0; // [extra]
+            } // [extra]
             return -1;
         }
         // The runtime's map gives the end of the mapping, not its start: the address itself

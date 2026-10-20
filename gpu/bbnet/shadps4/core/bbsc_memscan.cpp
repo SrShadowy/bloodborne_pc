@@ -13,6 +13,7 @@
 #ifndef _WIN32
 #include <sys/uio.h>
 #include <unistd.h>
+#include "extra/core/bbsc/bbport_bbsc_kit.h" // [extra]
 #endif
 
 namespace Core::Bbsc {
@@ -92,6 +93,9 @@ std::vector<std::uint64_t> FindInMemory(std::span<const std::uint8_t> needle, st
         if (std::sscanf(line, "%llx-%llx %4s", &start, &end, perms) != 3 || perms[0] != 'r') {
             continue;
         }
+        if (!extra_bbsc_check_mapping(perms, line)) { // [extra]
+            continue; // [extra]
+        } // [extra]
         start = std::max<unsigned long long>(start, lo);
         end = std::min<unsigned long long>(end, hi);
         for (std::uint64_t at = start; at < end && hits.size() < max_hits; at += Piece) {
@@ -99,7 +103,10 @@ std::vector<std::uint64_t> FindInMemory(std::span<const std::uint8_t> needle, st
                 std::size_t(std::min<std::uint64_t>(end - at, Piece + needle.size() - 1));
             iovec local{buffer.data(), want};
             iovec remote{reinterpret_cast<void*>(at), want};
-            const ssize_t got = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+            ssize_t got = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+            if (got < 0 && extra_safe_read(buffer.data(), reinterpret_cast<const void*>(at), want)) { // [extra]
+                got = static_cast<ssize_t>(want); // [extra]
+            } // [extra]
             if (got < ssize_t(needle.size())) {
                 continue;
             }

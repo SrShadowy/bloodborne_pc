@@ -9,6 +9,7 @@ pgo/
 !prints/*.png
 !prints/*.gif
 !prints/*.GIF
+!packaging/bbport.png
 prints/.originals/
 last_run.log
 dist/
@@ -16,6 +17,7 @@ packaging/runtime-paths.nix
 fsr4_411/
 vkd3d-proton.cache
 tools/fsr4cap/*.exe
+!tools/fsr4cap/fsr4cap.exe
 perf.data
 # Local leftovers: patch backups, generated SPIR-V, analysis outputs, test saves and routes
 *.orig

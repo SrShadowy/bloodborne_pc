@@ -42,6 +42,7 @@
 #include "core/libraries/np/np_signaling/np_signaling_helpers.h"
 #include "core/libraries/np/np_signaling/np_signaling_bbsc.h"
 #include "core/memory.h"
+#include "extra/hooks.h" // [extra]
 
 namespace Core::Bloodborne {
 namespace {
@@ -12227,9 +12228,9 @@ void PrepareBbscDuelBell() {
         ++goods;
     }
     const bool ok = goods != 0 && !effects.empty();
-    LOG_INFO(Debug, "BBSC duel bell: goods {} in {} of {} table(s), SpEffect {} in {} table(s){}",
-             BbscDuelBellGoodsId, goods, goods_tables.size(), BbscDuelBellEffectId,
-             effects.size(), ok ? "" : " - NOT READY, no PvP bell");
+    LOG_WARNING(Debug, "BBSC duel bell: goods {} in {} of {} table(s), SpEffect {} in {} table(s){}", // [extra]
+             BbscDuelBellGoodsId, goods, goods_tables.size(), BbscDuelBellEffectId, // [extra]
+             effects.size(), ok ? "" : " - NOT READY, no PvP bell"); // [extra]
     // Review 2026-10-08: the game thread reads these vectors; they are filled only once, here, by
     // this (scan) thread, and published by the ready flag - never replaced while being read.
     if (ok && !bbsc_duel_bell_ready) {
@@ -12245,12 +12246,7 @@ void StartBbscDuelBell() {
     if (started.exchange(true)) {
         return;
     }
-    std::thread{[] {
-        for (int attempt = 0; attempt < 36 && !bbsc_duel_bell_ready; ++attempt) {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            PrepareBbscDuelBell();
-        }
-    }}.detach();
+    std::thread{[] { extra_bbsc_bell_scan_forever(&bbsc_duel_bell_ready, &PrepareBbscDuelBell); }}.detach(); // [extra]
 }
 
 // The items the local player carries, or 0: [[0x0553B130]+8] + 0x328 (embedded), the list the
@@ -12437,9 +12433,10 @@ void BbscRestockFromStorage(std::string_view why) {
 // The user's rule: saves are backed up before anything touches them. Giving the bell writes it into
 // the save, so first every Bloodborne save folder BBSC can find - <base>\home\<user>\savedata\
 // CUSA00207 (the game's save id) and the older <base>\savedata\<user>\CUSA00207, with <base> the
-// portable "user" folder in the working directory or %APPDATA%\shadPS4 - is copied to
+// portable "user" folder in the working directory, %APPDATA%\shadPS4 or the AppImage's // [extra]
+// $BB_GPU_USER_DIR (extra_bbsc_save_root) - is copied to // [extra]
 // <mod folder>\save-backups\before-duel-bell-<time>\<user>. User 1004 is left alone (the user's
-// rule). False when nothing could be copied.
+// rule). Always true: nothing to back up yet (new player) is not a failure. // [extra]
 bool BackupBbscSavesUnchecked();
 // Called from game ticks: a filesystem error (access denied, a strange folder name) must not throw
 // out of it (review 2026-10-08: the directory walk's ++ throws even with an error_code).
@@ -12462,6 +12459,7 @@ bool BackupBbscSavesUnchecked() {
         bases.push_back(fs::path(appdata) / "shadPS4");
     }
 #endif
+    if (const char* root = extra_bbsc_save_root(); root != nullptr) { bases.push_back(root); } // [extra]
     const auto stamp = std::chrono::system_clock::now().time_since_epoch();
     const fs::path out = Common::FS::GetUserPath(Common::FS::PathType::CapturesDir).parent_path() /
                          "save-backups" /
@@ -12512,7 +12510,7 @@ bool BackupBbscSavesUnchecked() {
                      Common::FS::PathToUTF8String(game), Common::FS::PathToUTF8String(target));
         }
     }
-    return copied != 0;
+    return true; // [extra]
 }
 
 // The kit every BBSC player gets (the user, 2026-10-05: given when you start playing, even as a new
@@ -12524,26 +12522,34 @@ void TickBbscDuelBellGive() {
     static s64 last_ms = 0;
     static u64 checked_player = 0;
     const s64 now = SteadyNowMs();
-    if (!bbsc_duel_bell_ready || now - last_ms < 5'000) {
+    if (now - last_ms < 5'000) { // [extra]
         return;
     }
     last_ms = now;
     const u64 player = GetLocalPlayerCharacter();
     const u64 global = GetGlobalState();
+    const u64 carried = BbscCarriedInventory(); // [extra]
+    const u64 storage = BbscStorageInventory(); // [extra]
+    LOG_WARNING(Debug, "BBSC kit tick: ready={} player={:#x} hp={} global={:#x} loading={} carried={:#x} storage={:#x} checked={:#x}", // [extra]
+                bbsc_duel_bell_ready.load(), player, // [extra]
+                ReadablePointer(player, 0x410) ? GetCharacterHp(player) : -1, // [extra]
+                global, ReadablePointer(global, 0x1598) ? ReadValue<u8>(global, 0x08) : 0xFF, // [extra]
+                carried, storage, checked_player); // [extra]
+    if (!bbsc_duel_bell_ready) { // [extra]
+        return; // [extra]
+    } // [extra]
     if (player == checked_player || !ReadablePointer(player, 0x410) ||
         GetCharacterHp(player) <= 0 || !ReadablePointer(global, 0x1598) ||
         ReadValue<u8>(global, 0x08) != 0) {
         return; // already checked, not in the game yet, dead, or loading
     }
-    const u64 carried = BbscCarriedInventory();
-    const u64 storage = BbscStorageInventory();
-    if (carried == 0 || storage == 0) {
-        return;
-    }
-    checked_player = player;
+    if (carried == 0) { // [extra]
+        return; // [extra]
+    } // [extra]
     const auto has = [&](u32 id) {
         const u32 code = 0x40000000u | id;
-        return BbscInventoryHas(carried, code) || BbscInventoryHas(storage, code);
+        return BbscInventoryHas(carried, code) || // [extra]
+               (storage != 0 && BbscInventoryHas(storage, code)); // [extra]
     };
     std::vector<const BbscKitItem*> missing;
     for (const BbscKitItem& item : BbscKit) {
@@ -12571,15 +12577,16 @@ void TickBbscDuelBellGive() {
     }
     if (missing.empty() && !retire) {
         LOG_INFO(Debug, "BBSC kit: all carried or in storage, no vanilla bells left");
+        checked_player = player; // [extra]
         return;
     }
     if (!BackupBbscSaves()) {
-        LOG_WARNING(Debug, "BBSC kit: no save folder found to back up - nothing given or removed");
+        LOG_WARNING(Debug, "BBSC kit: save backup failed - nothing given or removed"); // [extra]
         return;
     }
     for (const u32 id : Retired) {
         for (const u64 inventory : {carried, storage}) {
-            if (BbscInventoryHas(inventory, 0x40000000u | id)) {
+            if (inventory != 0 && BbscInventoryHas(inventory, 0x40000000u | id)) { // [extra]
                 const bool gone = BbscInventoryRemove(inventory, 0x40000000u | id);
                 LOG_INFO(Debug, "BBSC kit: vanilla goods {} taken out of the {} ({})", id,
                          inventory == carried ? "carried items" : "storage box",
@@ -12588,6 +12595,7 @@ void TickBbscDuelBellGive() {
         }
     }
     if (missing.empty()) {
+        checked_player = player; // [extra]
         return;
     }
     // 0x014D9A80(inventory, &code, count) is how many fit; 0x014DA0A0(inventory, &key, count) adds,
@@ -12606,9 +12614,8 @@ void TickBbscDuelBellGive() {
         const s32 slot =
             fits > 0 ? reinterpret_cast<Add>(image_base + InventoryAddOffset)(carried, &key, 1) : -1;
         const bool now_there = BbscInventoryHas(carried, code);
-        LOG_INFO(Debug, "BBSC kit: goods {} added to the carried items (fits {}, slot {}, there now: "
-                        "{})",
-                 item->id, fits, slot, now_there);
+        LOG_WARNING(Debug, "BBSC kit: goods {} added to the carried items (fits {}, slot {}, there now: {})", // [extra]
+                 item->id, fits, slot, now_there); // [extra]
         if (now_there) {
             ++given;
             notice += given == 1 ? u"\n" : u", ";
@@ -12617,6 +12624,8 @@ void TickBbscDuelBellGive() {
     }
     if (given != 0) {
         BbscAnnounce(notice.c_str(), "kit given");
+        LOG_WARNING(Debug, "BBSC kit: successfully given {} items to player!", given); // [extra]
+        checked_player = player; // [extra]
     }
 }
 

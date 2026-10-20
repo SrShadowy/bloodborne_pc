@@ -612,16 +612,83 @@ def build_and_package(args):
 
     print("\n" + "=" * 70)
     print("             RELEASE PACKAGE CREATED SUCCESSFULLY!")
+    # 6. Optional: Create Native AppImage if requested
+    if getattr(args, "appimage", False):
+        build_native_appimage(staging_dir, out_dist_dir, pkg_name)
+
+def build_native_appimage(staging_dir, out_dist_dir, pkg_name):
+    print("\n" + "=" * 70)
+    print("      BUILDING NATIVE APPIMAGE (HIGH COMPRESSION)")
     print("=" * 70)
-    print(f"📦 Archive:  {archive_path}")
-    print(f"📊 Size:     {archive_size_mb:.2f} MB")
-    print(f"🔑 SHA256:   {sha256_hash}")
-    print(f"📄 Checksum: {checksum_file}")
+
+    # 1. Prepare AppDir metadata
+    apprun_src = ROOT_DIR / "packaging" / "AppRun"
+    desktop_src = ROOT_DIR / "packaging" / "bbport.desktop"
+    icon_src = ROOT_DIR / "packaging" / "bbport.png"
+
+    if apprun_src.exists():
+        shutil.copy2(apprun_src, staging_dir / "AppRun")
+        (staging_dir / "AppRun").chmod(0o755)
+
+    if desktop_src.exists():
+        shutil.copy2(desktop_src, staging_dir / "bbport.desktop")
+
+    if icon_src.exists():
+        shutil.copy2(icon_src, staging_dir / "bbport.png")
+        shutil.copy2(icon_src, staging_dir / ".DirIcon")
+
+    # 2. Locate or download appimagetool
+    appimagetool = shutil.which("appimagetool")
+    if not appimagetool:
+        local_tool = ROOT_DIR / "out" / "tools" / "appimagetool"
+        if not local_tool.exists():
+            local_tool.parent.mkdir(parents=True, exist_ok=True)
+            print("[*] Downloading portable appimagetool...")
+            import urllib.request
+            url = "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+            urllib.request.urlretrieve(url, local_tool)
+            local_tool.chmod(0o755)
+        appimagetool = str(local_tool)
+
+    appimage_name = "Bloodborne-bbport-native-x86_64.AppImage"
+    appimage_path = out_dist_dir / appimage_name
+
+    env = os.environ.copy()
+    env["ARCH"] = "x86_64"
+
+    print(f"[*] Packaging AppImage into {appimage_name}...")
+    cmd = [
+        appimagetool,
+        "--appimage-extract-and-run",
+        "--no-appstream",
+        str(staging_dir),
+        str(appimage_path)
+    ]
+    res = subprocess.run(cmd, env=env)
+    if res.returncode != 0:
+        print(f"[!] Error: appimagetool failed with code {res.returncode}", file=sys.stderr)
+        return None
+
+    hasher = hashlib.sha256()
+    with open(appimage_path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    appimage_sha = hasher.hexdigest()
+    (out_dist_dir / f"{appimage_name}.sha256").write_text(f"{appimage_sha}  {appimage_name}\n", encoding="utf-8")
+
+    size_mb = appimage_path.stat().st_size / (1024 * 1024)
+    print("\n" + "=" * 70)
+    print("        NATIVE APPIMAGE CREATED SUCCESSFULLY!")
     print("=" * 70)
-    print("\nPronto para publicação! Você pode fazer upload deste .tar.gz diretamente no GitHub Releases.")
+    print(f"🚀 AppImage: {appimage_path}")
+    print(f"📊 Size:     {size_mb:.2f} MB")
+    print(f"🔑 SHA256:   {appimage_sha}")
+    return appimage_path
 
 def main():
     parser = argparse.ArgumentParser(description="Build and package BBPort release tarball.")
+    parser.add_argument("--appimage", action="store_true", default=False,
+                        help="Generate a standalone native AppImage alongside the release tarball")
     parser.add_argument("--no-build", dest="build", action="store_false", default=True,
                         help="Skip compiling binaries with build.sh (use existing out/)")
     parser.add_argument("--output-dir", "-o", default="dist",

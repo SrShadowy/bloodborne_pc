@@ -52,28 +52,16 @@ let
   # with PyGObject instead; because bin/python3 is a symlink there, the interpreter resolves its
   # prefix to the stripped store path and cannot see the env's own site-packages — `common` below
   # prefixes PYTHONPATH with it (verified: the launcher imports Adw/Gtk with it, and without it
-  # `import gi` fails).
-  python3 = pkgs.python3.overrideAttrs (old: {
-    postInstall = (old.postInstall or "") + ''
-      for d in $out/lib/python3*; do
-        rm -rf "$d"/config-3* "$d"/idlelib "$d"/test "$d"/pydoc_data \
-               "$d"/ensurepip "$d"/turtledemo "$d"/site-packages/pip* 2>/dev/null || true
-        find "$d" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
-      done
-    '';
-  });
   python = pkgs.buildEnv {
     name = "bbport-python";
-    paths = [ python3 pkgs.python3Packages.pygobject3 ];
+    paths = [ pkgs.python3 pkgs.python3Packages.pygobject3 ];
     pathsToLink = [ "/bin" "/lib" "/share" "/etc" ];
   };
   # The env's site-packages (PyGObject, cairo) the symlinked interpreter does not find on its own.
   pythonSite = "${python}/lib/python${pkgs.python3.pythonVersion}/site-packages";
   # FSR 4.1.1 from the user's own AMD DLL (the launcher's button, tools/fsr4cap/build_assets.sh):
-  # its two tools built here, so that the package needs no compiler and no network for it. Proton
-  # (GE-Proton 10+) and Steam's runtime come from the user's Steam. On NixOS the recording runs
-  # on the host (systemd-run --user, below on PATH; umu-launcher from the host's nix-shell).
-  dxilSpirv = pkgs.stdenv.mkDerivation {
+  # In minimal mode, these developer tools are omitted to save ~38 MB + compilation time.
+  dxilSpirv = if minimal then null else pkgs.stdenv.mkDerivation {
     pname = "dxil-spirv";
     version = "0-unstable-7dc5278";
     src = pkgs.fetchFromGitHub {
@@ -85,15 +73,18 @@ let
     };
     patches = [ ../tools/fsr4cap/dxil-spirv-class-bindings.patch ];
     nativeBuildInputs = [ pkgs.cmake pkgs.ninja pkgs.python3 ];
-    # The CLI and the shared library it links (its own install rules set the RUNPATH).
   };
-  fsr4capExe = pkgs.runCommand "fsr4cap.exe" {
-    nativeBuildInputs = [ pkgs.pkgsCross.mingwW64.buildPackages.gcc ];
-  } ''
-    f=${../tools/fsr4cap}
-    x86_64-w64-mingw32-gcc -std=c11 -O1 -Wall -I$f/ffx/api/include -I$f/ffx/upscalers/include \
-      $f/fsr4cap.c $f/capture.c $f/rootsig.c -o $out -ld3d12 -ldxguid -static
-  '';
+  fsr4capExe = if minimal then null else (
+    if builtins.pathExists ../tools/fsr4cap/fsr4cap.exe
+    then ../tools/fsr4cap/fsr4cap.exe
+    else pkgs.runCommand "fsr4cap.exe" {
+      nativeBuildInputs = [ pkgs.pkgsCross.mingwW64.buildPackages.gcc ];
+    } ''
+      f=${../tools/fsr4cap}
+      x86_64-w64-mingw32-gcc -std=c11 -O1 -Wall -I$f/ffx/api/include -I$f/ffx/upscalers/include \
+        $f/fsr4cap.c $f/capture.c $f/rootsig.c -o $out -ld3d12 -ldxguid -static
+    ''
+  );
   # Mesa's Vulkan drivers come with the default package (RADV and ANV); bbport_vulkan.py adds the
   # host NVIDIA ICD and only its vendor libraries (matching the host's kernel module). Only the two
   # drivers, not the whole Mesa: its OpenGL drivers and LLVM were ~800 MB of the package. RADV
@@ -204,9 +195,11 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $d/tools
     cp -r tools/* $d/tools/
     rm -rf $d/tools/__pycache__ $d/tools/*/__pycache__
-    mkdir -p $d/tools/fsr4cap/bin
-    ln -s ${dxilSpirv}/bin/dxil-spirv $d/tools/fsr4cap/bin/dxil-spirv
-    install -m644 ${fsr4capExe} $d/tools/fsr4cap/bin/fsr4cap.exe
+    ${lib.optionalString (!minimal && dxilSpirv != null && fsr4capExe != null) ''
+      mkdir -p $d/tools/fsr4cap/bin
+      ln -s ${dxilSpirv}/bin/dxil-spirv $d/tools/fsr4cap/bin/dxil-spirv
+      install -m644 ${fsr4capExe} $d/tools/fsr4cap/bin/fsr4cap.exe
+    ''}
     # FSR 4.1.1 models only with BB_PACKAGE_FSR411=1 (see above); otherwise run.sh finds them in
     # the data directory (~/.local/share/bbport/fsr4_411).
     if [ -d fsr4_411 ]; then
@@ -258,9 +251,9 @@ pkgs.stdenv.mkDerivation {
       --set BB_PREBUILT 1 \
       --set PYTHON ${python}/bin/python3 \
       --set BB_BUNDLED_VK_DRIVER_FILES ${icds} \
-      --prefix PATH : ${lib.makeBinPath [ pkgs.bash pkgs.coreutils pkgs.util-linux pkgs.procps
-                                          pkgs.gawk pkgs.gnused pkgs.gnugrep pkgs.spirv-tools
-                                          pkgs.systemdMinimal ]} \
+      --prefix PATH : ${lib.makeBinPath ([ pkgs.bash pkgs.coreutils pkgs.util-linux pkgs.procps
+                                          pkgs.gawk pkgs.gnused pkgs.gnugrep pkgs.systemd ]
+                                          ++ lib.optional (!minimal) pkgs.spirv-tools)} \
       --run 'export BB_DATA_DIR=''${BB_DATA_DIR:-''${XDG_DATA_HOME:-$HOME/.local/share}/bbport}; mkdir -p "$BB_DATA_DIR"'
     # The game alone, without the launcher (settings from the data directory's bbport.ini).
     makeShellWrapper ${python}/bin/python3 $out/bin/bbport-game \

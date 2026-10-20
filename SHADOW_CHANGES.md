@@ -40,16 +40,8 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
   - `skip_intro`: Alterado padrão para `skip_intro=1` no launcher e INI, bypassando a inicialização de vídeos.
   - `Readbacks`: Eliminada exigência de `BB_READBACKS=2`, padronizando `1` (Relaxed).
 
-## 6. Verification & Test Matrix
-- Validação contínua através de testes automatizados (`settings-test`, `motion-history-test`, `ui-composition-test`, `python3 -m unittest discover tests/`) e builds de release com LTO (`bash build.sh`).
-
-## 7. Quick Start Reference
-- Inicialização via Launcher GTK4: `bash launcher/bb-launcher.sh`.
-- Inicialização direta CLI: `bash run.sh`.
-- Acesso ao overlay in-game: Tecla <kbd>Insert</kbd> ou controle <kbd>L3</kbd> + <kbd>R3</kbd>.
-
-## 8. Sky Streaks Investigation: Diagnostic Trials & Attempted Solutions
-- Testes diagnósticos isolando shaders de pós-processamento (DoF, Blur, SSAO) e drivers AMD RDNA 4 (RADV HiZ/DCC), confirmando que anomalias visuais no céu decorriam do mapa de velocidade (velomap) do Yebis.
+## 6. Verification, Quick Start & Diagnostic Trials
+- Validação contínua via `bash build.sh --test` e `python3 -m unittest discover tests/`. Inicialização via `bash run.sh` ou launcher GTK4. Overlay in-game: <kbd>Insert</kbd> ou <kbd>L3</kbd>+<kbd>R3</kbd>. Diagnósticos de shaders confirmaram anomalias visuais decorrentes do velomap do Yebis.
 
 ## 9. Definitive Resolution: Motion Blur & Velocity Map (Velomap) Artifacts in the Sky
 - **Problema**: Faixas horizontais e verticais no céu com câmera em movimento causadas por vetores de velocidade infinitos gerados para o domo celeste ($Z \approx 1.0$).
@@ -202,52 +194,37 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 ## 54. Modularização Arquitetural em `extra/` e Arquitetura de Interceptação por Hooks (Clean Upstream Merges)
 - Isolamento total de novas funcionalidades nas pastas de domínio `extra/` (`core/`, `ui/`, `management/`, `contact/`, `tools/`), limitando alterações em upstream a chamadas pontuais marcadas com `// [extra]`.
 
-## 55. Modernização do Desassemblador x86-64 e Visualizador de Memória: Resolução de Símbolos, Seleção e Cópia Interativa, Inspeção de Registradores e Modos de Tela Cheia
-- **Implementação**: `extra/core/debugger/symbol_manager.{h,cpp}`, `extra/ui/views/view_disasm.{h,cpp}`, `extra/ui/views/view_memviewer.{h,cpp}`.
-- Catálogo de 45+ símbolos do retail 1.09, anotação automática de operandos, seleção de linhas com realce colorido, cópia com <kbd>Ctrl+C</kbd> e modos de tela cheia (Dividido, Apenas Disasm, Apenas Hex).
-
-## 56. Correção do Botão "Copiar Regs" (Linux Wayland), Interatividade por Registrador e Roadmap Priorizado do Memory Viewer
-- Pipeline multi-camada de área de transferência (`SetClipboardSafe`) suportando Wayland e X11, feedback visual no clique e menu de contexto interativo em cada célula de registrador.
-
-## 57. Resolução de Crash Crítico no Depurador e Limpeza Geral dos Botões Redundantes da Interface
-- Correção de abort por Dear ImGui assert em `view_registers.cpp` e remoção de botões redundantes na navegação de memória.
-
-## 58. Implementação de Multiplayer Online Baseado no bbhost & The Hunter's Dream (Fases 0, 1 e 2)
-- Suporte a servidores BBSC e The Hunter's Dream (THD) via autenticação Discord no navegador com polling em segundo plano.
-
-## 59. Reorganização Arquitetural em `extra/hosts/`, Conformidade com `MyGUIDELINES.md` e Ganchos Upstream Não-Invasivos
+## 55. Modernização do Desassemblador x86-64 e Visualizador de Memória
+- **Implementação**: `extra/core/debugger/symbol_manager.{h,cpp}`, `extra/ui/views/view_disasm.{h,cpp}`, `extra/ui/views/view_memviewer.{h,cpp}` com catálogo de 45+ símbolos e modos de tela cheia.
+## 56. Correção do Botão "Copiar Regs" (Linux Wayland) e Interatividade
+- Pipeline multi-camada de área de transferência (`SetClipboardSafe`) suportando Wayland e X11.
+## 57. Resolução de Crash Crítico no Depurador e Limpeza de Botões Redundantes
+- Correção de abort por Dear ImGui assert em `view_registers.cpp` e polimento da interface.
+## 58. Implementação de Multiplayer Online Baseado no bbhost & The Hunter's Dream
+- Suporte a servidores BBSC e The Hunter's Dream (THD) via autenticação Discord no navegador.
+## 59. Reorganização Arquitetural em `extra/hosts/` e Ganchos Upstream
 - Centralização dos subsistemas de rede em `extra/hosts/` com hooks desacoplados via `extra/hooks.h`.
-
-## 60. Diagnóstico e Resolução de Erro de Sessão PSN ("Não tens sessão iniciada") e Ativação de Logs
+## 60. Diagnóstico e Resolução de Erro de Sessão PSN e Ativação de Logs
 - Mock correto de identificação de ticket PSN e inicialização de sessão de matchmaking sem exigir autenticação na PSN real.
-
-## 61. Correção de Despacho Seguro de Callbacks NP, Proteção de Ponteiros Nulos e Desacoplamento do Provedor shadNet
+## 61. Correção de Despacho Seguro de Callbacks NP e Provedor shadNet
 - Isolamento de chamadas assíncronas do runtime de rede prevenindo deadlocks em callbacks de status de rede.
+## 62. Resolução de Queda da Conexão Ingame (Game Server 20443)
+- Injeção de pacotes keepalive periódicos na porta de sinalização 20443, evitando timeouts de conexão.
 
-## 62. Resolução de Queda da Conexão Ingame (Game Server 20443, Injeção de Headers e Keepalive de Sinalização)
-- Injeção de pacotes keepalive periódicos na porta de sinalização 20443, evitando timeouts de conexão em sessões prolongadas.
-
-## 63. Resolução de Desconexão ao Interagir com Poças de Sangue / Fantasmas (Mock de NP WebAPI para blockList/friendList e Sincronização de PlayLogs)
+## 63. Resolução de Desconexão ao Interagir com Poças de Sangue / Fantasmas
 - Mock de endpoints WebAPI de lista de amigos e bloqueios, impedindo desconexões ao carregar gravações de fantasmas no chão.
-
 ## 64. Correção e Empacotamento do Módulo Online (`libbbnet.so`) para Pacotes Distribuíveis (`package.py` e Docker)
 - Ajuste de dependências dinâmicas no script de empacotamento para gerar builds distribuíveis autossuficientes.
-
 ## 65. Resolução Completa do Carregamento de Bibliotecas Empacotadas (`libfmt.so.10` / RPATH / LD_LIBRARY_PATH)
 - Inclusão de `$ORIGIN` no RPATH dos binários gerados, garantindo carregamento confiável da `libfmt` sem conflitos com pacotes do sistema.
-
 ## 66. Resolução do Crash `Signal: 4 (ILL)` e da Janela Preta no Launcher (Retrocompatibilidade GTK4/Libadwaita)
 - Shims de retrocompatibilidade para distros com versões legadas de GTK4 e libadwaita (como Ubuntu 22.04 LTS).
-
 ## 69. Correção do Scanner de Memória (Teto de Matches, Cobertura Completa do Heap PS4 e Vetorização)
 - Teto de segurança para resultados de varredura, evitando sobrecarga de memória na interface gráfica ao escanear valores comuns.
-
 ## 70. Suporte à Tecla de Caminhar (Hold Walk / Meio Analógico) e Resolução de Invocação Online (BBSC / Sinos)
 - Mapeamento de tecla dedicada para caminhar lentamente no teclado e correção de timeouts na troca de pacotes de sinos online.
-
 ## 71. Correção de Crash SIGSEGV no Overlay Gráfico (`RenderGraphicsSettings`) e Expansão de Localização PT-BR
 - Realinhamento dos 11 efeitos em `kEffects` (`extra/management/i18n/bbport_strings.cpp`) adicionando o efeito `Bloom`, e guardas defensivas contra ponteiro nulo no ImGui.
-
 ## 72. Correção de Frame Pacing Simétrico (50/50) no Frame Generation e Desacoplamento de Ritmo
 - Correção de cálculo de intervalo real entre inícios de quadros da engine e implementação de sleep híbrido de alta precisão (coarse sleep + spin-wait com `pause`), eliminando o gráfico em dente de serra (8ms/25ms) e estabilizando a entrega simétrica dos quadros interpolados e reais.
 
@@ -270,22 +247,44 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 | `gpu/shim/bbgpu.cpp` | `bbgpu_input_blocked() // [extra]` | `extra/core/engine_fixes/bbport_video.cpp` | Wrapper combinando InputBlocked e BbVideoTrack::IsActive | 2026-10-19 |
 | `gpu/platform/avplayer/avplayer.cpp` | `BbVideoTrack::OnCreate/OnClose // [extra]` | `extra/core/engine_fixes/bbport_video.cpp` | Rastreamento do ciclo de vida de instâncias do AvPlayer | 2026-10-19 |
 | `src/runtime_pad.c` | `extra_pad_apply_cutscene_skip(...) // [extra]` | `extra/management/prompts/bbport_pad_hook.h` | Emissão de BTN_OPTIONS com Esc/Enter e pulo de vídeo via AvPlayer::Stop | 2026-10-19 |
-| `tests/test_settings.cpp` | Validação de labels não nulos // [extra] | (teste unitário) | Teste de regressão para integridade de todos os 11 efeitos em todos os idiomas | 2026-10-19 |
+| `gpu/bbnet/include/core/memory.h` | `extra_query_memory_protection` hook // [extra] | `extra/core/debugger/mem_map.cpp` | Hook de consulta de mapa de memória para ponteiros estáticos do BBSC | 2026-10-19 |
+| `gpu/bbnet20/include/core/memory.h` | `extra_query_memory_protection` hook // [extra] | `extra/core/debugger/mem_map.cpp` | Hook de consulta de mapa de memória para ponteiros estáticos do BBSC | 2026-10-19 |
+| `gpu/bbnet20/bbsc/core/bloodborne_re.cpp` | save root, give guards e worker hook // [extra] | `extra/core/bbsc/bbport_bbsc_kit.cpp` | Raiz de saves AppImage, entrega de kit sem storage e scan de parâmetros | 2026-10-19 |
+| `gpu/bbnet/shadps4/core/bloodborne_re.cpp` | save root, give guards e worker hook // [extra] | `extra/core/bbsc/bbport_bbsc_kit.cpp` | Espelho idêntico em bbnet | 2026-10-19 |
+| `gpu/bbnet20/bbsc/core/bbsc_memscan.cpp` | hook `extra_safe_read` // [extra] | `extra/core/bbsc/bbport_bbsc_kit.cpp` | Leitura segura para mapeamentos DMABUF onde process_vm_readv falha com EFAULT | 2026-10-19 |
+| `gpu/bbnet/shadps4/core/bbsc_memscan.cpp` | hook `extra_safe_read` // [extra] | `extra/core/bbsc/bbport_bbsc_kit.cpp` | Espelho idêntico em bbnet | 2026-10-19 |
+| `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` | `extra_bbsc_save_root`, `extra_bbsc_bell_scan_forever`, `extra_safe_read` | (novo, em `extra/`) | Raiz de saves, varredura contínua e leitura de memória segura contra SIGSEGV/SIGBUS | 2026-10-19 |
 
 ---
 
 ## 75. Pulo Universal de Cutscenes In-Engine e Vídeos Pré-Renderizados (AvPlayer) via Teclado
-- **Causa**: O primeiro vídeo (`sprj_opening.mp4` / `sprj_advertise.mp4`) é reproduzido pelo `libSceAvPlayer`, antes da inicialização das estruturas de Scaleform menu flow (`kMenuFlow`), fazendo com que `bbgpu_input_blocked()` retornasse 0 e o `apply_keyboard` desviasse o <kbd>Esc</kbd> para `BTN_CIRCLE`.
-- **Solução Arquitetural**: Módulo `BbVideoTrack` (`extra/core/engine_fixes/bbport_video.{h,cpp}`) monitorando o ciclo de vida do player. Ao pressionar <kbd>Enter</kbd> ou <kbd>Esc</kbd>, `bbgpu_video_skip()` executa `player->Stop()` limpo e seguro em thread, disparando `StateStop` para o motor do jogo avançar imediatamente, além de desmascarar `BTN_OPTIONS` (0x8) para cutscenes in-engine.
+- **Causa**: O primeiro vídeo (`sprj_opening.mp4`) roda via `libSceAvPlayer` antes do Scaleform flow, fazendo `<Esc>` disparar `BTN_CIRCLE`.
+- **Solução Arquitetural**: Módulo `BbVideoTrack` (`extra/core/engine_fixes/bbport_video.{h,cpp}`). Ao pressionar <kbd>Enter</kbd> ou <kbd>Esc</kbd>, `bbgpu_video_skip()` executa `player->Stop()` e desmascara `BTN_OPTIONS` (0x8).
 
 ## 76. Empacotamento de Módulos Online (`libbbnet20.so` e `libbbnet.so`) no Pacote Distribuível
-- **Causa**: `package.py` apenas verificava e copiava `libbbnet.so`, ignorando `libbbnet20.so` (utilizado por padrão no BBPort 0.6+ para *Seamless Hunt* e *The Hunter's Dream*). Sem ele, o launcher desativava o pool online e o `run.sh` falhava para modo offline.
-- **Solução**: `package.py` atualizado para detectar, empacotar em `bin/gpu/`, aplicar strip e rastrear dependências dinâmicas no `lib/` para ambos `libbbnet20.so` e `libbbnet.so`. Adicionado fallback automático bidirecional em `run.sh` caso apenas um dos módulos esteja presente. Stubs em `tests/test_pad.c` e `tests/test_content.c` alinhados para 100% de aprovação na suíte de testes.
+- **Causa**: `package.py` só copiava `libbbnet.so`, ignorando `libbbnet20.so` exigido pelo BBPort 0.6+.
+- **Solução**: `package.py` atualizado para detectar, empacotar e rastrear dependências dinâmicas de ambos os módulos com fallback em `run.sh`.
 
 ## 77. Configuração e Correção do Discord Rich Presence (Client ID Padrão e Controles de Interface)
-- **Causa**: O Client ID padrão em C++ estava definido com o ID do shadPS4 (`1139939140494971051`), exibindo "Jogando shadPS4" sem carregar as artes personalizadas de áreas.
-- **Solução**: Client ID padrão alterado para a aplicação oficial BloodBorne BBPort (`1560890616811102219`), ativando as artes de mapas do Discord. Adicionada configuração na aba Online do launcher (`bbport_online.py`), persistência no `bbport.ini` e seletores rápidos (BBPort / shadPS4) com input editável no menu de overlay do jogo (`bbport_overlay_sections.cpp`).
+- **Causa**: Client ID apontava para shadPS4 (`1139939140494971051`) em vez da aplicação BloodBorne BBPort (`1560890616811102219`).
+- **Solução**: ID padrão corrigido para o BBPort oficial e controles adicionados no launcher e no overlay in-game.
 
 ## 78. Resolução do Host Fault Signal 11 (SIGSEGV) em `BbEngineGraphics::PatchImage`
-- **Causa**: Em `RestoreStartupEffectPatches` (`extra/core/engine_fixes/bbport_engine_graphics.cpp`), a restauração dos bytes originais de aberração cromática (`kCaCopy` em `0x229faa8`) e LoD (`kModelLodSite`) gravava diretamente na página de código RX do hóspede sem chamar `MakeWritable`, disparando SIGSEGV no endereço `0x80229fab0`.
-- **Solução**: Invocação de `BbCodePatch::MakeWritable` antes da escrita de restauração em `kCaCopy` e `kModelLodSite`, garantindo permissão RWX temporária na página antes de copiar os bytes.
+- **Causa**: Restauração de bytes em código RX sem chamar `MakeWritable`, disparando SIGSEGV no endereço `0x80229fab0`.
+- **Solução**: Invocação de `BbCodePatch::MakeWritable` antes da escrita em `kCaCopy` e `kModelLodSite`.
+
+## 79. AppImage Nativo de 51 MB e Integração Total dos Módulos Online
+- **Causa**: `AppRun` não exportava `BB_PREBUILT=1` e apontava para `bin/lib`, quebrando carregamento dos módulos de rede.
+- **Solução**: `AppRun` e `src/runtime_net.c` atualizados com caminhos corretos e empacotamento das 93 dependências de rede.
+
+## 80. Resolução Modular de Leitura de Ponteiros Estáticos do BBSC (`Debugger::MemoryMap`)
+- **Causa**: `Core::Memory::QueryProtection` não cobria o eboot (`0x800000000`), impedindo validação de ponteiros do BBSC.
+- **Solução Arquitetural**: Módulo `Debugger::MemoryMap` (`extra/core/debugger/mem_map.{h,cpp}`) com varredura do `/proc/self/maps`. Hook de 1 linha em `memory.h`.
+
+## 81. Kit do Caçador (BBSC) no AppImage Linux (raiz de saves, política do backup e storage nulo)
+- **Causa**: `BackupBbscSavesUnchecked` não conhecia `$BB_GPU_USER_DIR`, falhava sem saves existentes e bloqueava fora do Sonho do Caçador por storage nulo. O scan de 3 minutos esgotava caso o usuário ficasse no menu.
+- **Solução em `extra/`**: `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` com `extra_bbsc_save_root()` e `extra_bbsc_bell_scan_forever()`. Guards de storage nulo e desacoplamento do backup para jogadores novos.
+
+## 82. Varredura de Parâmetros do BBSC em Memória DMABUF (Linux) via `extra_safe_read`
+- **Causa**: `FindInMemory` (`bbsc_memscan.cpp`) usa `process_vm_readv`, que no Linux falha invariavelmente com `EFAULT` em buffers `MAP_SHARED` de DMA-BUF (`VM_PFNMAP`/`VM_IO`). A região do heap do jogo (524 MiB em `/dmabuf:`) era ignorada, fazendo `FindBbscParamTables` encontrar 0 tabelas e mantendo `ready=false`.
+- **Solução Arquitetural**: Implementada função `extra_safe_read(dst, src, size)` em `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` utilizando `sigsetjmp`/`siglongjmp` e interceptador de `SIGSEGV`/`SIGBUS`. Em `bbsc_memscan.cpp`, hook pontual de 3 linhas ativa `extra_safe_read` quando `got < 0`, permitindo leitura em velocidade de CPU da memória do jogo sem risco de crash.

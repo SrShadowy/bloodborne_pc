@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Bloodborne PC (BBPort)
+GenericName=Action RPG
+Comment=Bloodborne PC Port & Launcher
+Exec=AppRun %u
+Icon=bbport
+Categories=Game;ActionGame;
+Terminal=false
+StartupNotify=true
