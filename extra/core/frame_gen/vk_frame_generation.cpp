@@ -104,8 +104,17 @@ void FrameGeneration::Destroy() {
         ffxVkPortableFrameGenerationContextDestroy(context);
         context = nullptr;
     }
+    {
+        std::scoped_lock lock{targets_mutex};
+        targets.clear();
+    }
+    depth_copy.Destroy();
+    hudless.Destroy();
+    depth_copy_w = depth_copy_h = 0;
+    depth_copy_format = vk::Format::eUndefined;
     hudless_ready = false;
     hudless_w = hudless_h = 0;
+    hudless_format = vk::Format::eUndefined;
 }
 
 bool FrameGeneration::EnsureContext(u32 render_width, u32 render_height, u32 width, u32 height,

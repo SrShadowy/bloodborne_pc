@@ -265,44 +265,32 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 - **Causa**: `package.py` só copiava `libbbnet.so`, ignorando `libbbnet20.so` exigido pelo BBPort 0.6+.
 - **Solução**: `package.py` atualizado para detectar, empacotar e rastrear dependências dinâmicas de ambos os módulos com fallback em `run.sh`.
 
-## 77. Configuração e Correção do Discord Rich Presence (Client ID Padrão e Controles de Interface)
-- **Causa**: Client ID apontava para shadPS4 (`1139939140494971051`) em vez da aplicação BloodBorne BBPort (`1560890616811102219`).
-- **Solução**: ID padrão corrigido para o BBPort oficial e controles adicionados no launcher e no overlay in-game.
+## 77. Discord Rich Presence (Client ID Padrão e Controles)
+- **Causa/Solução**: ID apontava para shadPS4; atualizado para BBPort oficial (`1560890616811102219`) com controles no launcher e overlay.
 
-## 78. Resolução do Host Fault Signal 11 (SIGSEGV) em `BbEngineGraphics::PatchImage`
-- **Causa**: Restauração de bytes em código RX sem chamar `MakeWritable`, disparando SIGSEGV no endereço `0x80229fab0`.
-- **Solução**: Invocação de `BbCodePatch::MakeWritable` antes da escrita em `kCaCopy` e `kModelLodSite`.
+## 78-83. Melhorias de Estabilidade, Compatibilidade BBSC e Empacotamento
+- **78**: `MakeWritable` antes de escrita em `kCaCopy`/`kModelLodSite` via `BbCodePatch::MakeWritable`.
+- **79**: Dependências de rede e `BB_PREBUILT=1` consolidados em `AppRun` e `src/runtime_net.c`.
+- **80**: Validação de ponteiros do eboot sem re-leitura periódica de `/proc/self/maps` em `extra/core/debugger/mem_map.{h,cpp}`.
+- **81**: Saves e hunter tools do BBSC no AppImage (`extra_bbsc_save_root`, `extra_bbsc_bell_scan_forever`).
+- **82**: Leitura segura contra SIGSEGV/SIGBUS em memória DMABUF via `extra_safe_read` com `sigsetjmp`.
+- **83**: FFmpeg n6.1 minimal interno compilado para eliminar dependência de `libxml2.so.16`.
 
-## 79. AppImage Nativo de 51 MB e Integração Total dos Módulos Online
-- **Causa**: `AppRun` não exportava `BB_PREBUILT=1` e apontava para `bin/lib`, quebrando carregamento dos módulos de rede.
-- **Solução**: `AppRun` e `src/runtime_net.c` atualizados com caminhos corretos e empacotamento das 93 dependências de rede.
+## 84. Integração das Correções BBSC Linux (Teefpyre) & Busca Direta via `SoloParamRepository`
+- **Causas**: Falhas em invocações Seamless Co-op por rotas sem headers, stale summon, porta duplicada em `online.py` e queda de 60->15 FPS por escaneamento de 1 TB guest.
+- **Solução Arquitetural**: `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}`. Resolução via `SoloParamRepository` direto (`BbscGetSoloParamRepository()`), eliminando varredura contínua de memória e stutters.
 
-## 80. Resolução Modular de Leitura de Ponteiros Estáticos do BBSC (`Debugger::MemoryMap`)
-- **Causa**: `Core::Memory::QueryProtection` não cobria o eboot (`0x800000000`), impedindo validação de ponteiros do BBSC.
-- **Solução Arquitetural**: Módulo `Debugger::MemoryMap` (`extra/core/debugger/mem_map.{h,cpp}`) com varredura do `/proc/self/maps`. Hook de 1 linha em `memory.h`.
+## 85-86. Compatibilidade Hyprland/Wayland: Backend de Vídeo e Launcher
+- **Causa/Solução**: Seletor `BB_VIDEO_BACKEND=auto|x11|wayland` em `extra/core/video_backend/bbport_video_backend.{h,cpp}`, telemetria de janela e surface 0x0. Default `GSK_RENDERER=cairo` sob `GDK_BACKEND=*x11*` e logging com `faulthandler`.
 
-## 81. Kit do Caçador (BBSC) no AppImage Linux (raiz de saves, política do backup e storage nulo)
-- **Causa**: `BackupBbscSavesUnchecked` não conhecia `$BB_GPU_USER_DIR`, falhava sem saves existentes e bloqueava fora do Sonho do Caçador por storage nulo. O scan de 3 minutos esgotava caso o usuário ficasse no menu.
-- **Solução em `extra/`**: `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` com `extra_bbsc_save_root()` e `extra_bbsc_bell_scan_forever()`. Guards de storage nulo e desacoplamento do backup para jogadores novos.
-
-## 82. Varredura de Parâmetros do BBSC em Memória DMABUF (Linux) via `extra_safe_read`
-- **Causa**: `FindInMemory` (`bbsc_memscan.cpp`) usa `process_vm_readv`, que no Linux falha invariavelmente com `EFAULT` em buffers `MAP_SHARED` de DMA-BUF (`VM_PFNMAP`/`VM_IO`). A região do heap do jogo (524 MiB em `/dmabuf:`) era ignorada, fazendo `FindBbscParamTables` encontrar 0 tabelas e mantendo `ready=false`.
-- **Solução Arquitetural**: Implementada função `extra_safe_read(dst, src, size)` em `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` utilizando `sigsetjmp`/`siglongjmp` e interceptador de `SIGSEGV`/`SIGBUS`. Em `bbsc_memscan.cpp`, hook pontual de 3 linhas ativa `extra_safe_read` quando `got < 0`, permitindo leitura em velocidade de CPU da memória do jogo sem risco de crash.
-
-## 83. AppImage Nativo com FFmpeg Enxuto (resolução de `libxml2.so.16` em outras distros)
-- **Causa**: O AppImage nativo empacotado fora do container resolvia ffmpeg 8.x do sistema host (`libxml2.so.16: cannot open shared object file` em distros Debian/Ubuntu).
-- **Solução**: Empacotamento via container Ubuntu 22.04 LTS com FFmpeg n6.1 minimal compilado internamente (libs de 40 MB dependendo apenas de glibc/libm/libz).
-
-## 84. Integração das Correções BBSC Linux (Patch Teefpyre) & Modularização em `extra/`
-- **Causas**: Falhas em invocações do Seamless Co-op por rotas encurtadas (`/create`, `/get`) sem cabeçalhos de placement, exceção em `ClearStaleSeamlessSummonRecord`, travamento no escaneamento de parâmetros guest via `process_vm_readv` (páginas protegidas do runtime) e saves não localizados em versões GOTY (`CUSA03173`).
-- **Solução Arquitetural**: Centralização em `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` (`extra_bbsc_find_in_memory` via `runtime_memory_read_backing` e `/proc/self/maps`, detecção dinâmica `extra_bbsc_setup_save_dir` e suporte unificado a `$BB_GPU_USER_DIR` / `$BB_USER_DIR`). Módulos `bbnet` e `bbnet20` atualizados com hooks mínimos de 1-2 linhas (`// [extra: Teefpyre]`) e suporte a alternância de geração de rede (Gen 19 vs Gen 20) no launcher GTK4.
-
-## 85. Compatibilidade Hyprland/Wayland: `BB_VIDEO_BACKEND` e Telemetria de Janela
-- **Causa**: Usuário em CachyOS + Hyprland (Wayland) via Steam relata dois modos de falha no fork que o upstream não apresenta: (A) crash com `GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb GSK_RENDERER=cairo %command%` e (B) sem `GDK_BACKEND=x11`, abre sem janela. O `run.sh` forçava X11 sob Steam **e** o `window.cpp` repetia a força com `SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11")` (duas fontes de decisão); o caminho novo do fork (grab/warp/cursor no `FOCUS_GAINED`) roda antes do primeiro present, e um "surface 0x0" (issue #31) ficava invisível no log. Plano completo: `docs/Hyprland_compat_plan_2026-10-20.md`.
-- **Solução**: Módulo `extra/core/video_backend/bbport_video_backend.{h,cpp}` re-exportado em `extra/hooks.h` (`BbVideoBackend::ApplyHint/TraceRequest/TraceCreated/SurfaceZeroExtent`). Hooks de 1 linha + 1 include por arquivo: `gpu/shim/window.cpp` (o antigo hint `[extra]` de 4 linhas de Steam vira `ApplyHint()`, que respeita `BB_VIDEO_BACKEND`, e as decisões são impressas no stdout com flush ante/da janela) e `gpu/vulkan/swapchain.cpp` (`SurfaceZeroExtent` reporta "janela não visível" uma vez por trecho). `run.sh`: decisão única de backend — `BB_VIDEO_BACKEND=auto|x11|wayland` (env vence), `video_backend=` no `bbport.ini`, `auto` mantém X11/XWayland sob Steam e Wayland fora dele; a conclusão é impressa em stdout. Teste: `tests/test_video_backend.py` (6 casos: auto/Steam/explicito/ini/precedência/inválido).
+## 87-88. Resolução de Crash no Steam/XWayland e Correção de Duplicação no `bbport.ini`
+- **87**: Fix de f-string em `online.py`; shims em `bbport_compat.py`; isolamento de typelibs e auto-detecção de XWayland no Hyprland (`AppRun`/launcher).
+- **88**: Correção de escrita repetida de `frame_generation` no `bbport.ini`. Removida chamada duplicada `put("frame_generation")` em `gpu/shim/bbport_settings.cpp` e adicionada deduplicação em `Save()` e `save_ini()` (`bbport_config.py`).
 
 | Upstream file | Hook / change | Extra module | Purpose | Added |
 |---|---|---|---|---|
-| gpu/shim/window.cpp | `BbVideoBackend::ApplyHint()` (substitui o hint `[extra]` de Steam de 4 linhas), `TraceRequest()`, `TraceCreated(w, h)`, `#include "extra/hooks.h"` | `extra/core/video_backend/bbport_video_backend` | Backend do SDL configurável + trace no stdout com flush | 2026-10-20 |
-| gpu/vulkan/swapchain.cpp | `BbVideoBackend::SurfaceZeroExtent(zero_extent)`, `#include "extra/hooks.h"` | idem | Reportar surface 0x0 (janela não mapeada) no log | 2026-10-20 |
-| run.sh | Configuração do backend: `BB_VIDEO_BACKEND`/`video_backend=` no ini, decisão impressa no stdout | idem (bash) | Uma única decisão de backend; escape do usuário sem rebuild | 2026-10-20 |
+| gpu/shim/window.cpp | `BbVideoBackend::ApplyHint()`, `TraceRequest()`, `TraceCreated` | `extra/core/video_backend/bbport_video_backend` | Backend SDL configurável + trace | 2026-10-20 |
+| gpu/vulkan/swapchain.cpp | `BbVideoBackend::SurfaceZeroExtent(zero_extent)` | idem | Reportar surface 0x0 no log | 2026-10-20 |
+| run.sh | Configuração do backend: `BB_VIDEO_BACKEND`/`video_backend=` | idem (bash) | Decisão única de backend | 2026-10-20 |
+| gpu/shim/bbport_settings.cpp | Remoção de put duplicado e deduplicação em Save() | (shim local) | Impedir acúmulo de frame_generation no ini | 2026-10-20 |
+| scripts/online.py | Sintaxe f-string Python 3.10 | (scripts) | Compatibilidade com PyInstaller / Python < 3.12 | 2026-10-20 |

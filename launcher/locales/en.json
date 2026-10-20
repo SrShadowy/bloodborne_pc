@@ -1,4 +1,10 @@
 {
+  "Оконный бэкенд": "Window backend",
+  "X11 (XWayland)": "X11 (XWayland)",
+  "Wayland": "Wayland",
+  "Под Steam: X11 (XWayland) для Overlay и Steam Input; вне его — Wayland": "Under Steam: X11 (XWayland) for the Overlay and Steam Input; otherwise the compositor's Wayland",
+  "Когда игра не открывает окно в нативном Wayland": "When the game does not open a window in native Wayland",
+  "Нативный бэкенд композитора, без XWayland": "The compositor's native backend, without XWayland",
   "Запустить": "Play",
   "Остановить": "Stop",
   "Настройки": "Settings",

@@ -142,7 +142,7 @@ class OnlineMixin:
             title="Discord Rich Presence",
             description="Client ID da aplicação Discord. Padrão: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051")
         self.discord_cid_row = Adw.EntryRow(title="Discord Client ID",
-                                            text=self.ini.get("discord_client_id", s.get("discord_client_id", "1560890616811102219")))
+                                            text=getattr(self, "ini", {}).get("discord_client_id", s.get("discord_client_id", "1560890616811102219")))
         discord_grp.add(self.discord_cid_row)
         page.add(discord_grp)
 

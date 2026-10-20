@@ -11,12 +11,15 @@ export BB_PORT_DIR="$HERE"
 export BB_PREBUILT=1
 export PATH="$HERE/bin:$PATH"
 
-# Steam Overlay and Steam Input require X11 (XWayland) on Wayland to hook inputs properly
-if [[ -n "${SteamOverlayGameId:-}" || -n "${STEAM_RUNTIME:-}" || -n "${SteamGameId:-}" || -n "${SteamAppId:-}" ]]; then
-    export SDL_VIDEO_DRIVER="x11"
-    export SDL_VIDEODRIVER="x11"
-fi
 export SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
+
+# Auto-detect Hyprland or BB_LAUNCHER_BACKEND=x11 for launcher XWayland support [extra]
+if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]] || \
+   [[ "${BB_LAUNCHER_BACKEND:-auto}" != "wayland" && (-n "${HYPRLAND_INSTANCE_SIGNATURE:-}" || "${XDG_CURRENT_DESKTOP:-}" =~ [Hh]yprland) && -n "${DISPLAY:-}" ]]; then
+    export GDK_BACKEND="x11"
+    export GSK_RENDERER="cairo"
+    export QT_QPA_PLATFORM="xcb"
+fi
 
 # Libraries bundled with package.py
 if [[ -d "$HERE/lib" ]]; then

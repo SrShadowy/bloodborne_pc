@@ -10,15 +10,58 @@ text is the key).
 """
 
 import os
+import faulthandler
 import subprocess
 import sys
+import time
 from pathlib import Path
 from bbport_assets import fsr411_problem
 from bbport_i18n import set_language, tr
 
-# Force GTK4 to use OpenGL/GL renderer instead of Vulkan for the UI, preventing black screen
-# issues when implicit Vulkan layers (e.g. LSFG) or experimental Vulkan drivers are present.
-os.environ.setdefault("GSK_RENDERER", "gl")
+# Detect or configure launcher window backend (X11 / XWayland vs Wayland).
+# On Hyprland (or when BB_LAUNCHER_BACKEND=x11), native Wayland for GTK4 often fails to map
+# a window ("sem janela"). Default to XWayland with cairo renderer there. [extra]
+_launcher_backend = os.environ.get("BB_LAUNCHER_BACKEND", "").lower()
+_is_hyprland = bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or
+                    "hyprland" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower())
+if _launcher_backend == "x11" or (_launcher_backend != "wayland" and _is_hyprland and os.environ.get("DISPLAY")):
+    os.environ["GDK_BACKEND"] = "x11"
+    os.environ["GSK_RENDERER"] = "cairo"
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
+if os.environ.get("GDK_BACKEND", "").lower().endswith("x11"):
+    os.environ.setdefault("GSK_RENDERER", "cairo")
+else:
+    os.environ.setdefault("GSK_RENDERER", "gl")
+
+# [extra] Launcher crash/startup log: Steam hides the launcher's stderr, so a crash there
+# (Hyprland/XWayland reports) leaves no trace. faulthandler dumps the Python stack on a fatal
+# signal, and the startup line records the toolkit environment for the next report.
+_LAUNCHER_LOG = Path(os.environ.get("BB_LAUNCHER_LOG",
+                                    Path.home() / ".config" / "bbport-launcher" / "launcher.log"))
+
+
+def _launcher_log(line):
+    try:
+        _LAUNCHER_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _LAUNCHER_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except OSError:
+        pass
+
+
+try:
+    _launcher_log("--- launcher start {} GDK_BACKEND={} GSK_RENDERER={} XDG_SESSION_TYPE={}".format(
+        time.strftime("%Y-%m-%d %H:%M:%S"), os.environ.get("GDK_BACKEND", "(unset)"),
+        os.environ.get("GSK_RENDERER", "(unset)"), os.environ.get("XDG_SESSION_TYPE", "(unset)")))
+    faulthandler.enable(file=open(_LAUNCHER_LOG, "ab", buffering=0), all_threads=True)
+except OSError:
+    pass
+
+if getattr(sys, "frozen", False):
+    _meipass_typelibs = Path(getattr(sys, "_MEIPASS", "")) / "girepository-1.0"
+    if _meipass_typelibs.is_dir():
+        os.environ["GI_TYPELIB_PATH"] = str(_meipass_typelibs)
 
 import gi
 
@@ -45,7 +88,7 @@ from bbport_config import (
     FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
     READBACKS, PREUPLOAD, VK_RECORD_THREADS, MEMORY_MODELS,
     ASPECTS, output_sizes, resolved_aspect, nearest_output, parse_size,
-    NGX_PREFIX, DLSS_SDK_URL, binaries_dir, ngx_libraries, online_module,
+    NGX_PREFIX, DLSS_SDK_URL, binaries_dir, ngx_libraries, online_module, VIDEO_BACKENDS,
     load_settings, save_settings, load_ini, save_ini,
     game_environment,
 )
@@ -614,6 +657,9 @@ class LauncherWindow(
         self.display_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
                                                 lambda _button: self.fill_displays()))
         screen.add(self.display_row)
+        self.video_backend_row = combo_row(tr("Оконный бэкенд"), None, VIDEO_BACKENDS,
+                                           self.settings.get("video_backend", "auto"))
+        screen.add(self.video_backend_row)
 
         self.fill_displays()
         self.fill_aspects(self.ini.get("aspect", "auto"))
@@ -1000,6 +1046,7 @@ class LauncherWindow(
         s["gamepad"] = combo_value(self.gamepad_row)
         s["gamepad_name"] = self.gamepad_row.names[self.gamepad_row.get_selected()]
         s["display"] = combo_value(self.display_row)
+        s["video_backend"] = combo_value(self.video_backend_row)
         s["gpu"] = combo_value(self.gpu_row)
         s["skip_network_choice"] = self.skip_network_row.get_active()
         s["language"] = combo_value(self.language_row)
@@ -1057,6 +1104,7 @@ class LauncherWindow(
             "show_fps": "1" if self.show_fps_row.get_active() else "0",
             "aspect": combo_value(self.aspect_row),
             "output_res": combo_value(self.output_row),
+            "video_backend": combo_value(self.video_backend_row),
             "model_lod": combo_value(self.lod_row),
             "live_resolution": combo_value(self.live_row),
             "mouse_look": "1" if (hasattr(self, "mouse_look_row") and self.mouse_look_row.get_active()) else self.ini.get("mouse_look", "1"),

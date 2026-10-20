@@ -96,6 +96,7 @@ def write_overrides(user_dir, community, webapi, plain=False):
         return custom
     community = community_address(community)
     host = community.split('://', 1)[1]
+    host_name = host.split(':')[0]
     # Ensure explicit :20443 port as in Windows reference JSON
     game_target = community if (':' in host) else f'{community}:20443'
     overrides = {GAME_SERVER: game_target}
@@ -106,7 +107,7 @@ def write_overrides(user_dir, community, webapi, plain=False):
     else:
         # Reference summon redirects from Seamless Hunt (thehuntersdream.com:18671 -> webapi)
         for target in ('http://thehuntersdream.com:18671', 'https://thehuntersdream.com:18671',
-                       f'http://{host}:{COMMUNITY_API_PORT}', f'https://{host}:{COMMUNITY_API_PORT}'):
+                       f'http://{host_name}:{COMMUNITY_API_PORT}', f'https://{host_name}:{COMMUNITY_API_PORT}'):
             overrides[f'{target}/summon_messenger'] = webapi
             overrides[target] = webapi
         print(f'Co-op: summon signs through {webapi}', file=sys.stderr)
@@ -119,7 +120,8 @@ def check(server, webapi, community):
     """(name, address, ok, detail) for the game server, the shadNet server and its WebAPI."""
     results = []
     try:
-        req = urllib.request.Request(community + ':20443/bb-eu/ss.info',
+        game_url = community if (':20443' in community) else f"{community.rstrip('/')}:20443"
+        req = urllib.request.Request(f'{game_url}/bb-eu/ss.info',
                                      headers={'User-Agent': 'Bloodborne/01.09'})
         with urllib.request.urlopen(req, timeout=6) as reply:
             reply.read(64)
@@ -158,7 +160,8 @@ def thd_base(value):
     if '://' not in value:
         value = 'https://' + value
     scheme, rest = value.split('://', 1)
-    return f'{scheme}://{rest.split('/')[0]}'
+    host_part = rest.split('/')[0]
+    return f'{scheme}://{host_part}'
 
 
 def thd_call(url, body):
@@ -262,7 +265,8 @@ def bbsc_local_server():
     if comm_host in ('127.0.0.1', 'localhost'):
         return ''  # pointed at a local one already
     try:
-        req = urllib.request.Request(community + ':20443/bb-eu/ss.info',
+        game_url = community if (':20443' in community) else f"{community.rstrip('/')}:20443"
+        req = urllib.request.Request(f'{game_url}/bb-eu/ss.info',
                                      headers={'User-Agent': 'Bloodborne/01.09'})
         with urllib.request.urlopen(req, timeout=5) as reply:
             reply.read(64)

@@ -11795,6 +11795,20 @@ u64 BbscParamRow(u64 table, u32 id, size_t size = 8) {
 // min_rows / first_id: the table's row count must be above min_rows and its first row id first_id.
 std::vector<u64> FindBbscParamTables(std::string_view type, u16 min_rows = 1000,
                                      u32 first_id = 0) {
+    // [extra: Teefpyre - direct param lookup without memory scanning]
+    static const BbscParamMemory mem{
+        &ReadablePointer, &ReadValue<u64>, &ReadValue<s32>,
+        &ReadValue<u16>, &ReadValue<u32>,
+        [](u64 table, const char* name, size_t len) {
+            return ReadGuestAscii(table + 0x0C, 32) == std::string_view(name, len);
+        }
+    };
+    std::vector<u64> direct;
+    const u64 repo = extra_bbsc_get_solo_param_repo(image_base, &mem);
+    extra_bbsc_find_param_tables_direct(repo, type.data(), type.size(), min_rows, first_id, &mem, &direct);
+    if (!direct.empty() || !std::getenv("BB_BBSC_MEMSCAN")) {
+        return direct;
+    }
     std::vector<u8> needle(type.begin(), type.end());
     needle.push_back(0);
     std::vector<u64> tables;

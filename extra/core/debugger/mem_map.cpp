@@ -48,35 +48,25 @@ void MemoryMap::Refresh() {
 
 bool MemoryMap::QueryProtection(uint64_t address, uintptr_t* start, uintptr_t* end, uint32_t* prot) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    auto find_in_segments = [this, address](uintptr_t* out_start, uintptr_t* out_end, uint32_t* out_prot) -> bool {
-        if (segments_.empty()) return false;
-        auto it = std::upper_bound(segments_.begin(), segments_.end(), address,
-            [](uint64_t addr, const MemorySegment& seg) {
-                return addr < seg.start;
-            });
-        if (it != segments_.begin()) {
-            --it;
-            if (address >= it->start && address < it->end) {
-                if (out_start) *out_start = it->start;
-                if (out_end) *out_end = it->end;
-                if (out_prot) *out_prot = it->prot;
-                return true;
-            }
-        }
-        return false;
-    };
-
-    if (find_in_segments(start, end, prot)) {
-        return true;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now - last_refresh_ >= std::chrono::seconds(1)) {
+    if (segments_.empty()) {
         Refresh();
-        return find_in_segments(start, end, prot);
     }
-
+    if (segments_.empty()) {
+        return false;
+    }
+    auto it = std::upper_bound(segments_.begin(), segments_.end(), address,
+        [](uint64_t addr, const MemorySegment& seg) {
+            return addr < seg.start;
+        });
+    if (it != segments_.begin()) {
+        --it;
+        if (address >= it->start && address < it->end) {
+            if (start) *start = it->start;
+            if (end) *end = it->end;
+            if (prot) *prot = it->prot;
+            return true;
+        }
+    }
     return false;
 }
 

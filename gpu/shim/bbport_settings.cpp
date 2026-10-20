@@ -537,7 +537,6 @@ void Save() {
     put("cam_height", fixed(v.cam_height.load(), 2));
     put("light_grid_opt", flag(v.light_grid_opt.load()));
     put("hide_hud", flag(v.hide_hud.load()));
-    put("frame_generation", flag(v.frame_generation));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
     }
@@ -559,8 +558,11 @@ void Save() {
                 const auto it = std::find_if(keys.begin(), keys.end(),
                                              [&](const auto& k) { return k.first == key; });
                 if (it != keys.end()) {
-                    out += it->first + "=" + it->second + "\n";
-                    written[size_t(it - keys.begin())] = true;
+                    const size_t idx = size_t(it - keys.begin());
+                    if (!written[idx]) {
+                        out += it->first + "=" + it->second + "\n";
+                        written[idx] = true;
+                    }
                     continue;
                 }
             }

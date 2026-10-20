@@ -129,6 +129,14 @@ if [[ -d "$HERE/fsr4_shaders" && -z "${BB_FSR4_SHADERS:-}" ]]; then
     export BB_FSR4_SHADERS="$HERE/fsr4_shaders"
 fi
 
+# Auto-detect Hyprland or BB_LAUNCHER_BACKEND=x11 for launcher XWayland support [extra]
+if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]] || \
+   [[ "${BB_LAUNCHER_BACKEND:-auto}" != "wayland" && (-n "${HYPRLAND_INSTANCE_SIGNATURE:-}" || "${XDG_CURRENT_DESKTOP:-}" =~ [Hh]yprland) && -n "${DISPLAY:-}" ]]; then
+    export GDK_BACKEND="x11"
+    export GSK_RENDERER="cairo"
+    export QT_QPA_PLATFORM="xcb"
+fi
+
 # Modo direto (--play ou --game)
 if [[ "${1:-}" == "--play" || "${1:-}" == "--game" ]]; then
     shift
@@ -290,6 +298,14 @@ if [[ -d "$ROOT/fsr4_shaders" && -z "${BB_FSR4_SHADERS:-}" ]]; then
     export BB_FSR4_SHADERS="$ROOT/fsr4_shaders"
 fi
 
+# Auto-detect Hyprland or BB_LAUNCHER_BACKEND=x11 for launcher XWayland support [extra]
+if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]] || \
+   [[ "${BB_LAUNCHER_BACKEND:-auto}" != "wayland" && (-n "${HYPRLAND_INSTANCE_SIGNATURE:-}" || "${XDG_CURRENT_DESKTOP:-}" =~ [Hh]yprland) && -n "${DISPLAY:-}" ]]; then
+    export GDK_BACKEND="x11"
+    export GSK_RENDERER="cairo"
+    export QT_QPA_PLATFORM="xcb"
+fi
+
 # 1. Native system Python with GTK 4 and Libadwaita (best desktop integration, native theme and 0 ABI conflicts)
 if python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
     exec python3 "$HERE/bbport_launcher.py" "$@"
@@ -366,17 +382,27 @@ def build_standalone_launcher(staging_dir, force_rebuild=False):
         "--paths", str(ROOT_DIR / "tools"),
         "--collect-all", "gi",
         "--hidden-import", "gi",
+        "--hidden-import", "gi.module",
         "--hidden-import", "gi.repository.Gtk",
         "--hidden-import", "gi.repository.Adw",
         "--hidden-import", "gi.repository.Gio",
         "--hidden-import", "gi.repository.GLib",
         "--hidden-import", "gi.repository.Gdk",
         "--hidden-import", "gi.repository.Pango",
+    ]
+    for typelib_cand in [
+        Path("/usr/lib/x86_64-linux-gnu/girepository-1.0"),
+        Path("/usr/lib/girepository-1.0"),
+    ]:
+        if typelib_cand.is_dir():
+            pyi_cmd.extend(["--add-data", f"{typelib_cand}:girepository-1.0"])
+            break
+    pyi_cmd.extend([
         "--distpath", str(dist_dir),
         "--workpath", str(work_dir),
         "--specpath", str(work_dir),
         str(launcher_src_dir / "bbport_launcher.py"),
-    ]
+    ])
     try:
         ret = run_command(pyi_cmd, check=False)
         if ret != 0:

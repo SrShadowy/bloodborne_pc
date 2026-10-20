@@ -526,6 +526,16 @@ EN = {
     "Параллельная запись команд; ускоряет рендеринг при упоре в CPU": "Parallel command recording; speeds up rendering when CPU-bound",
     "Сервер кооператива (колокола и призывы)": "Co-op server (bells and summons)",
     "Учётная запись": "Account",
+    "Оконный бэкенд": "Window backend",
+    "X11 (XWayland)": "X11 (XWayland)",
+    "Wayland": "Wayland",
+    "Под Steam: X11 (XWayland) для Overlay и Steam Input; вне его — Wayland": "Under Steam: X11 (XWayland) for the Overlay and Steam Input; otherwise the compositor's Wayland",
+    "Когда игра не открывает окно в нативном Wayland": "When the game does not open a window in native Wayland",
+    "Нативный бэкенд композитора, без XWayland": "The compositor's native backend, without XWayland",
+    "Сетевой модуль": "Network module",
+    "Версия сетевого модуля": "Network module version",
+    "Сетевой модуль shadp2p, полностью совместимый с Windows Seamless Hunt (BBSC v0.0.1)": "The shadp2p network module, fully compatible with Windows Seamless Hunt (BBSC v0.0.1)",
+    "Стек shadPS4 0.20": "shadPS4 0.20 stack",
 }
 PT = {
     # Window, pages, buttons
@@ -940,6 +950,16 @@ PT = {
         "Esta não é uma versão de retalho de Bloodborne (encontrado: {}): é necessário Bloodborne de qualquer região com a atualização 1.09",
     "доступен": "acessível",
     "недоступен": "inacessível",
+    "Оконный бэкенд": "Backend da janela",
+    "X11 (XWayland)": "X11 (XWayland)",
+    "Wayland": "Wayland",
+    "Под Steam: X11 (XWayland) для Overlay и Steam Input; вне его — Wayland": "Sob o Steam: X11 (XWayland) para o Overlay e o Steam Input; fora dele, o Wayland do compositor",
+    "Когда игра не открывает окно в нативном Wayland": "Quando o jogo não abre janela no Wayland nativo",
+    "Нативный бэкенд композитора, без XWayland": "O backend nativo do compositor, sem XWayland",
+    "Сетевой модуль": "Módulo de rede",
+    "Версия сетевого модуля": "Versão do módulo de rede",
+    "Сетевой модуль shadp2p, полностью совместимый с Windows Seamless Hunt (BBSC v0.0.1)": "O módulo de rede shadp2p, totalmente compatível com o Windows Seamless Hunt (BBSC v0.0.1)",
+    "Стек shadPS4 0.20": "Stack shadPS4 0.20",
 }
 
 PT_BR = {
@@ -1406,6 +1426,16 @@ PT_BR = {
         "Esta não é uma versão comercial de Bloodborne (encontrado: {}): é necessário Bloodborne de qualquer região com a atualização 1.09",
     "доступен": "acessível",
     "недоступен": "inacessível",
+    "Оконный бэкенд": "Backend da janela",
+    "X11 (XWayland)": "X11 (XWayland)",
+    "Wayland": "Wayland",
+    "Под Steam: X11 (XWayland) для Overlay и Steam Input; вне его — Wayland": "Sob o Steam: X11 (XWayland) para o Overlay e o Steam Input; fora dele, o Wayland do compositor",
+    "Когда игра не открывает окно в нативном Wayland": "Quando o jogo não abre janela no Wayland nativo",
+    "Нативный бэкенд композитора, без XWayland": "O backend nativo do compositor, sem XWayland",
+    "Сетевой модуль": "Módulo de rede",
+    "Версия сетевого модуля": "Versão do módulo de rede",
+    "Сетевой модуль shadp2p, полностью совместимый с Windows Seamless Hunt (BBSC v0.0.1)": "O módulo de rede shadp2p, totalmente compatível com o Windows Seamless Hunt (BBSC v0.0.1)",
+    "Стек shadPS4 0.20": "Stack shadPS4 0.20",
 }
 
 

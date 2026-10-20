@@ -157,6 +157,15 @@ LANGUAGES = [("Английский", "1"), ("Английский (Велико
              ("Китайский (упрощённый)", "11"), ("Китайский (традиционный)", "10"),
              ("Финский", "12"), ("Шведский", "13"), ("Датский", "14"), ("Норвежский", "15")]
 LIVE_RESOLUTION = [("Авто (по видеокарте)", "auto"), ("Выключена (быстрее)", "0"), ("Включена", "1")]
+
+# The game window's backend (SDL3 + Vulkan): auto keeps the run.sh default (X11/XWayland under
+# Steam, the compositor's Wayland otherwise); x11/wayland force it. The launcher's own GTK uses
+# GDK_BACKEND, not this.
+VIDEO_BACKENDS = [
+    ("Авто", "auto", "Под Steam: X11 (XWayland) для Overlay и Steam Input; вне его — Wayland"),
+    ("X11 (XWayland)", "x11", "Когда игра не открывает окно в нативном Wayland"),
+    ("Wayland", "wayland", "Нативный бэкенд композитора, без XWayland"),
+]
 READBACKS = [("Relaxed", "", "По умолчанию"), ("Выключены", "0", "Быстрее, но лица могут искажаться"),
              ("Precise", "2", "Экспериментально; может зависать при запуске")]
 PREUPLOAD = [("Обычная", "", "Без лишней видеопамяти"), ("Полная", "2", "Около 3 ГБ видеопамяти сверху"),
@@ -215,6 +224,8 @@ DEFAULTS = {
     "online_backend": "shadnet",
     "online_bbhost_server": bbhost.DEFAULT_SERVER,
     "aspect": "auto",
+    # The game window's SDL backend: auto (run.sh decides), x11 or wayland.
+    "video_backend": "auto",
     "theme_mode": "dark",
     "discord_client_id": "1560890616811102219",
 }
@@ -240,6 +251,7 @@ INI_DEFAULTS = {
     "mouse_capture": "1",
     "draw_pipe": "2",
     "fps_limit": "0",
+    "video_backend": "auto",
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 
@@ -348,9 +360,10 @@ def save_ini(values, lines):
         if "=" in line and not line.lstrip().startswith("#"):
             key = line.split("=", 1)[0].strip()
             if key in values:
-                if values[key] is not None:
-                    out.append(f"{key}={values[key]}")
-                written.add(key)
+                if key not in written:
+                    if values[key] is not None:
+                        out.append(f"{key}={values[key]}")
+                    written.add(key)
                 continue
         out.append(line)
     if not lines:
@@ -386,6 +399,8 @@ def game_environment(s):
     env["BB_LANGUAGE"] = s["language"]
     env["BB_MENU_LANGUAGE"] = language()
     env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"
+    if "BB_VIDEO_BACKEND" not in env:
+        env["BB_VIDEO_BACKEND"] = s.get("video_backend", "auto")
     env["BB_PRESENT_MODE"] = s["present_mode"]
     if s.get("gamepad"):
         env["BB_GAMEPAD"] = s["gamepad"]

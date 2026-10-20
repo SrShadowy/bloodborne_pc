@@ -154,6 +154,8 @@ class GameRunnerMixin:
             set_combo(self.lod_row, self.ini.get("model_lod", "0"))
         if hasattr(self, "live_row"):
             set_combo(self.live_row, self.ini.get("live_resolution", "0"))
+        if hasattr(self, "video_backend_row"):
+            set_combo(self.video_backend_row, self.ini.get("video_backend", "auto"))
         # Effects
         if hasattr(self, "effect_rows"):
             for key, row in self.effect_rows.items():

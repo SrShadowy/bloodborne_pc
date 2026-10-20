@@ -10,9 +10,8 @@ def apply_shims():
     # When older PyGObject (3.42) runs against newer host GTK 4.14+ typelibs,
     # new uninitialized interfaces (e.g. AccessibleText) can raise TypeError: must be an interface.
     try:
-        import sys
-        gi_mod = sys.modules.get("gi.module")
-        if gi_mod and hasattr(gi_mod, "get_interfaces_for_object"):
+        import gi.module
+        if hasattr(gi.module, "get_interfaces_for_object"):
             def safe_get_interfaces_for_object(object_info):
                 interfaces = []
                 for interface_info in object_info.get_interfaces():
@@ -21,12 +20,57 @@ def apply_shims():
                         name = interface_info.get_name()
                         import importlib
                         module = importlib.import_module("gi.repository." + namespace)
-                        interfaces.append(getattr(module, name))
+                        cls = getattr(module, name)
+                        from gi.repository import GObject
+                        if isinstance(cls, type) and issubclass(cls, GObject.GInterface):
+                            interfaces.append(cls)
                     except Exception:
                         pass
                 return interfaces
 
-            gi_mod.get_interfaces_for_object = safe_get_interfaces_for_object
+            gi.module.get_interfaces_for_object = safe_get_interfaces_for_object
+    except Exception:
+        pass
+
+    # 2. Safely handle enum values introduced in newer GTK typelibs (e.g. GTK 4.12+ Gtk.Align: 5)
+    # PyGObject 3.42 throws ValueError: invalid enum value when typelib contains new enum entries.
+    try:
+        import gi.module
+        orig_getattr = gi.module.IntrospectionModule.__getattr__
+
+        def safe_getattr(self, name):
+            try:
+                return orig_getattr(self, name)
+            except ValueError as e:
+                if "invalid enum value" in str(e):
+                    info = gi.module.repository.find_by_name(self._namespace, name)
+                    if isinstance(info, gi.module.EnumInfo):
+                        g_type = info.get_g_type()
+                        wrapper = g_type.pytype
+                        if wrapper is None:
+                            if info.is_flags():
+                                wrapper = gi.module.flags_add(g_type) if g_type.is_a(gi.module.TYPE_FLAGS) else gi.module.flags_register_new_gtype_and_add(info)
+                            else:
+                                wrapper = gi.module.enum_add(g_type) if g_type.is_a(gi.module.TYPE_ENUM) else gi.module.enum_register_new_gtype_and_add(info)
+                            wrapper.__info__ = info
+                            wrapper.__module__ = "gi.repository." + info.get_namespace()
+                            trans = "".maketrans("abcdefgjhijklmnopqrstuvwxyz", "ABCDEFGJHIJKLMNOPQRSTUVWXYZ")
+                            for value_info in info.get_values():
+                                v_name = value_info.get_name_unescaped().translate(trans)
+                                try:
+                                    val = wrapper(value_info.get_value())
+                                except ValueError:
+                                    val = value_info.get_value()
+                                setattr(wrapper, v_name, val)
+                            for method_info in info.get_methods():
+                                setattr(wrapper, method_info.__name__, method_info)
+                            if g_type != gi.module.TYPE_NONE:
+                                g_type.pytype = wrapper
+                        self.__dict__[name] = wrapper
+                        return wrapper
+                raise
+
+        gi.module.IntrospectionModule.__getattr__ = safe_getattr
     except Exception:
         pass
 

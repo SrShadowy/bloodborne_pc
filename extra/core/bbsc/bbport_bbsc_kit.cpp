@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -50,12 +52,16 @@ extern "C" void extra_bbsc_bell_scan_forever(std::atomic<bool>* ready, void (*pr
     if (ready == nullptr || prepare == nullptr) {
         return;
     }
+    int delay_s = 2;
     while (!ready->load(std::memory_order_acquire)) {
         prepare();
         if (ready->load(std::memory_order_acquire)) {
             break;
         }
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::this_thread::sleep_for(std::chrono::seconds(delay_s));
+        if (delay_s < 4) {
+            ++delay_s;
+        }
     }
 }
 
@@ -166,5 +172,52 @@ extern "C" void extra_bbsc_find_in_memory(
             match_chunk(chunk, want);
         }
         at = r_end;
+    }
+}
+
+extern "C" std::uint64_t extra_bbsc_get_solo_param_repo(
+    std::uint64_t image_base, const BbscParamMemory* mem) {
+    if (image_base == 0 || mem == nullptr || mem->read_u64 == nullptr || mem->readable == nullptr) {
+        return 0;
+    }
+    constexpr std::uint64_t kSoloRepoOffset = 0x05540340;
+    constexpr std::uint64_t kBasePtrOffset = 0x05537F58;
+    constexpr std::size_t kRepoMinSize = 64 * 0x48 + 0x38;
+
+    std::uint64_t repo = mem->read_u64(image_base + kSoloRepoOffset, 0);
+    if (!mem->readable(repo, kRepoMinSize)) {
+        const std::uint64_t base_ptr = mem->read_u64(image_base + kBasePtrOffset, 0);
+        if (mem->readable(base_ptr, 0x70)) {
+            repo = mem->read_u64(base_ptr, 0x68);
+        }
+    }
+    return mem->readable(repo, kRepoMinSize) ? repo : 0;
+}
+
+extern "C" void extra_bbsc_find_param_tables_direct(
+    std::uint64_t repo, const char* type, std::size_t type_len, std::uint16_t min_rows, std::uint32_t first_id,
+    const BbscParamMemory* mem, std::vector<std::uint64_t>* out_tables) {
+    if (repo == 0 || type == nullptr || mem == nullptr || out_tables == nullptr ||
+        mem->readable == nullptr || mem->read_s32 == nullptr || mem->read_u16 == nullptr ||
+        mem->read_u32 == nullptr || mem->read_u64 == nullptr || mem->match_name == nullptr) {
+        return;
+    }
+    constexpr std::size_t kRepoMinSize = 64 * 0x48 + 0x38;
+    if (!mem->readable(repo, kRepoMinSize)) {
+        return;
+    }
+    for (std::size_t idx = 0; idx < 64; ++idx) {
+        if (mem->read_s32(repo, idx * 0x48 + 0x28) <= 0) {
+            continue;
+        }
+        const std::uint64_t resource = mem->read_u64(repo, idx * 0x48 + 0x30);
+        const std::uint64_t holder = mem->readable(resource, 0x78) ? mem->read_u64(resource, 0x70) : 0;
+        const std::uint64_t table = mem->readable(holder, 0x78) ? mem->read_u64(holder, 0x70) : 0;
+        if (mem->readable(table, 0x60) && mem->match_name(table, type, type_len) &&
+            mem->read_u16(table, 0x0A) > min_rows &&
+            (first_id == 0 || mem->read_u32(table, 0x40) == first_id) &&
+            std::ranges::find(*out_tables, table) == out_tables->end()) {
+            out_tables->push_back(table);
+        }
     }
 }
