@@ -8,6 +8,13 @@ if [[ -d "$PWD/lib" ]]; then
 elif [[ -d "$PWD/bin/gpu" ]]; then
     export LD_LIBRARY_PATH="$PWD/bin/gpu:${LD_LIBRARY_PATH:-}"
 fi
+
+# Steam Overlay and Steam Input require X11 (XWayland) on Wayland to hook inputs properly
+if [[ -n "${SteamOverlayGameId:-}" || -n "${STEAM_RUNTIME:-}" || -n "${SteamGameId:-}" || -n "${SteamAppId:-}" ]]; then
+    export SDL_VIDEO_DRIVER="x11"
+    export SDL_VIDEODRIVER="x11"
+fi
+export SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
 if [[ ${1:-} == --software ]]; then
     shift
     if [[ -z ${VK_DRIVER_FILES:-} ]]; then

@@ -11,6 +11,13 @@ export BB_PORT_DIR="$HERE"
 export BB_PREBUILT=1
 export PATH="$HERE/bin:$PATH"
 
+# Steam Overlay and Steam Input require X11 (XWayland) on Wayland to hook inputs properly
+if [[ -n "${SteamOverlayGameId:-}" || -n "${STEAM_RUNTIME:-}" || -n "${SteamGameId:-}" || -n "${SteamAppId:-}" ]]; then
+    export SDL_VIDEO_DRIVER="x11"
+    export SDL_VIDEODRIVER="x11"
+fi
+export SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
+
 # Libraries bundled with package.py
 if [[ -d "$HERE/lib" ]]; then
     export LD_LIBRARY_PATH="$HERE/lib:$HERE/bin/gpu:${LD_LIBRARY_PATH:-}"

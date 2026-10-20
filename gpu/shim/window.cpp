@@ -138,6 +138,10 @@ void TellMonitor(SDL_Window* window) {
 
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
     s_active_window = this;
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1"); // [extra]
+    if (std::getenv("SteamOverlayGameId") || std::getenv("STEAM_RUNTIME")) { // [extra]
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11"); // [extra]
+    } // [extra]
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
@@ -446,7 +450,12 @@ bool WindowSDL::PollEvents() {
         }
         if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
             CaptureMouse(false);
-        }
+        } 
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) { // [extra]
+            if (mouse_look.load(std::memory_order_relaxed) && !mouse_user_released && !BbOverlay::MenuOpen()) { // [extra]
+                CaptureMouse(true); // [extra]
+            } // [extra]
+        } // [extra]
         switch (event.type) {
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_RESIZED: {

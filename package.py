@@ -659,11 +659,15 @@ def build_native_appimage(staging_dir, out_dist_dir, pkg_name):
     print(f"[*] Packaging AppImage into {appimage_name}...")
     cmd = [
         appimagetool,
-        "--appimage-extract-and-run",
         "--no-appstream",
         str(staging_dir),
         str(appimage_path)
     ]
+    # --appimage-extract-and-run is for when the tool itself is an AppImage
+    # (runs without FUSE by self-extracting). A static appimagetool ELF does not
+    # understand that flag and fails without producing any output file.
+    if appimagetool.endswith(".AppImage"):
+        cmd.insert(1, "--appimage-extract-and-run")
     res = subprocess.run(cmd, env=env)
     if res.returncode != 0:
         print(f"[!] Error: appimagetool failed with code {res.returncode}", file=sys.stderr)
