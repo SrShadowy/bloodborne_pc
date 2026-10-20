@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "core/emulator_settings.h"
+#include "extra/hooks.h" // [extra]
 #include "sdl_window.h"
 #include "vulkan/instance.h"
 #include "vulkan/platform.h"
@@ -109,6 +110,7 @@ void Swapchain::Create(u32 width_, u32 height_) {
     // the old one stays (presents are skipped) until the window is back.
     QuerySurface();
     zero_extent = extent.width == 0 || extent.height == 0;
+    BbVideoBackend::SurfaceZeroExtent(zero_extent); // [extra]
     if (zero_extent) {
         needs_recreation = true;
         return;

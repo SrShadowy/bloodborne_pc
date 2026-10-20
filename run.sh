@@ -9,11 +9,10 @@ elif [[ -d "$PWD/bin/gpu" ]]; then
     export LD_LIBRARY_PATH="$PWD/bin/gpu:${LD_LIBRARY_PATH:-}"
 fi
 
-# Steam Overlay and Steam Input require X11 (XWayland) on Wayland to hook inputs properly
-if [[ -n "${SteamOverlayGameId:-}" || -n "${STEAM_RUNTIME:-}" || -n "${SteamGameId:-}" || -n "${SteamAppId:-}" ]]; then
-    export SDL_VIDEO_DRIVER="x11"
-    export SDL_VIDEODRIVER="x11"
-fi
+# The video backend decision happens after BB_CONFIG is set (below): BB_VIDEO_BACKEND (or the
+# video_backend= line in bbport.ini) picks SDL's driver explicitly; auto forces X11 (XWayland)
+# under Steam — the Overlay and Steam Input hook inputs through XWayland — the compositor's
+# Wayland otherwise. The decision is printed so a report says which backend ran without the log.
 export SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
 if [[ ${1:-} == --software ]]; then
     shift
@@ -33,6 +32,35 @@ data=${BB_DATA_DIR:-.}
 out=$data/out
 mkdir -p "$out"
 export BB_CONFIG=${BB_CONFIG:-$data/bbport.ini}
+# The game window's backend (SDL3 + Vulkan; the GTK launcher does not use this).
+# BB_VIDEO_BACKEND: auto (default), x11 or wayland; a video_backend= line in bbport.ini applies
+# when the variable is unset.
+if [[ -z ${BB_VIDEO_BACKEND:-} && -f $BB_CONFIG ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+        if [[ $line =~ ^video_backend=(x11|wayland|auto)$ ]]; then
+            export BB_VIDEO_BACKEND=${BASH_REMATCH[1]}
+        fi
+    done < "$BB_CONFIG"
+fi
+case ${BB_VIDEO_BACKEND:-auto} in
+    x11)
+        export SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11
+        echo "Video backend: x11 (XWayland on a Wayland session: ${XDG_SESSION_TYPE:-?})"
+        ;;
+    wayland)
+        export SDL_VIDEO_DRIVER=wayland SDL_VIDEODRIVER=wayland
+        echo "Video backend: wayland (XDG_SESSION_TYPE: ${XDG_SESSION_TYPE:-?})"
+        ;;
+    *)
+        export BB_VIDEO_BACKEND=auto
+        if [[ -n ${SteamOverlayGameId:-}${STEAM_RUNTIME:-}${SteamGameId:-}${SteamAppId:-} ]]; then
+            export SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11
+            echo "Video backend: x11 (XWayland; forced under Steam — Overlay/Steam Input)"
+        else
+            echo "Video backend: auto (SDL decides)"
+        fi
+        ;;
+esac
 # GPU paths are initialized when libbbgpu is loaded, before bbgpu_init receives --user.
 # Select the same user directory now, including for an AppImage or a separate save profile.
 export BB_GPU_USER_DIR=${BB_GPU_USER_DIR:-${BB_USER_DIR:-$data/user}}

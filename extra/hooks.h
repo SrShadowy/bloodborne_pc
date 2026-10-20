@@ -7,5 +7,6 @@
 #endif
 #include "core/frame_pacing/bbport_present_pacer.h"
 #include "core/frame_pacing/bbport_photo_pause.h"
+#include "core/video_backend/bbport_video_backend.h"
 #include "core/debugger/mem_map.h"
 #include "core/bbsc/bbport_bbsc_kit.h"

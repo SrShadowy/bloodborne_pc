@@ -9,6 +9,7 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "sdl_window.h"
+#include "extra/hooks.h" // [extra]
 #include "bbport_menu_pointer.h"
 #include "bbport_mouse_camera.h"
 #include "bbport_cursor.h"
@@ -139,13 +140,12 @@ void TellMonitor(SDL_Window* window) {
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
     s_active_window = this;
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1"); // [extra]
-    if (std::getenv("SteamOverlayGameId") || std::getenv("STEAM_RUNTIME")) { // [extra]
-        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11"); // [extra]
-    } // [extra]
+    BbVideoBackend::ApplyHint(); // [extra]
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
     }
+    BbVideoBackend::TraceRequest(); // [extra]
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
     const SDL_DisplayID display = ChooseDisplay();
@@ -188,6 +188,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     width = w;
     height = h;
     LOG_INFO(Frontend, "Window {}x{} on {}", w, h, driver);
+    BbVideoBackend::TraceCreated(w, h); // [extra]
     TellMonitor(window);
 }
 
