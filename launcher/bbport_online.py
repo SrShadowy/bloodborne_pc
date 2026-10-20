@@ -69,6 +69,16 @@ class OnlineMixin:
                         "Нужен сервер с игровым сервером BBSC, у всех игроков включено"),
             active=s.get("online_bbsc", False))
         coop.add(self.bbsc_row)
+        self.net_gen_row = combo_row(
+            tr("Сетевой модуль"),
+            tr("Версия сетевого модуля"),
+            (
+                (tr("shadp2p / Windows BBSC (Gen 19)"), "19", tr("Сетевой модуль shadp2p, полностью совместимый с Windows Seamless Hunt (BBSC v0.0.1)")),
+                (tr("shadPS4 0.20 (Gen 20)"), "20", tr("Стек shadPS4 0.20")),
+            ),
+            s.get("online_net_gen", "19")
+        )
+        coop.add(self.net_gen_row)
         self.coop_group = coop
         page.add(coop)
 

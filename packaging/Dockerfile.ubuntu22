@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. Repositories and base build toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential make ninja-build software-properties-common nasm \
+    build-essential make ninja-build software-properties-common nasm file \
     ca-certificates curl wget gnupg git pkg-config \
     python3 python3-pip python3-venv python3-dev libpython3.10 libpython3-dev python3-gi python3-gi-cairo \
     gir1.2-gtk-4.0 gir1.2-adw-1 libgtk-4-dev libadwaita-1-dev && \

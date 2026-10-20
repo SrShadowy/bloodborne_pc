@@ -30,6 +30,7 @@ echo -e "\n[*] [2/2] Compilando e gerando release dentro do container..."
 docker run --rm \
     -u "$(id -u):$(id -g)" \
     -e HOME=/tmp \
+    -e APPIMAGE_EXTRACT_AND_RUN=1 \
     -v "$ROOT:/bbport" \
     -w /bbport \
     "$IMAGE_NAME" \

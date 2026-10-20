@@ -199,6 +199,7 @@ DEFAULTS = {
     # Online play (Online page, the online module gpu/bbnet20): off by default.
     "online": False,
     "online_bbsc": True,
+    "online_net_gen": "19",
     "online_community": online.COMMUNITY_SERVER,
     "online_server": online.SHADNET_SERVER,
     "online_webapi": online.WEBAPI_SERVER,
@@ -446,11 +447,12 @@ def game_environment(s):
         env["BB_SHADNET_PASSWORD"] = s["online_password"]
         env["BB_UPNP"] = "1" if s["online_upnp"] else "0"
         env["BB_COMMUNITY_SERVER"] = community
-        env["BB_NET_GEN"] = "20"
+        if "BB_NET_GEN" not in env:
+            env["BB_NET_GEN"] = str(s.get("online_net_gen") or "19")
         backend = "bbhost" if (pool == "huntersdream" or s.get("online_backend") in ("bbhost", "hosts", "thehuntersdream", "hd")) else "shadnet"
         env["BB_ONLINE_BACKEND"] = backend
-        if pool == "seamless" and s.get("online_bbsc"):
-            env["BB_BBSC"] = "1"
+        if pool == "seamless":
+            env["BB_BBSC"] = "1" if s.get("online_bbsc", True) else "0"
         if pool == "huntersdream" or backend == "bbhost":
             # run.sh turns these into the backend's addresses and the host overrides.
             env["BB_NET_BACKEND"] = "thd"

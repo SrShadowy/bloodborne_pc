@@ -1700,21 +1700,23 @@ bool EnvFlagEnabled(const char* name) {
 }
 
 bool IsBloodborneSummonPath(std::string_view path) {
-    return path.find("/summon_messenger/") != std::string_view::npos;
+    return path.find("/summon_messenger/") != std::string_view::npos ||
+           path.starts_with("/summon_messenger") ||
+           path == "/create" || path == "/get" || path == "/request" || path == "/delete"; // [extra: Teefpyre]
 }
 
 constexpr std::string_view BloodborneHostPlacementHeader = "X-ShadPS4-Bloodborne-Host-Placement";
 
 bool IsBloodborneSummonRequestPath(std::string_view path) {
-    return path.find("/summon_messenger/request") != std::string_view::npos;
+    return path.find("/summon_messenger/request") != std::string_view::npos || path == "/request"; // [extra: Teefpyre]
 }
 
 bool IsBloodborneSummonSearchPath(std::string_view path) {
-    return path.find("/summon_messenger/get") != std::string_view::npos;
+    return path.find("/summon_messenger/get") != std::string_view::npos || path == "/get"; // [extra: Teefpyre]
 }
 
 bool IsBloodborneSummonCreatePath(std::string_view path) {
-    return path.find("/summon_messenger/create") != std::string_view::npos;
+    return path.find("/summon_messenger/create") != std::string_view::npos || path == "/create"; // [extra: Teefpyre]
 }
 
 std::optional<std::string_view> FindResponseHeader(std::string_view headers,
@@ -1878,8 +1880,12 @@ void ClearStaleSeamlessSummonRecord(const SendRequestPlan& plan) {
 
     SendRequestPlan removal = plan;
     const auto create_pos = removal.path.find("/summon_messenger/create");
-    removal.path.replace(create_pos, std::string_view{"/summon_messenger/create"}.size(),
-                         "/summon_messenger/delete");
+    if (create_pos != std::string::npos) { // [extra: Teefpyre]
+        removal.path.replace(create_pos, std::string_view{"/summon_messenger/create"}.size(),
+                             "/summon_messenger/delete");
+    } else if (removal.path == "/create") { // [extra: Teefpyre]
+        removal.path = "/delete"; // [extra: Teefpyre]
+    } // [extra: Teefpyre]
     const std::string body = nlohmann::json{{"MessageId", "SummonDataRemoveRequest"},
                                             {"SessionId", session_id},
                                             {"UserId", user_id},

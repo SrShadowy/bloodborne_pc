@@ -655,6 +655,7 @@ def build_native_appimage(staging_dir, out_dist_dir, pkg_name):
 
     env = os.environ.copy()
     env["ARCH"] = "x86_64"
+    env["APPIMAGE_EXTRACT_AND_RUN"] = "1"
 
     print(f"[*] Packaging AppImage into {appimage_name}...")
     cmd = [
@@ -663,10 +664,8 @@ def build_native_appimage(staging_dir, out_dist_dir, pkg_name):
         str(staging_dir),
         str(appimage_path)
     ]
-    # --appimage-extract-and-run is for when the tool itself is an AppImage
-    # (runs without FUSE by self-extracting). A static appimagetool ELF does not
-    # understand that flag and fails without producing any output file.
-    if appimagetool.endswith(".AppImage"):
+    # In containers/environments without FUSE, self-extract appimagetool
+    if appimagetool.endswith(".AppImage") or "appimagetool" in appimagetool:
         cmd.insert(1, "--appimage-extract-and-run")
     res = subprocess.run(cmd, env=env)
     if res.returncode != 0:
@@ -722,7 +721,8 @@ def main():
         if not docker_script.exists():
             print("[!] Error: packaging/docker-build.sh not found", file=sys.stderr)
             sys.exit(1)
-        sys.exit(subprocess.run(["bash", str(docker_script)]).returncode)
+        passthrough_args = [arg for arg in sys.argv[1:] if arg != "--docker"]
+        sys.exit(subprocess.run(["bash", str(docker_script)] + passthrough_args).returncode)
 
     build_and_package(args)
 

@@ -30,6 +30,7 @@
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "core/debugger.h"
+#include "extra/core/bbsc/bbport_bbsc_kit.h" // [extra: Teefpyre]
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/memory.h"
 #include "core/libraries/kernel/threads/pthread.h"
@@ -503,21 +504,8 @@ BBNET_EXPORT void bbnet_image_ready(uint64_t base, uint64_t size) {
         return;
     }
     MemoryPatcher::g_game_serial = "CUSA03173";
-    // BBSC finds the save it backs up and journals in shadPS4's folders; the port's are
-    // <user>/savedata/<user id>/CUSA00207/SPRJ0005 (BBSC_SAVE_DIR: the folder of userdata0000..).
-    if (!std::getenv("BBSC_SAVE_DIR")) {
-        const char* user = std::getenv("BB_GPU_USER_DIR");
-        std::error_code error;
-        for (const auto& id : std::filesystem::directory_iterator(
-                 std::filesystem::path(user ? user : "user") / "savedata", error)) {
-            const auto folder = id.path() / "CUSA00207" / "SPRJ0005";
-            if (std::filesystem::is_directory(folder, error)) {
-                setenv("BBSC_SAVE_DIR", folder.c_str(), 0);
-                std::printf("BBSC: save folder %s\n", folder.c_str());
-                break;
-            }
-        }
-    }
+    Common::Singleton<PSF>::Instance()->app_ver = "01.09"; // [extra: Teefpyre]
+    extra_bbsc_setup_save_dir(); // [extra: Teefpyre]
     // BBSC writes its byte patches straight into the game's code, and turns some on and off
     // while the game runs (session teardown, the host's lamp): its code pages stay writable
     // (shadPS4 maps them so; the port maps them read and execute).

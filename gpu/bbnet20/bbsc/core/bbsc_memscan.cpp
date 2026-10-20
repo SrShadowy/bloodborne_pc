@@ -13,7 +13,7 @@
 #ifndef _WIN32
 #include <sys/uio.h>
 #include <unistd.h>
-#include "extra/core/bbsc/bbport_bbsc_kit.h" // [extra]
+#include "extra/core/bbsc/bbport_bbsc_kit.h" // [extra: Teefpyre]
 #endif
 
 namespace Core::Bbsc {
@@ -74,60 +74,8 @@ std::vector<std::uint64_t> FindInMemory(std::span<const std::uint8_t> needle, st
         at = end;
     }
 #else
-    // bbport (Linux): readable mappings from /proc/self/maps, copied in pieces with
-    // process_vm_readv on this process: a page the port protects meanwhile (its write and read
-    // traps) only fails that copy instead of faulting.
-    if (needle.empty()) {
-        return hits;
-    }
-    FILE* maps = std::fopen("/proc/self/maps", "r");
-    if (!maps) {
-        return hits;
-    }
-    constexpr std::size_t Piece = 1u << 20;
-    std::vector<std::uint8_t> buffer(Piece + needle.size());
-    char line[512];
-    while (hits.size() < max_hits && std::fgets(line, sizeof(line), maps)) {
-        unsigned long long start = 0, end = 0;
-        char perms[5] = {};
-        if (std::sscanf(line, "%llx-%llx %4s", &start, &end, perms) != 3 || perms[0] != 'r') {
-            continue;
-        }
-
-        if(!extra_bbsc_check_mapping(perms, line)) { // [extra]
-            continue; 
-        } 
-
-        start = std::max<unsigned long long>(start, lo);
-        end = std::min<unsigned long long>(end, hi);
-        for (std::uint64_t at = start; at < end && hits.size() < max_hits; at += Piece) {
-            const std::size_t want =
-                std::size_t(std::min<std::uint64_t>(end - at, Piece + needle.size() - 1));
-            iovec local{buffer.data(), want};
-            iovec remote{reinterpret_cast<void*>(at), want};
-            ssize_t got = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
-            if (got < 0 && extra_safe_read(buffer.data(), reinterpret_cast<const void*>(at), want)) { // [extra]
-                got = static_cast<ssize_t>(want); // [extra]
-            } // [extra]
-            if (got < ssize_t(needle.size())) {
-                continue;
-            }
-            const std::uint8_t* data = buffer.data();
-            const std::uint8_t* last = data + got - needle.size();
-            for (const std::uint8_t* p = data; p <= last && hits.size() < max_hits; ++p) {
-                p = static_cast<const std::uint8_t*>(
-                    std::memchr(p, needle[0], std::size_t(last - p) + 1));
-                if (!p) {
-                    break;
-                }
-                // A match starting past this piece's own bytes is found by the next piece.
-                if (std::size_t(p - data) < Piece && std::memcmp(p, needle.data(), needle.size()) == 0) {
-                    hits.push_back(at + std::uint64_t(p - data));
-                }
-            }
-        }
-    }
-    std::fclose(maps);
+    extra_bbsc_find_in_memory(needle.data(), needle.size(), lo, hi, max_hits, &hits); // [extra: Teefpyre]
+    return hits; // [extra: Teefpyre]
 #endif
     return hits;
 }

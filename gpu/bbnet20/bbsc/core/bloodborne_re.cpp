@@ -5566,6 +5566,7 @@ std::optional<BbscSaveSlot> BbscActiveSaveSlotUnchecked() {
     // As shadPS4 picks its user folder: <working folder>\user when it exists (portable install),
     // else %APPDATA%\shadPS4 - never both (another window may play from the other one).
     std::vector<fs::path> bases{fs::current_path(ec) / "user"};
+    if (const char* root = extra_bbsc_save_root(); root != nullptr) { bases.push_back(root); } // [extra: Teefpyre]
 #ifdef _WIN32
     if (!fs::is_directory(bases.front() / "home", ec) &&
         !fs::is_directory(bases.front() / "savedata", ec)) {
