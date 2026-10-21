@@ -36,11 +36,43 @@ def flat_button(icon, tooltip, handler):
 
 def open_folder(window, path):
     """Opens `path` in the desktop file manager (creating it if needed)."""
+    if not path:
+        return
     try:
-        Path(path).mkdir(parents=True, exist_ok=True)
+        p = Path(path).expanduser().resolve()
+        p.mkdir(parents=True, exist_ok=True)
     except OSError:
         return
-    Gtk.FileLauncher.new(Gio.File.new_for_path(str(path))).launch(window, None, None)
+
+    import os
+    import shutil
+    import subprocess
+
+    # Sanitize AppImage / bundled library environment so host file managers (Dolphin, Nautilus, etc.)
+    # don't crash from conflicting Qt / GLib / GTK libraries.
+    clean_env = os.environ.copy()
+    for var in ("LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "GIO_EXTRA_MODULES", "GI_TYPELIB_PATH"):
+        clean_env.pop(var, None)
+
+    for opener in ("xdg-open", "gio"):
+        if shutil.which(opener):
+            try:
+                cmd = [opener, str(p)] if opener == "xdg-open" else [opener, "open", str(p)]
+                subprocess.Popen(cmd, env=clean_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except Exception:
+                pass
+
+    try:
+        if Gio.AppInfo.launch_default_for_uri(p.as_uri(), None):
+            return
+    except Exception:
+        pass
+
+    try:
+        Gtk.FileLauncher.new(Gio.File.new_for_path(str(p))).launch(window, None, None)
+    except Exception:
+        pass
 
 
 def combo_row(title, subtitle, choices, current):

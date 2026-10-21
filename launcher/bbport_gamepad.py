@@ -187,6 +187,13 @@ class GamepadNavigator:
             return
 
         try:
+            if hasattr(_SDL3, "SDL_SetHint"):
+                _SDL3.SDL_SetHint.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                _SDL3.SDL_SetHint.restype = ctypes.c_bool
+                for hint in (b"SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", b"SDL_JOYSTICK_HIDAPI",
+                             b"SDL_JOYSTICK_HIDAPI_PS4", b"SDL_JOYSTICK_HIDAPI_PS5",
+                             b"SDL_JOYSTICK_ENHANCED_REPORTS"):
+                    _SDL3.SDL_SetHint(hint, b"1")
             _SDL3.SDL_Init(0x00002000)  # SDL_INIT_GAMEPAD
         except Exception:
             return

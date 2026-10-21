@@ -12,7 +12,7 @@
 #include <string.h>
 #include <math.h>
 #include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>
+#include "../extra/management/prompts/bbport_pad_hook.h"
 
 static VkDeviceSize largest_local_heap(VkPhysicalDevice device) {
     VkPhysicalDeviceMemoryProperties memory;
@@ -74,6 +74,11 @@ static int live_resolution_suits(VkPhysicalDevice device) {
 }
 
 static int list_gamepads(void) {
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1");
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "gamepads: %s\n", SDL_GetError());
         return 1;
@@ -123,6 +128,11 @@ static int read_input(const char *kind) {
     const int want_mouse = strcmp(kind, "key") != 0 && strcmp(kind, "pad") != 0;
     const int want_key = strcmp(kind, "pad") != 0 && strcmp(kind, "mouse") != 0;
     const int want_pad = strcmp(kind, "key") != 0 && strcmp(kind, "mouse") != 0;
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "1");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "read-input: %s\n", SDL_GetError());
         return 1;
@@ -147,6 +157,20 @@ static int read_input(const char *kind) {
     float motion_acc_x = 0.0f, motion_acc_y = 0.0f;
     int done = 0;
     while (!done && SDL_GetTicks() < end) {
+#ifdef __linux__
+        if (want_pad && !done) {
+            uint8_t tc = 0;
+            uint32_t btns = 0;
+            int rl = 0, rr = 0;
+            ExtraPadTouch touches[2];
+            extra_pad_poll_evdev_touchpad(touches, &tc, &btns, &rl, &rr, SDL_GetTicks() * 1000);
+            if (btns & 0x100000) {
+                printf("pad touchpad\n");
+                done = 1;
+                break;
+            }
+        }
+#endif
         SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
         SDL_RenderClear(renderer);
         SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);

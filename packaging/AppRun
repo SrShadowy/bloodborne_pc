@@ -12,6 +12,10 @@ export BB_PREBUILT=1
 export PATH="$HERE/bin:$PATH"
 
 export SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
+export SDL_JOYSTICK_HIDAPI=1
+export SDL_JOYSTICK_HIDAPI_PS4=1
+export SDL_JOYSTICK_HIDAPI_PS5=1
+export SDL_JOYSTICK_ENHANCED_REPORTS=1
 
 # Auto-detect Hyprland or BB_LAUNCHER_BACKEND=x11 for launcher XWayland support [extra]
 if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]] || \

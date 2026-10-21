@@ -332,28 +332,41 @@ void Load() {
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
-    // bbport: the menu's language until one is chosen in it (menu_language in bbport.ini): the
-    // launcher's (BB_MENU_LANGUAGE), else the system's, as the launcher picks its own.
+    // bbport: the menu's language until one is chosen in it (menu_language in bbport.ini):
+    // first the game's selected language (BB_LANGUAGE), then the launcher's (BB_MENU_LANGUAGE),
+    // else the system's locale.
     {
-        const char* lang = std::getenv("BB_MENU_LANGUAGE");
-        if (!lang || !*lang) {
-            for (const char* key : {"LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"}) {
-                if (const char* value = std::getenv(key); value && *value) {
-                    lang = value;
-                    break;
-                }
-            }
-        }
-        if (lang) {
-            if (std::strstr(lang, "pt") || std::strstr(lang, "PT")) {
+        const char* bb_lang = std::getenv("BB_LANGUAGE");
+        if (bb_lang && *bb_lang) {
+            int id = std::atoi(bb_lang);
+            if (id == 17 || id == 7) {
                 v.menu_language = LangPortuguese;
-            } else if (std::strstr(lang, "ru") || std::strstr(lang, "RU")) {
+            } else if (id == 8) {
                 v.menu_language = LangRussian;
             } else {
                 v.menu_language = LangEnglish;
             }
         } else {
-            v.menu_language = LangPortuguese;
+            const char* lang = std::getenv("BB_MENU_LANGUAGE");
+            if (!lang || !*lang) {
+                for (const char* key : {"LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"}) {
+                    if (const char* value = std::getenv(key); value && *value) {
+                        lang = value;
+                        break;
+                    }
+                }
+            }
+            if (lang) {
+                if (std::strstr(lang, "pt") || std::strstr(lang, "PT")) {
+                    v.menu_language = LangPortuguese;
+                } else if (std::strstr(lang, "ru") || std::strstr(lang, "RU")) {
+                    v.menu_language = LangRussian;
+                } else {
+                    v.menu_language = LangEnglish;
+                }
+            } else {
+                v.menu_language = LangPortuguese;
+            }
         }
     }
     if (FILE* file = std::fopen(Path(), "r")) {

@@ -269,7 +269,7 @@ CONTROLS = [
     ("l3", "L3", "Z", "leftstick", None),
     ("r3", "R3", "C", "rightstick", "middle"),
     ("options", "Options", "Escape", "start", None),
-    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad", None),
+    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "touchpad", None),
     ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", "", None),
     ("up", "Крестовина вверх", "I", "dpup", None),
     ("down", "Крестовина вниз", "K", "dpdown", None),
@@ -407,6 +407,11 @@ def game_environment(s):
         env["BB_GAMEPAD"] = s["gamepad"]
     if s.get("disable_gyro") == "1":
         env["BB_DISABLE_GYRO"] = "1"
+    env["SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] = "1"
+    env["SDL_JOYSTICK_HIDAPI"] = "1"
+    env["SDL_JOYSTICK_HIDAPI_PS4"] = "1"
+    env["SDL_JOYSTICK_HIDAPI_PS5"] = "1"
+    env["SDL_JOYSTICK_ENHANCED_REPORTS"] = "1"
     if s.get("display"):
         env["BB_DISPLAY"] = s["display"]
     env["BB_SKIP_NETWORK_CHOICE"] = "1" if s.get("skip_network_choice", True) else "0"

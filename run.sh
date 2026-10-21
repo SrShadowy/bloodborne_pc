@@ -14,6 +14,10 @@ fi
 # under Steam — the Overlay and Steam Input hook inputs through XWayland — the compositor's
 # Wayland otherwise. The decision is printed so a report says which backend ran without the log.
 export SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
+export SDL_JOYSTICK_HIDAPI=1
+export SDL_JOYSTICK_HIDAPI_PS4=1
+export SDL_JOYSTICK_HIDAPI_PS5=1
+export SDL_JOYSTICK_ENHANCED_REPORTS=1
 if [[ ${1:-} == --software ]]; then
     shift
     if [[ -z ${VK_DRIVER_FILES:-} ]]; then

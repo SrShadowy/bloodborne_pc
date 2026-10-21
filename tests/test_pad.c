@@ -151,13 +151,55 @@ int main(void) {
     assert(pad_read_state(1,&data)==0);
     assert((data.buttons & BTN_TOUCHPAD) && data.touch_count >= 1 && data.touches[0].x >= 960);
     assert(SDL_SetJoystickVirtualTouchpad(joystick, 0, 0, false, 0, 0, 0));
-    assert(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_TOUCHPAD, false));
+    /* Non-PlayStation pad: BACK button triggers left touchpad click by default */
+    assert(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_BACK, true));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    assert(pad_read_state(1,&data)==0);
+    assert((data.buttons & BTN_TOUCHPAD) && data.touch_count >= 1 && data.touches[0].x <= 960);
+    assert(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_BACK, false));
     SDL_UpdateJoysticks();
     SDL_UpdateGamepads();
 
-    SDL_CloseJoystick(joystick);
+    /* Test PlayStation controller (vendor_id = 0x054c, DualShock 4) */
+    SDL_VirtualJoystickDesc ps_desc;
+    SDL_INIT_INTERFACE(&ps_desc);
+    ps_desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    ps_desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+    ps_desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+    ps_desc.vendor_id = 0x054c;
+    ps_desc.product_id = 0x05c4;
+    ps_desc.name = "Sony DualShock 4";
+    SDL_JoystickID ps_id = SDL_AttachVirtualJoystick(&ps_desc);
+    assert(ps_id);
+    SDL_Joystick *ps_joy = SDL_OpenJoystick(ps_id);
+    assert(ps_joy);
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
     if (gamepad) SDL_CloseGamepad(gamepad);
-    gamepad=NULL;
+    gamepad = SDL_OpenGamepad(ps_id);
+    assert(gamepad);
+    /* Press BACK (Share) on PlayStation: should NOT trigger BTN_TOUCHPAD */
+    assert(SDL_SetJoystickVirtualButton(ps_joy, SDL_GAMEPAD_BUTTON_BACK, true));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    PadData ps_data;
+    assert(pad_read_state(1, &ps_data) == 0);
+    assert(!(ps_data.buttons & BTN_TOUCHPAD));
+    assert(SDL_SetJoystickVirtualButton(ps_joy, SDL_GAMEPAD_BUTTON_BACK, false));
+    /* Press TOUCHPAD click on PlayStation: DOES trigger BTN_TOUCHPAD */
+    assert(SDL_SetJoystickVirtualButton(ps_joy, SDL_GAMEPAD_BUTTON_TOUCHPAD, true));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    assert(pad_read_state(1, &ps_data) == 0);
+    assert((ps_data.buttons & BTN_TOUCHPAD) && ps_data.touch_count >= 1);
+    assert(SDL_SetJoystickVirtualButton(ps_joy, SDL_GAMEPAD_BUTTON_TOUCHPAD, false));
+    SDL_CloseJoystick(ps_joy);
+    if (gamepad) SDL_CloseGamepad(gamepad);
+    gamepad = NULL;
+    assert(SDL_DetachVirtualJoystick(ps_id));
+
+    SDL_CloseJoystick(joystick);
     assert(SDL_DetachVirtualJoystick(id));
 
     SDL_Quit();

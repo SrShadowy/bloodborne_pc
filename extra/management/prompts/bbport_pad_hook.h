@@ -11,6 +11,27 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 
+#ifdef __linux__
+#include <linux/input.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/ioctl.h>
+#include <errno.h>
+
+#ifndef LINUX_BTN_LEFT
+#define LINUX_BTN_LEFT 0x110
+#endif
+
+#undef BTN_LEFT
+#undef BTN_RIGHT
+#undef BTN_BACK
+#undef BTN_FORWARD
+#undef BTN_SIDE
+#undef BTN_EXTRA
+#undef BTN_MIDDLE
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -20,9 +41,9 @@ static inline int extra_pad_is_playstation(SDL_Gamepad *g, SDL_GamepadType type)
     if (g) {
         if (SDL_GetGamepadVendor(g) == 0x054c) return 1; /* Sony Interactive Entertainment */
         const char *name = SDL_GetGamepadName(g);
-        if (name && (strcasestr(name, "Sony") || strcasestr(name, "PlayStation") || 
-                     strcasestr(name, "DualShock") || strcasestr(name, "DualSense") ||
-                     strcasestr(name, "PS4") || strcasestr(name, "PS5") || strcasestr(name, "PS3"))) return 1;
+        if (name && (SDL_strcasestr(name, "Sony") || SDL_strcasestr(name, "PlayStation") || 
+                     SDL_strcasestr(name, "DualShock") || SDL_strcasestr(name, "DualSense") ||
+                     SDL_strcasestr(name, "PS4") || SDL_strcasestr(name, "PS5") || SDL_strcasestr(name, "PS3"))) return 1;
     }
     return 0;
 }
@@ -34,9 +55,9 @@ static inline int extra_pad_is_nintendo(SDL_Gamepad *g, SDL_GamepadType type) {
     if (g) {
         if (SDL_GetGamepadVendor(g) == 0x057e) return 1; /* Nintendo Co., Ltd. */
         const char *name = SDL_GetGamepadName(g);
-        if (name && (strcasestr(name, "Nintendo") || strcasestr(name, "Switch") || 
-                     strcasestr(name, "Joy-Con") || strcasestr(name, "Joycon") ||
-                     strcasestr(name, "Pro Controller") || strcasestr(name, "GameCube") || strcasestr(name, "SNES"))) return 1;
+        if (name && (SDL_strcasestr(name, "Nintendo") || SDL_strcasestr(name, "Switch") || 
+                     SDL_strcasestr(name, "Joy-Con") || SDL_strcasestr(name, "Joycon") ||
+                     SDL_strcasestr(name, "Pro Controller") || SDL_strcasestr(name, "GameCube") || SDL_strcasestr(name, "SNES"))) return 1;
     }
     return 0;
 }
@@ -166,10 +187,140 @@ static inline void extra_pad_update_synthetic_touch(void *touches_ptr, uint8_t *
     }
 }
 
+#ifdef __linux__
+typedef struct ExtraEvdevTouchpad {
+    int fd;
+    int button_down;
+    int finger_down[2];
+    uint16_t x[2];
+    uint16_t y[2];
+    uint8_t id[2];
+    int current_slot;
+    uint64_t last_scan;
+} ExtraEvdevTouchpad;
+
+static ExtraEvdevTouchpad g_extra_evdev_tp = {-1, 0, {0}, {0}, {0}, {1, 2}, 0, 0};
+
+static inline void extra_pad_close_evdev_touchpad(void) {
+    if (g_extra_evdev_tp.fd >= 0) {
+        close(g_extra_evdev_tp.fd);
+        g_extra_evdev_tp.fd = -1;
+    }
+    g_extra_evdev_tp.button_down = 0;
+    g_extra_evdev_tp.finger_down[0] = g_extra_evdev_tp.finger_down[1] = 0;
+}
+
+static inline int extra_pad_find_evdev_touchpad(void) {
+    DIR *d = opendir("/dev/input");
+    if (!d) return -1;
+    struct dirent *ent;
+    int found_fd = -1;
+    while ((ent = readdir(d)) != NULL) {
+        if (strncmp(ent->d_name, "event", 5) != 0) continue;
+        char path[300];
+        snprintf(path, sizeof(path), "/dev/input/%s", ent->d_name);
+        int fd = open(path, O_RDONLY | O_NONBLOCK);
+        if (fd < 0) continue;
+        char name[256] = {0};
+        if (ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name) >= 0) {
+            if ((SDL_strcasestr(name, "Touchpad") || SDL_strcasestr(name, "touchpad")) &&
+                (SDL_strcasestr(name, "Sony") || SDL_strcasestr(name, "Wireless Controller") ||
+                 SDL_strcasestr(name, "DualShock") || SDL_strcasestr(name, "DualSense"))) {
+                found_fd = fd;
+                break;
+            }
+        }
+        close(fd);
+    }
+    closedir(d);
+    return found_fd;
+}
+
+static inline void extra_pad_poll_evdev_touchpad(void *touches_ptr, uint8_t *touch_count,
+                                                 uint32_t *buttons, int *req_left, int *req_right,
+                                                 uint64_t now) {
+    if (g_extra_evdev_tp.fd < 0) {
+        if (g_extra_evdev_tp.last_scan && now < g_extra_evdev_tp.last_scan + 1000000) return; /* scan at most once per s */
+        g_extra_evdev_tp.last_scan = now;
+        g_extra_evdev_tp.fd = extra_pad_find_evdev_touchpad();
+        if (g_extra_evdev_tp.fd < 0) return;
+    }
+
+    struct input_event ev[32];
+    ssize_t n;
+    while ((n = read(g_extra_evdev_tp.fd, ev, sizeof(ev))) > 0) {
+        const int count = (int)(n / sizeof(struct input_event));
+        for (int i = 0; i < count; ++i) {
+            if (ev[i].type == EV_KEY) {
+                if (ev[i].code == LINUX_BTN_LEFT) {
+                    g_extra_evdev_tp.button_down = (ev[i].value != 0);
+                }
+            } else if (ev[i].type == EV_ABS) {
+                if (ev[i].code == ABS_MT_SLOT) {
+                    if (ev[i].value >= 0 && ev[i].value < 2) {
+                        g_extra_evdev_tp.current_slot = ev[i].value;
+                    }
+                } else if (ev[i].code == ABS_MT_TRACKING_ID) {
+                    int slot = g_extra_evdev_tp.current_slot;
+                    if (slot >= 0 && slot < 2) {
+                        g_extra_evdev_tp.finger_down[slot] = (ev[i].value >= 0);
+                        if (ev[i].value >= 0) {
+                            g_extra_evdev_tp.id[slot] = (uint8_t)((ev[i].value % 127) + 1);
+                        }
+                    }
+                } else if (ev[i].code == ABS_MT_POSITION_X || (g_extra_evdev_tp.current_slot == 0 && ev[i].code == ABS_X)) {
+                    int slot = g_extra_evdev_tp.current_slot;
+                    if (slot >= 0 && slot < 2) {
+                        g_extra_evdev_tp.x[slot] = (uint16_t)(ev[i].value <= 0 ? 0 : ev[i].value >= 1919 ? 1919 : ev[i].value);
+                    }
+                } else if (ev[i].code == ABS_MT_POSITION_Y || (g_extra_evdev_tp.current_slot == 0 && ev[i].code == ABS_Y)) {
+                    int slot = g_extra_evdev_tp.current_slot;
+                    if (slot >= 0 && slot < 2) {
+                        g_extra_evdev_tp.y[slot] = (uint16_t)(ev[i].value <= 0 ? 0 : ev[i].value >= 942 ? 942 : ev[i].value);
+                    }
+                }
+            }
+        }
+    }
+    if (n < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
+        extra_pad_close_evdev_touchpad();
+        return;
+    }
+
+    ExtraPadTouch *touches = (ExtraPadTouch *)touches_ptr;
+    for (int s = 0; s < 2; ++s) {
+        if (g_extra_evdev_tp.finger_down[s] && *touch_count < 2) {
+            int idx = (*touch_count)++;
+            touches[idx].x = g_extra_evdev_tp.x[s];
+            touches[idx].y = g_extra_evdev_tp.y[s];
+            touches[idx].id = g_extra_evdev_tp.id[s];
+        }
+    }
+
+    if (g_extra_evdev_tp.button_down) {
+        *buttons |= 0x100000; /* BTN_TOUCHPAD */
+        int has_left = 0, has_right = 0;
+        for (int i = 0; i < *touch_count; ++i) {
+            if (touches[i].x >= 960) has_right = 1;
+            else has_left = 1;
+        }
+        if (!has_left && !has_right) {
+            if (g_extra_evdev_tp.x[0] >= 960) has_right = 1;
+            else has_left = 1;
+        }
+        if (has_right && !has_left) {
+            *req_right = 1;
+            *req_left = 0;
+        } else {
+            *req_left = 1;
+            *req_right = 0;
+        }
+    }
+}
+#endif
+
 static inline void extra_pad_process_touchpad(SDL_Gamepad *g, void *touches_ptr, uint8_t *touch_count,
                                               uint32_t *buttons, int *req_left, int *req_right, uint64_t now) {
-    (void)buttons;
-    (void)now;
     if (!g) return;
     ExtraPadTouch *touches = (ExtraPadTouch *)touches_ptr;
 
@@ -188,8 +339,14 @@ static inline void extra_pad_process_touchpad(SDL_Gamepad *g, void *touches_ptr,
             }
         }
     }
+#ifdef __linux__
+    else if (extra_pad_is_playstation(g, SDL_GetGamepadType(g))) {
+        extra_pad_poll_evdev_touchpad(touches_ptr, touch_count, buttons, req_left, req_right, now);
+    }
+#endif
 
     if (SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_TOUCHPAD)) {
+        *buttons |= 0x100000; /* BTN_TOUCHPAD */
         int has_left = 0, has_right = 0;
         for (int i = 0; i < *touch_count; ++i) {
             if (touches[i].x >= 960) has_right = 1;
@@ -203,6 +360,14 @@ static inline void extra_pad_process_touchpad(SDL_Gamepad *g, void *touches_ptr,
             *req_right = 0;
         }
     }
+}
+
+static int g_extra_pad_custom_touchpad = 0;
+static inline void extra_pad_set_has_custom_touchpad(int custom) {
+    g_extra_pad_custom_touchpad = custom;
+}
+static inline int extra_pad_has_custom_touchpad(void) {
+    return g_extra_pad_custom_touchpad;
 }
 
 __attribute__((weak)) int bbgpu_get_disable_gyro(void);

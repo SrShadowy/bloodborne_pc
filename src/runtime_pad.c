@@ -374,7 +374,7 @@ static void bind_defaults(void) {
         {IN_L2,PAD_LEFT_TRIGGER}, {IN_R2,PAD_RIGHT_TRIGGER},
         {IN_L3,SDL_GAMEPAD_BUTTON_LEFT_STICK}, {IN_R3,SDL_GAMEPAD_BUTTON_RIGHT_STICK},
         {IN_OPTIONS,SDL_GAMEPAD_BUTTON_START},
-        {IN_TOUCHPAD,SDL_GAMEPAD_BUTTON_BACK}, {IN_TOUCHPAD,SDL_GAMEPAD_BUTTON_TOUCHPAD},
+        {IN_TOUCHPAD,SDL_GAMEPAD_BUTTON_TOUCHPAD},
         {IN_UP,SDL_GAMEPAD_BUTTON_DPAD_UP}, {IN_DOWN,SDL_GAMEPAD_BUTTON_DPAD_DOWN},
         {IN_LEFT,SDL_GAMEPAD_BUTTON_DPAD_LEFT}, {IN_RIGHT,SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
     };
@@ -408,6 +408,7 @@ static float mouse_sensitivity=1.0f;
 static int motion_enabled = -1;
 static void load_bindings(void) {
     bind_defaults();
+    extra_pad_set_has_custom_touchpad(0);
     mouse_look=1; mouse_invert_y=0; mouse_sensitivity=1.0f;
     const char *path=getenv("BB_CONFIG");
     FILE *f=path ? fopen(path,"r") : NULL;
@@ -438,7 +439,10 @@ static void load_bindings(void) {
         }
         Binding *b=&bindings[input];
         if (keyboard) b->key_count=0;
-        else if (pad) b->pad_count=0;
+        else if (pad) {
+            b->pad_count=0;
+            if (input == IN_TOUCHPAD) extra_pad_set_has_custom_touchpad(1);
+        }
         for (char *name=strtok(eq+1,",\r\n"); name; name=strtok(NULL,",\r\n")) {
             while (*name==' ') ++name;
             for (char *end=name+strlen(name); end>name && end[-1]==' ';) *--end=0;
@@ -935,6 +939,7 @@ static void aim(float dyaw, float dpitch) {
 
 /* The pad's part: View as the modifier, the right stick aiming at up to 120 degrees a second. */
 static void motion_from_pad(PadData *d, SDL_Gamepad *g, float dt) {
+    if (extra_pad_is_playstation(g, SDL_GetGamepadType(g))) return;
     const int view=SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_BACK);
     const int real_touchpad=SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_TOUCHPAD);
     const int a=(d->buttons & BTN_CROSS)!=0, b=(d->buttons & BTN_CIRCLE)!=0;
@@ -1099,13 +1104,23 @@ static void sample_host(PadData *d) {
     mouse_wheel_step(d->timestamp,captured ? wheel_up : 0,captured ? wheel_down : 0);
     int req_touch_left = 0, req_touch_right = 0;
     if (g) {
+        const int is_ps = extra_pad_is_playstation(g, SDL_GetGamepadType(g));
         for (int i=IN_CROSS;i<=IN_RIGHT;++i) {
             const int v=pad_value(g,i);
             if (i==IN_L2) d->l2=(uint8_t)v;
             if (i==IN_R2) d->r2=(uint8_t)v;
             if (i==IN_TOUCHPAD_RIGHT) req_touch_right |= (v>30);
-            else if (i==IN_TOUCHPAD) req_touch_left |= (v>30);
+            else if (i==IN_TOUCHPAD) {
+                if (!is_ps || extra_pad_has_custom_touchpad()) {
+                    req_touch_left |= (v>30);
+                } else {
+                    if (SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_TOUCHPAD)) req_touch_left |= 1;
+                }
+            }
             else if (v>30) d->buttons|=input_buttons[i];
+        }
+        if (!is_ps && !extra_pad_has_custom_touchpad() && SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_BACK)) {
+            req_touch_left = 1;
         }
         static const SDL_GamepadAxis stick_axes[4]={SDL_GAMEPAD_AXIS_LEFTX,SDL_GAMEPAD_AXIS_LEFTY,
                                                     SDL_GAMEPAD_AXIS_RIGHTX,SDL_GAMEPAD_AXIS_RIGHTY};

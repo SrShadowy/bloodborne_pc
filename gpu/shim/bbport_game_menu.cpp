@@ -132,6 +132,12 @@ GameLanguage TextLanguage() {
     if (game != GameLanguage::Unknown) {
         return game;
     }
+    if (const char* env = std::getenv("BB_LANGUAGE")) {
+        int id = std::atoi(env);
+        if (id == 17 || id == 7) return GameLanguage::Portuguese;
+        if (id == 8) return GameLanguage::Russian;
+        if (id == 1 || id == 18) return GameLanguage::English;
+    }
     const int s_lang = BbSettings::Get().menu_language.load();
     if (s_lang == BbSettings::LangPortuguese) {
         return GameLanguage::Portuguese;
