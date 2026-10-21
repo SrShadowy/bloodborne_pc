@@ -406,7 +406,6 @@ EN = {
     "Нужен файл libnvidia-ngx-dlss.so.<версия> из DLSS SDK NVIDIA: {}": "libnvidia-ngx-dlss.so.<version> from NVIDIA's DLSS SDK is needed: {}",
     "Не удалось скопировать библиотеку": "Could not copy the library",
     "DLSS {}: готово": "DLSS {}: ready",
-    "Клавиатура и мышь": "Keyboard and mouse",
     "Камера мышью": "Mouse look",
     "Щелчок в окне игры захватывает мышь, F1 — отпускает": "A click in the game window takes the mouse, F1 releases it",
     "Чувствительность мыши": "Mouse sensitivity",
@@ -1438,6 +1437,16 @@ PT_BR = {
     "Версия сетевого модуля": "Versão do módulo de rede",
     "Сетевой модуль shadp2p, полностью совместимый с Windows Seamless Hunt (BBSC v0.0.1)": "O módulo de rede shadp2p, totalmente compatível com o Windows Seamless Hunt (BBSC v0.0.1)",
     "Стек shadPS4 0.20": "Stack shadPS4 0.20",
+    # Completions: strings novas do código que não tinham tradução PT (caíam em inglês)
+    "Без ограничения (патч)": "Sem limite (patch)",
+    "Бесшовный кооператив BBSC; нужен сервер Seamless Hunt или свой": "Coop sem costura (BBSC); precisa de servidor do Seamless Hunt ou próprio",
+    "Введите код {} на странице входа": "Digite o código {} na página de login",
+    "Инвертировать мышь по вертикали": "Inverter o eixo Y do mouse",
+    "Камера мышью": "Câmera com o mouse",
+    "Клиент shadNet из shadPS4 0.20: колокола и призывы через сервер shadNet": "Cliente shadNet do shadPS4 0.20: sinos e invocações pelo servidor shadNet",
+    "Тачпад, левая половина (жесты)": "Touchpad, lado esquerdo (gestos)",
+    "Тачпад, правая половина (личные вещи)": "Touchpad, lado direito (itens pessoais)",
+    "Щелчок в окне игры захватывает мышь, F1 — отпускает": "Um clique na janela do jogo captura o mouse; F1 o solta",
 }
 
 

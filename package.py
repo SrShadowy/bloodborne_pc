@@ -665,11 +665,12 @@ def build_native_appimage(staging_dir, out_dist_dir, pkg_name, version):
             desktop_file = staging_dir / "bbport.desktop"
             text = desktop_file.read_text(encoding="utf-8")
             lines = [line for line in text.splitlines()
-                     if not (line.startswith("Version=") or line.startswith("Developer="))]
-            # Number only: drop any git suffix (e.g. 0.6-3-gabc123 -> 0.6).
-            number = version.split("-")[0]
-            lines.insert(1, f"Version={number}")
-            lines.insert(2, f"X-Developer={DEVELOPER}")
+                     if not (line.startswith("Version=") or line.startswith("Developer=") or line.startswith("X-AppImage-Version="))]
+            # FreeDesktop spec: 'Version' is the specification version (1.0).
+            # Application version belongs in X-AppImage-Version.
+            lines.insert(1, "Version=1.0")
+            lines.insert(2, f"X-AppImage-Version={version}")
+            lines.insert(3, f"X-Developer={DEVELOPER}")
             desktop_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError as error:
             print(f"[!] Warning: could not write Version into .desktop: {error}", file=sys.stderr)
