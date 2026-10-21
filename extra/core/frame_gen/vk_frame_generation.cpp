@@ -314,8 +314,18 @@ void FrameGeneration::Interpolate(vk::Image color, VAddr display) {
             scheduler.Finish(); // its last encode may still read it
             const auto device = instance.GetDevice();
             target->view.reset();
+            const std::array<vk::Format, 2> view_formats{
+                scene.color_format,
+                scene.color_format == vk::Format::eR8G8B8A8Unorm ? vk::Format::eR8G8B8A8Srgb
+                                                                 : vk::Format::eB8G8R8A8Srgb,
+            };
+            const vk::ImageFormatListCreateInfo format_list{
+                .viewFormatCount = u32(view_formats.size()),
+                .pViewFormats = view_formats.data(),
+            };
             target->image = VideoCore::HostImage(device, instance.GetAllocator());
             target->image.Create(vk::ImageCreateInfo{
+                .pNext = &format_list,
                 // The presenter may view it as sRGB (as it views the display buffer).
                 .flags = vk::ImageCreateFlagBits::eMutableFormat |
                          vk::ImageCreateFlagBits::eExtendedUsage,

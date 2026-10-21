@@ -443,16 +443,29 @@ void Presenter::EncodeInterpolated(Frame* frame, vk::Image image, vk::Format for
             .subresourceRange = ColorRange,
         }));
     }
-    // Read as the display buffer is, with its view format: the game's display pass copies the
-    // scene image's bytes as they are into a BGRA buffer, so the scene image (R8G8B8A8 by its
-    // format) holds them in that order too; its own format swapped red and blue. 8-bit images are
-    // made mutable (vk_frame_generation), 32-bit formats view each other.
+    // The frame generation image is created in the scene color format (R8G8B8A8Unorm or B8G8R8A8Unorm).
+    // In Vulkan, image views with mutable formats must belong to the exact same format compatibility class
+    // (VUID-VkImageViewCreateInfo-image-01020). Crossing RGBA and BGRA classes (e.g. creating a B8G8R8A8_SRGB
+    // view on an R8G8B8A8_UNORM image) is invalid and causes NVIDIA hardware TMUs to fail sRGB decoding,
+    // which results in elevated black levels (washed-out shadows) on interpolated frames.
+    // Instead, we use the sRGB format within the same format class, and use component swizzle to handle
+    // any channel reordering (swapping R and B if needed).
     const bool rgba8 = format == vk::Format::eR8G8B8A8Unorm || format == vk::Format::eB8G8R8A8Unorm;
     const bool display8 = display_view_format == vk::Format::eB8G8R8A8Srgb ||
                           display_view_format == vk::Format::eR8G8B8A8Srgb;
-    const vk::Format view_format = rgba8 && display8 ? display_view_format : format;
+    vk::Format view_format = format;
     vk::ComponentMapping mapping{};
     mapping.a = vk::ComponentSwizzle::eOne;
+    if (rgba8 && display8) {
+        view_format = (format == vk::Format::eR8G8B8A8Unorm) ? vk::Format::eR8G8B8A8Srgb
+                                                             : vk::Format::eB8G8R8A8Srgb;
+        const bool image_is_bgra = (format == vk::Format::eB8G8R8A8Unorm);
+        const bool display_is_bgra = (display_view_format == vk::Format::eB8G8R8A8Srgb);
+        if (image_is_bgra != display_is_bgra) {
+            mapping.r = vk::ComponentSwizzle::eB;
+            mapping.b = vk::ComponentSwizzle::eR;
+        }
+    }
     const vk::ImageView source = Check(device.createImageView({
         .image = image,
         .viewType = vk::ImageViewType::e2D,
