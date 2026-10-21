@@ -54,6 +54,7 @@ int bbgpu_video_skip(void); // [extra]
 uint32_t bbgpu_menu_confirm_button(void);
 uint32_t bbgpu_menu_pointer_step_pad(uint32_t current_buttons, uint8_t lx, uint8_t ly);
 int bbgpu_get_prompt_layout(void);
+int bbgpu_get_disable_gyro(void); // [extra]
 /* A module's look at the window's events first (an SDL_Event and the SDL_Window, on the window
  * thread): nonzero takes the event (the port and the game do not see it). Up to 4. */
 typedef int (*BbGpuEventFilter)(const void *sdl_event, void *sdl_window);

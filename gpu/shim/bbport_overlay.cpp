@@ -783,6 +783,7 @@ void RenderControlsSection(BbSettings::Values& s, int lang) {
     Checkbox(UI::L("Invert Mouse Y", "Inverter Eixo Y do Mouse", "Инвертировать мышь по Y"), s.mouse_invert_y);
     Checkbox(UI::L("Invert Mouse X", "Inverter Eixo X do Mouse", "Инвертировать мышь по X"), s.mouse_invert_x);
     Checkbox(UI::L("Capture Mouse Cursor", "Capturar Cursor no Jogo", "Захватывать курсор в игре"), s.mouse_capture);
+    Checkbox(UI::L("Disable Controller Gyro", "Desativar Giroscópio do Controle", "Отключить гироскоп"), s.disable_gyro);
 
     BbOverlaySections::RenderPromptLayoutSection(s, lang, dirty);
     Hint(UI::L("Locks cursor inside the game window during gameplay. Press Insert or F10 to release.",

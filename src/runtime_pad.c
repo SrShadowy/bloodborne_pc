@@ -205,7 +205,7 @@ static uint8_t stick_axis(int axis,int16_t raw) {
     int x=v+128;
     return (uint8_t)(x<0 ? 0 : x>255 ? 255 : x);
 }
-static uint16_t touch_axis(float v, int max) {
+static inline uint16_t touch_axis(float v, int max) { // [extra]
     return (uint16_t)(v<=0.0f ? 0 : v>=1.0f ? max : (int)(v*max+0.5f));
 }
 static void touch_click(PadData *d, int right) {
@@ -234,6 +234,10 @@ static int is_preferred(SDL_JoystickID id, const char *want) {
 static SDL_Gamepad *current_gamepad(void) {
     static int on_preferred; static uint64_t last_scan;
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1"); // [extra]
     if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
     if (sdl_ready<0) return NULL;
     if (gamepad && !SDL_GamepadConnected(gamepad)) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
@@ -256,10 +260,11 @@ static SDL_Gamepad *current_gamepad(void) {
                     SDL_SetGamepadSensorEnabled(gamepad, SDL_SENSOR_ACCEL, true);
                 if (SDL_GamepadHasSensor(gamepad, SDL_SENSOR_GYRO))
                     SDL_SetGamepadSensorEnabled(gamepad, SDL_SENSOR_GYRO, true);
-                printf("Runtime: gamepad connected: %s%s (gyro: %s, accel: %s)\n",SDL_GetGamepadName(gamepad),
+                printf("Runtime: gamepad connected: %s%s (gyro: %s, accel: %s, touchpad: %s)\n",SDL_GetGamepadName(gamepad),
                        !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)",
                        SDL_GamepadHasSensor(gamepad, SDL_SENSOR_GYRO) ? "yes" : "no",
-                       SDL_GamepadHasSensor(gamepad, SDL_SENSOR_ACCEL) ? "yes" : "no");
+                       SDL_GamepadHasSensor(gamepad, SDL_SENSOR_ACCEL) ? "yes" : "no",
+                       SDL_GetNumGamepadTouchpads(gamepad) > 0 ? "yes" : "no"); // [extra]
             }
         }
         SDL_free(ids);
@@ -1111,25 +1116,13 @@ static void sample_host(PadData *d) {
         uint8_t *axis_out[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
         for (int i=0;i<4;++i)
             *axis_out[i]=stick_axis(i,raw[i]); /* center 0 until the neutral is known */
-        if (SDL_GetNumGamepadTouchpads(g)>0) {
-            const int fingers=SDL_GetNumGamepadTouchpadFingers(g,0);
-            for (int finger=0;finger<fingers && d->touch_count<2;++finger) {
-                bool down=false;
-                float x=0, y=0;
-                if (SDL_GetGamepadTouchpadFinger(g,0,finger,&down,&x,&y,NULL) && down) {
-                    d->touches[d->touch_count++]=(PadTouch){.x=touch_axis(x,1919),
-                        .y=touch_axis(y,942),.id=(uint8_t)finger};
-                }
-            }
-        }
+        extra_pad_process_touchpad(g, d->touches, &d->touch_count, &d->buttons, &req_touch_left, &req_touch_right, d->timestamp); // [extra]
         /* fork: direct sensor readout + upstream motion pipeline. */
         extra_pad_read_sensors(g, d->acceleration, d->angular_velocity);
         if (motion_on()) motion_from_pad(d,g,motion_dt);
         if (k && key_down(k,IN_TOUCHPAD)) req_touch_left = 1;
         if (k && key_down(k,IN_TOUCHPAD_RIGHT)) req_touch_right = 1;
-        if (!d->touch_count) update_synthetic_touch(d, req_touch_left, req_touch_right);
-        else if (req_touch_left) d->buttons |= BTN_TOUCHPAD;
-        // Back/Select on pads without a touch surface is a left-side click.
+        update_synthetic_touch(d, req_touch_left, req_touch_right); // [extra]
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d, 0);
         if (req_touch_right) touch_click(d, 1);
     } else {

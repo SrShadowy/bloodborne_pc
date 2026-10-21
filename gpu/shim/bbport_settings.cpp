@@ -160,6 +160,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.raw_mouse_camera = i != 0;
     } else if (key == "mouse_hold_auto_rotate") {
         v.mouse_hold_auto_rotate = i != 0;
+    } else if (key == "disable_gyro") {
+        v.disable_gyro = i != 0;
     } else if (key == "prompt_layout" || key == "button_prompts_layout") {
         if (value == "playstation" || value == "ps" || value == "ps4" || value == "ps5" || value == "1") {
             v.prompt_layout = PromptLayoutPlayStation;
@@ -518,6 +520,7 @@ void Save() {
     put("mouse_capture", flag(v.mouse_capture.load()));
     put("raw_mouse_camera", flag(v.raw_mouse_camera.load()));
     put("mouse_hold_auto_rotate", flag(v.mouse_hold_auto_rotate.load()));
+    put("disable_gyro", flag(v.disable_gyro.load()));
     {
         const int pl = v.prompt_layout.load();
         const char* layout_str = pl == PromptLayoutPlayStation ? "playstation" :

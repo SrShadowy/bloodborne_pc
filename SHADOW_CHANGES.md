@@ -269,23 +269,19 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 - **Causa/Solução**: ID apontava para shadPS4; atualizado para BBPort oficial (`1560890616811102219`) com controles no launcher e overlay.
 
 ## 78-83. Melhorias de Estabilidade, Compatibilidade BBSC e Empacotamento
-- **78**: `MakeWritable` antes de escrita em `kCaCopy`/`kModelLodSite` via `BbCodePatch::MakeWritable`.
-- **79**: Dependências de rede e `BB_PREBUILT=1` consolidados em `AppRun` e `src/runtime_net.c`.
-- **80**: Validação de ponteiros do eboot sem re-leitura periódica de `/proc/self/maps` em `extra/core/debugger/mem_map.{h,cpp}`.
-- **81**: Saves e hunter tools do BBSC no AppImage (`extra_bbsc_save_root`, `extra_bbsc_bell_scan_forever`).
-- **82**: Leitura segura contra SIGSEGV/SIGBUS em memória DMABUF via `extra_safe_read` com `sigsetjmp`.
-- **83**: FFmpeg n6.1 minimal interno compilado para eliminar dependência de `libxml2.so.16`.
+- **78-80**: `MakeWritable` antes de escrita em `kCaCopy`/`kModelLodSite`; `BB_PREBUILT=1` consolidado em `AppRun`; validação de ponteiros do eboot sem re-leitura de `/proc/self/maps` em `mem_map.{h,cpp}`.
+- **81-83**: Saves e hunter tools do BBSC no AppImage (`extra_bbsc_save_root`, `extra_bbsc_bell_scan_forever`); leitura segura contra SIGSEGV/SIGBUS em memória DMABUF via `extra_safe_read`; FFmpeg n6.1 minimal interno.
 
 ## 84. Integração das Correções BBSC Linux (Teefpyre) & Busca Direta via `SoloParamRepository`
-- **Causas**: Falhas em invocações Seamless Co-op por rotas sem headers, stale summon, porta duplicada em `online.py` e queda de 60->15 FPS por escaneamento de 1 TB guest.
-- **Solução Arquitetural**: `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}`. Resolução via `SoloParamRepository` direto (`BbscGetSoloParamRepository()`), eliminando varredura contínua de memória e stutters.
+- **Causas/Solução**: Falhas em invocações Seamless Co-op por rotas sem headers, stale summon, porta duplicada em `online.py` e queda de 60->15 FPS. Módulo `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` com resolução via `SoloParamRepository` direto (`BbscGetSoloParamRepository()`).
 
-## 85-86. Compatibilidade Hyprland/Wayland: Backend de Vídeo e Launcher
-- **Causa/Solução**: Seletor `BB_VIDEO_BACKEND=auto|x11|wayland` em `extra/core/video_backend/bbport_video_backend.{h,cpp}`, telemetria de janela e surface 0x0. Default `GSK_RENDERER=cairo` sob `GDK_BACKEND=*x11*` e logging com `faulthandler`.
+## 85-88. Hyprland/Wayland, Compatibilidade Steam e Correção de Duplicação no `bbport.ini`
+- **85-87**: Seletor `BB_VIDEO_BACKEND=auto|x11|wayland` em `extra/core/video_backend/bbport_video_backend.{h,cpp}`; `GSK_RENDERER=cairo` sob `GDK_BACKEND=*x11*`; auto-detecção de XWayland no Hyprland (`AppRun`/launcher).
+- **88**: Remoção de chamada duplicada `put("frame_generation")` em `gpu/shim/bbport_settings.cpp` e deduplicação em `Save()` e `save_ini()` (`bbport_config.py`).
 
-## 87-88. Resolução de Crash no Steam/XWayland e Correção de Duplicação no `bbport.ini`
-- **87**: Fix de f-string em `online.py`; shims em `bbport_compat.py`; isolamento de typelibs e auto-detecção de XWayland no Hyprland (`AppRun`/launcher).
-- **88**: Correção de escrita repetida de `frame_generation` no `bbport.ini`. Removida chamada duplicada `put("frame_generation")` em `gpu/shim/bbport_settings.cpp` e adicionada deduplicação em `Save()` e `save_ini()` (`bbport_config.py`).
+## 89. Suporte a Touchpad PS4/PS5 (DualShock 4/DualSense) e Opção de Desativar Giroscópio
+- **Causa**: SDL3 em Linux sem drivers HIDAPI expunha touchpad como mouse evdev (0 touchpads detectados). Clique no touchpad era mapeado apenas para lado esquerdo (gestos) e giroscópio acionava gestos indesejados durante o combate.
+- **Solução Arquitetural**: Hints HIDAPI e enhanced reports em `window.cpp` e `runtime_pad.c`. Detecção de clique esquerdo (<0.5) e direito (>=0.5) em `extra/management/prompts/bbport_pad_hook.h` preservando toques físicos e menu Personal Effects. Checkbox "Desativar Giroscópio" no launcher e overlay via `BB_DISABLE_GYRO`/`disable_gyro`.
 
 | Upstream file | Hook / change | Extra module | Purpose | Added |
 |---|---|---|---|---|
@@ -293,4 +289,5 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 | gpu/vulkan/swapchain.cpp | `BbVideoBackend::SurfaceZeroExtent(zero_extent)` | idem | Reportar surface 0x0 no log | 2026-10-20 |
 | run.sh | Configuração do backend: `BB_VIDEO_BACKEND`/`video_backend=` | idem (bash) | Decisão única de backend | 2026-10-20 |
 | gpu/shim/bbport_settings.cpp | Remoção de put duplicado e deduplicação em Save() | (shim local) | Impedir acúmulo de frame_generation no ini | 2026-10-20 |
+| src/runtime_pad.c | `extra_pad_process_touchpad`, `extra_pad_read_sensors` // [extra] | `extra/management/prompts/bbport_pad_hook.h` | Touchpad DS4/DualSense L/R + gyro toggle | 2026-10-21 |
 | scripts/online.py | Sintaxe f-string Python 3.10 | (scripts) | Compatibilidade com PyInstaller / Python < 3.12 | 2026-10-20 |

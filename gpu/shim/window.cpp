@@ -140,6 +140,10 @@ void TellMonitor(SDL_Window* window) {
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
     s_active_window = this;
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "1"); // [extra]
+    SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1"); // [extra]
     BbVideoBackend::ApplyHint(); // [extra]
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {

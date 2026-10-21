@@ -85,6 +85,13 @@ class ControlsMixin:
         self.fill_gamepads()
         gamepad_group.add(self.gamepad_row)
 
+        self.disable_gyro_row = Adw.SwitchRow(
+            title=tr("Отключить гироскоп"),
+            subtitle=tr("Игнорировать датчики движения (жесты SixAxis)"),
+            active=self.ini.get("disable_gyro") == "1")
+        self.disable_gyro_row.connect("notify::active", lambda *_: self.on_gamepad_setting_changed())
+        gamepad_group.add(self.disable_gyro_row)
+
         self.pad_expander = Adw.ExpanderRow(
             title=tr("Назначение кнопок геймпада"),
             subtitle=tr("Применяется при запуске игры"))
@@ -206,6 +213,11 @@ class ControlsMixin:
             self.ini["mouse_invert_y"] = "1" if self.mouse_inv_y_row.get_active() else "0"
             self.ini["mouse_invert_x"] = "1" if self.mouse_inv_x_row.get_active() else "0"
             self.ini["mouse_capture"] = "1" if self.mouse_capture_row.get_active() else "0"
+            self.store()
+
+    def on_gamepad_setting_changed(self):
+        if hasattr(self, "disable_gyro_row"):
+            self.ini["disable_gyro"] = "1" if self.disable_gyro_row.get_active() else "0"
             self.store()
 
     def fill_gamepads(self):

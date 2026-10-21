@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
@@ -15,44 +16,27 @@ extern "C" {
 #endif
 
 static inline int extra_pad_is_playstation(SDL_Gamepad *g, SDL_GamepadType type) {
-    if (type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5) {
-        return 1;
-    }
+    if (type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5) return 1;
     if (g) {
-        uint16_t vendor = SDL_GetGamepadVendor(g);
-        if (vendor == 0x054c) return 1; /* Sony Interactive Entertainment */
+        if (SDL_GetGamepadVendor(g) == 0x054c) return 1; /* Sony Interactive Entertainment */
         const char *name = SDL_GetGamepadName(g);
-        if (name) {
-            if (strcasestr(name, "Sony") || strcasestr(name, "PlayStation") || 
-                strcasestr(name, "DualShock") || strcasestr(name, "DualSense") ||
-                strcasestr(name, "PS4") || strcasestr(name, "PS5") || strcasestr(name, "PS3")) {
-                return 1;
-            }
-        }
+        if (name && (strcasestr(name, "Sony") || strcasestr(name, "PlayStation") || 
+                     strcasestr(name, "DualShock") || strcasestr(name, "DualSense") ||
+                     strcasestr(name, "PS4") || strcasestr(name, "PS5") || strcasestr(name, "PS3"))) return 1;
     }
     return 0;
 }
 
 static inline int extra_pad_is_nintendo(SDL_Gamepad *g, SDL_GamepadType type) {
-    if (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO ||
-        type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
-        type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT ||
-        type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR ||
-        type == SDL_GAMEPAD_TYPE_GAMECUBE) {
-        return 1;
-    }
+    if (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
+        type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR ||
+        type == SDL_GAMEPAD_TYPE_GAMECUBE) return 1;
     if (g) {
-        uint16_t vendor = SDL_GetGamepadVendor(g);
-        if (vendor == 0x057e) return 1; /* Nintendo Co., Ltd. */
+        if (SDL_GetGamepadVendor(g) == 0x057e) return 1; /* Nintendo Co., Ltd. */
         const char *name = SDL_GetGamepadName(g);
-        if (name) {
-            if (strcasestr(name, "Nintendo") || strcasestr(name, "Switch") || 
-                strcasestr(name, "Joy-Con") || strcasestr(name, "Joycon") ||
-                strcasestr(name, "Pro Controller") || strcasestr(name, "GameCube") ||
-                strcasestr(name, "SNES")) {
-                return 1;
-            }
-        }
+        if (name && (strcasestr(name, "Nintendo") || strcasestr(name, "Switch") || 
+                     strcasestr(name, "Joy-Con") || strcasestr(name, "Joycon") ||
+                     strcasestr(name, "Pro Controller") || strcasestr(name, "GameCube") || strcasestr(name, "SNES"))) return 1;
     }
     return 0;
 }
@@ -103,21 +87,17 @@ static inline SDL_GamepadType extra_pad_override_type(int cur_layout, SDL_Gamepa
 static inline int extra_pad_resolve_button(int button, int is_nintendo, char *label, int size) {
     const char *text = NULL;
     if (is_nintendo) {
-        switch (button) {
-        case SDL_GAMEPAD_BUTTON_SOUTH: text = "B"; break;
-        case SDL_GAMEPAD_BUTTON_EAST:  text = "A"; break;
-        case SDL_GAMEPAD_BUTTON_WEST:  text = "Y"; break;
-        case SDL_GAMEPAD_BUTTON_NORTH: text = "X"; break;
-        default: return 0;
-        }
+        if (button == SDL_GAMEPAD_BUTTON_SOUTH) text = "B";
+        else if (button == SDL_GAMEPAD_BUTTON_EAST) text = "A";
+        else if (button == SDL_GAMEPAD_BUTTON_WEST) text = "Y";
+        else if (button == SDL_GAMEPAD_BUTTON_NORTH) text = "X";
+        else return 0;
     } else {
-        switch (button) {
-        case SDL_GAMEPAD_BUTTON_SOUTH: text = "A"; break;
-        case SDL_GAMEPAD_BUTTON_EAST:  text = "B"; break;
-        case SDL_GAMEPAD_BUTTON_WEST:  text = "X"; break;
-        case SDL_GAMEPAD_BUTTON_NORTH: text = "Y"; break;
-        default: return 0;
-        }
+        if (button == SDL_GAMEPAD_BUTTON_SOUTH) text = "A";
+        else if (button == SDL_GAMEPAD_BUTTON_EAST) text = "B";
+        else if (button == SDL_GAMEPAD_BUTTON_WEST) text = "X";
+        else if (button == SDL_GAMEPAD_BUTTON_NORTH) text = "Y";
+        else return 0;
     }
     snprintf(label, size, "%s", text);
     return 1;
@@ -167,23 +147,79 @@ static inline void extra_pad_update_synthetic_touch(void *touches_ptr, uint8_t *
         g_extra_synthetic_touch.side = side;
         g_extra_synthetic_touch.linger_until = now + 150000; /* 150ms capacitive touch linger */
         *buttons |= 0x100000; /* BTN_TOUCHPAD */
-        *touch_count = 1;
-        touches[0].x = side ? 1440 : 480;
-        touches[0].y = 471;
-        touches[0].id = g_extra_synthetic_touch.touch_id;
+        if (*touch_count == 0) {
+            *touch_count = 1;
+            touches[0].x = side ? 1440 : 480;
+            touches[0].y = 471;
+            touches[0].id = g_extra_synthetic_touch.touch_id;
+        }
     } else if (g_extra_synthetic_touch.side >= 0 && now < g_extra_synthetic_touch.linger_until) {
         *buttons &= ~0x100000; /* BTN_TOUCHPAD */
-        *touch_count = 1;
-        touches[0].x = g_extra_synthetic_touch.side ? 1440 : 480;
-        touches[0].y = 471;
-        touches[0].id = g_extra_synthetic_touch.touch_id;
+        if (*touch_count == 0) {
+            *touch_count = 1;
+            touches[0].x = g_extra_synthetic_touch.side ? 1440 : 480;
+            touches[0].y = 471;
+            touches[0].id = g_extra_synthetic_touch.touch_id;
+        }
     } else {
         g_extra_synthetic_touch.side = -1;
     }
 }
 
+static inline void extra_pad_process_touchpad(SDL_Gamepad *g, void *touches_ptr, uint8_t *touch_count,
+                                              uint32_t *buttons, int *req_left, int *req_right, uint64_t now) {
+    (void)buttons;
+    (void)now;
+    if (!g) return;
+    ExtraPadTouch *touches = (ExtraPadTouch *)touches_ptr;
+
+    if (SDL_GetNumGamepadTouchpads(g) > 0) {
+        const int fingers = SDL_GetNumGamepadTouchpadFingers(g, 0);
+        for (int finger = 0; finger < fingers && *touch_count < 2; ++finger) {
+            bool down = false;
+            float x = 0.0f, y = 0.0f;
+            if (SDL_GetGamepadTouchpadFinger(g, 0, finger, &down, &x, &y, NULL) && down) {
+                uint16_t px = (uint16_t)(x <= 0.0f ? 0 : x >= 1.0f ? 1919 : (int)(x * 1919.0f + 0.5f));
+                uint16_t py = (uint16_t)(y <= 0.0f ? 0 : y >= 1.0f ? 942 : (int)(y * 942.0f + 0.5f));
+                int idx = (*touch_count)++;
+                touches[idx].x = px;
+                touches[idx].y = py;
+                touches[idx].id = (uint8_t)finger;
+            }
+        }
+    }
+
+    if (SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_TOUCHPAD)) {
+        int has_left = 0, has_right = 0;
+        for (int i = 0; i < *touch_count; ++i) {
+            if (touches[i].x >= 960) has_right = 1;
+            else has_left = 1;
+        }
+        if (has_right && !has_left) {
+            *req_right = 1;
+            *req_left = 0;
+        } else {
+            *req_left = 1;
+            *req_right = 0;
+        }
+    }
+}
+
+__attribute__((weak)) int bbgpu_get_disable_gyro(void);
+
+static inline int extra_pad_is_gyro_disabled(void) {
+    if (bbgpu_get_disable_gyro) return bbgpu_get_disable_gyro();
+    const char *env = getenv("BB_DISABLE_GYRO");
+    return env && *env && *env != '0';
+}
+
 static inline void extra_pad_read_sensors(SDL_Gamepad *g, float acceleration[3], float angular_velocity[3]) {
     if (!g) return;
+    if (extra_pad_is_gyro_disabled()) {
+        acceleration[0] = 0.0f; acceleration[1] = 1.0f; acceleration[2] = 0.0f;
+        angular_velocity[0] = angular_velocity[1] = angular_velocity[2] = 0.0f;
+        return;
+    }
     if (SDL_GamepadSensorEnabled(g, SDL_SENSOR_ACCEL)) {
         float accel[3] = {0};
         if (SDL_GetGamepadSensorData(g, SDL_SENSOR_ACCEL, accel, 3)) {

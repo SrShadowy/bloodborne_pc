@@ -249,6 +249,7 @@ INI_DEFAULTS = {
     "mouse_invert_y": "0",
     "mouse_invert_x": "0",
     "mouse_capture": "1",
+    "disable_gyro": "0",
     "draw_pipe": "2",
     "fps_limit": "0",
     "video_backend": "auto",
@@ -404,6 +405,8 @@ def game_environment(s):
     env["BB_PRESENT_MODE"] = s["present_mode"]
     if s.get("gamepad"):
         env["BB_GAMEPAD"] = s["gamepad"]
+    if s.get("disable_gyro") == "1":
+        env["BB_DISABLE_GYRO"] = "1"
     if s.get("display"):
         env["BB_DISPLAY"] = s["display"]
     env["BB_SKIP_NETWORK_CHOICE"] = "1" if s.get("skip_network_choice", True) else "0"

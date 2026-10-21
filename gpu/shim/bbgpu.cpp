@@ -427,6 +427,10 @@ extern "C" int bbgpu_get_mouse_invert_x(void) {
     return BbSettings::Get().mouse_invert_x.load() ? 1 : 0;
 }
 
+extern "C" int bbgpu_get_disable_gyro(void) {
+    return BbSettings::Get().disable_gyro.load() ? 1 : 0;
+}
+
 extern "C" int bbgpu_mouse_camera_active(void) {
     return BbMouseCamera::IsActive() ? 1 : 0;
 }

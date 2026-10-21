@@ -154,6 +154,7 @@ struct Values {
     std::atomic<bool> mouse_capture{true};
     std::atomic<bool> raw_mouse_camera{true};
     std::atomic<bool> mouse_hold_auto_rotate{true};
+    std::atomic<bool> disable_gyro{false}; ///< Disable controller motion sensors (gyro/accel) // [extra]
     std::atomic<int> prompt_layout{PromptLayoutAuto}; ///< Button prompts layout (0=Auto, 1=PS, 2=Xbox, 3=Nintendo, 4=KBM)
     std::atomic<int> fps_limit{0}; ///< Target frame rate limit (0 = uncapped)
 

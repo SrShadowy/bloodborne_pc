@@ -172,6 +172,8 @@ class GameRunnerMixin:
             self.mouse_inv_x_row.set_active(self.ini.get("mouse_invert_x") == "1")
         if hasattr(self, "mouse_capture_row"):
             self.mouse_capture_row.set_active(self.ini.get("mouse_capture") == "1")
+        if hasattr(self, "disable_gyro_row"):
+            self.disable_gyro_row.set_active(self.ini.get("disable_gyro") == "1")
         if hasattr(self, "mouse_look_row"):
             self.mouse_look_row.set_active(self.ini.get("mouse_look") == "1")
         # FPS limit (stored in both ini and settings.json)

@@ -132,10 +132,29 @@ int main(void) {
     assert(SDL_SendJoystickVirtualSensorData(joystick,SDL_SENSOR_ACCEL,now_us()*1000,t_accel,3));
     assert(SDL_SendJoystickVirtualSensorData(joystick,SDL_SENSOR_GYRO,now_us()*1000,t_gyro,3));
     SDL_UpdateJoysticks();
-    SDL_UpdateGamepads();
     assert(pad_read_state(1,&data)==0);
     assert(data.acceleration[1]>0.99f && data.acceleration[1]<1.01f);
     assert(data.angular_velocity[1]>179.0f && data.angular_velocity[1]<181.0f);
+
+    /* BB_DISABLE_GYRO zeroes angular velocity and flattens acceleration to gravity */
+    setenv("BB_DISABLE_GYRO", "1", 1);
+    assert(pad_read_state(1,&data)==0);
+    assert(data.angular_velocity[0]==0.0f && data.angular_velocity[1]==0.0f && data.angular_velocity[2]==0.0f);
+    assert(data.acceleration[0]==0.0f && data.acceleration[1]==1.0f && data.acceleration[2]==0.0f);
+    unsetenv("BB_DISABLE_GYRO");
+
+    /* Test right touchpad click: touch on right half (x >= 0.5f) with touchpad button */
+    assert(SDL_SetJoystickVirtualTouchpad(joystick, 0, 0, true, 0.85f, 0.5f, 1.0f));
+    assert(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_TOUCHPAD, true));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    assert(pad_read_state(1,&data)==0);
+    assert((data.buttons & BTN_TOUCHPAD) && data.touch_count >= 1 && data.touches[0].x >= 960);
+    assert(SDL_SetJoystickVirtualTouchpad(joystick, 0, 0, false, 0, 0, 0));
+    assert(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_TOUCHPAD, false));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;

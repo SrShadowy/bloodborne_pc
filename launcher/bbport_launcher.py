@@ -1114,6 +1114,7 @@ class LauncherWindow(
                 "mouse_invert_x": "1" if self.mouse_inv_x_row.get_active() else "0",
                 "mouse_capture": "1" if self.mouse_capture_row.get_active() else "0",
             } if hasattr(self, "mouse_sens_row") else {}),
+            **({"disable_gyro": "1" if self.disable_gyro_row.get_active() else "0"} if hasattr(self, "disable_gyro_row") else {}),
             **{key: "1" if row.get_active() else "0" for key, row in self.effect_rows.items()},
             "menu_language": "pt" if self.settings.get("ui_language") == "pt_BR" else (
                 "ru" if self.settings.get("ui_language") == "ru" else (
