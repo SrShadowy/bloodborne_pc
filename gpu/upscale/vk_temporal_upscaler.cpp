@@ -2227,9 +2227,19 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         display.format = image.info.pixel_format;
         display.width = ui_width;
         display.height = ui_height;
+        const std::array<vk::Format, 2> view_formats{
+            display.format,
+            display.format == vk::Format::eR8G8B8A8Srgb ? vk::Format::eR8G8B8A8Unorm
+                                                        : vk::Format::eB8G8R8A8Unorm,
+        };
+        const vk::ImageFormatListCreateInfo format_list{
+            .viewFormatCount = u32(view_formats.size()),
+            .pViewFormats = view_formats.data(),
+        };
         display.image = VideoCore::HostImage(device, instance.GetAllocator());
         display.image.Create(vk::ImageCreateInfo{
-            .flags = vk::ImageCreateFlagBits::eMutableFormat,
+            .pNext = &format_list,
+            .flags = vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage,
             .imageType = vk::ImageType::e2D,
             .format = display.format,
             .extent = {ui_width, ui_height, 1},

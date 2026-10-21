@@ -79,7 +79,8 @@ public:
     /// Frame generation's frame interpolated before `frame` (PrepareFrame): encoded into the
     /// frame's second image like the real one.
     void EncodeInterpolated(Frame* frame, vk::Image image, vk::Format format, u32 width, u32 height,
-                            vk::Format display_view_format, const EncodePass::Settings& encode);
+                            vk::Format display_view_format, vk::ComponentMapping mapping,
+                            const EncodePass::Settings& encode);
     /// A black frame (no GPU work until it is presented).
     Frame* PrepareBlankFrame(bool present_thread);
     /// Present thread: shows `frame` and frees it (unless `is_reusing_frame`).

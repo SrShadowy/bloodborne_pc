@@ -43,9 +43,8 @@ std::atomic<float> shown_aspect{16.0f / 9.0f};
 vk::Format FrameViewFormat(BbVideoOut::PixelFormat format) {
     switch (format) {
     case BbVideoOut::PixelFormat::A8B8G8R8Srgb:
-        return vk::Format::eR8G8B8A8Srgb;
     case BbVideoOut::PixelFormat::A8R8G8B8Srgb:
-        return vk::Format::eB8G8R8A8Srgb;
+        return vk::Format::eR8G8B8A8Srgb;
     case BbVideoOut::PixelFormat::A2R10G10B10:
     case BbVideoOut::PixelFormat::A2R10G10B10Srgb:
     case BbVideoOut::PixelFormat::A2R10G10B10Bt2020Pq:
@@ -244,6 +243,10 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
 
     VideoCore::ImageViewInfo view_info{};
     view_info.format = FrameViewFormat(attribute.attrib.pixel_format);
+    if (attribute.attrib.pixel_format == BbVideoOut::PixelFormat::A8R8G8B8Srgb) {
+        view_info.mapping.r = vk::ComponentSwizzle::eB;
+        view_info.mapping.b = vk::ComponentSwizzle::eR;
+    }
     // The frame is opaque: alpha would blend it with the overlay.
     view_info.mapping.a = vk::ComponentSwizzle::eOne;
     vk::ImageView source{};
@@ -346,7 +349,7 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
         upscaler.GetFrameGeneration()->TakeOutput(cpu_address, interp) &&
         interp.width == display.width && interp.height == display.height) {
         EncodeInterpolated(frame, interp.image, interp.format, interp.width, interp.height,
-                           view_info.format, encode);
+                           view_info.format, view_info.mapping, encode);
     }
 
     BbStats::frame_number.fetch_add(1, std::memory_order_relaxed);
@@ -414,6 +417,7 @@ void Presenter::SetExpectedSize(u32 width, u32 height) {
 
 void Presenter::EncodeInterpolated(Frame* frame, vk::Image image, vk::Format format, u32 width,
                                    u32 height, vk::Format display_view_format,
+                                   vk::ComponentMapping mapping,
                                    const EncodePass::Settings& encode) {
     const vk::Device device = instance.GetDevice();
     if (!frame->interp_image) {
@@ -445,25 +449,20 @@ void Presenter::EncodeInterpolated(Frame* frame, vk::Image image, vk::Format for
     }
     // The frame generation image is created in the scene color format (R8G8B8A8Unorm or B8G8R8A8Unorm).
     // In Vulkan, image views with mutable formats must belong to the exact same format compatibility class
-    // (VUID-VkImageViewCreateInfo-image-01020). Crossing RGBA and BGRA classes (e.g. creating a B8G8R8A8_SRGB
-    // view on an R8G8B8A8_UNORM image) is invalid and causes NVIDIA hardware TMUs to fail sRGB decoding,
-    // which results in elevated black levels (washed-out shadows) on interpolated frames.
-    // Instead, we use the sRGB format within the same format class, and use component swizzle to handle
-    // any channel reordering (swapping R and B if needed).
+    // (VUID-VkImageViewCreateInfo-image-01020). Crossing RGBA and BGRA classes is invalid and causes
+    // NVIDIA hardware TMUs to fail sRGB decoding, which results in elevated black levels (flickering).
+    // We use the sRGB format within the same format class, and pass the exact same component mapping.
     const bool rgba8 = format == vk::Format::eR8G8B8A8Unorm || format == vk::Format::eB8G8R8A8Unorm;
     const bool display8 = display_view_format == vk::Format::eB8G8R8A8Srgb ||
                           display_view_format == vk::Format::eR8G8B8A8Srgb;
     vk::Format view_format = format;
-    vk::ComponentMapping mapping{};
-    mapping.a = vk::ComponentSwizzle::eOne;
     if (rgba8 && display8) {
         view_format = (format == vk::Format::eR8G8B8A8Unorm) ? vk::Format::eR8G8B8A8Srgb
                                                              : vk::Format::eB8G8R8A8Srgb;
         const bool image_is_bgra = (format == vk::Format::eB8G8R8A8Unorm);
         const bool display_is_bgra = (display_view_format == vk::Format::eB8G8R8A8Srgb);
         if (image_is_bgra != display_is_bgra) {
-            mapping.r = vk::ComponentSwizzle::eB;
-            mapping.b = vk::ComponentSwizzle::eR;
+            std::swap(mapping.r, mapping.b);
         }
     }
     const vk::ImageView source = Check(device.createImageView({
