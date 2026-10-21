@@ -17,6 +17,16 @@
             <Line Type="bytes32" Address="0x04d9916e" Value="0x00000000"/>
         </PatchList>
     </Metadata>
+    <Metadata Title="Bloodborne" Name="Exit Game (title menu)" Note="Adds Exit Game as the last title menu entry." Author="nerkuu" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01f4abfa" Value="909090909090"/>
+            <Line Type="bytes" Address="0x01f4ac70" Value="31c90f1f440000"/>
+            <Line Type="bytes" Address="0x01f4ac80" Value="e81b1d0000"/>
+            <Line Type="bytes" Address="0x01f46030" Value="554889e5534883ec084889fb31ffe8a584070148c703000000004889d84883c4085b5dc3"/>
+            <Line Type="bytes" Address="0x01f4ac0d" Value="b4ad0100"/>
+            <Line Type="bytes" Address="0x01f4ac26" Value="b4ad0100"/>
+        </PatchList>
+    </Metadata>
     <Metadata Title="Bloodborne" Name="Performance Patch (perf increase)" Note="Modifies some of the games debug parameters for better performance, will probably affect some visuals." Author="Kyo" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
         <PatchList>
             <Line Type="bytes" Address="0x0547AED0" Value="09"/>

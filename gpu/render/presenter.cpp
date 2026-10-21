@@ -447,18 +447,21 @@ void Presenter::EncodeInterpolated(Frame* frame, vk::Image image, vk::Format for
             .subresourceRange = ColorRange,
         }));
     }
-    // The frame generation image is created in the scene color format (R8G8B8A8Unorm or B8G8R8A8Unorm).
-    // In Vulkan, image views with mutable formats must belong to the exact same format compatibility class
-    // (VUID-VkImageViewCreateInfo-image-01020). Crossing RGBA and BGRA classes is invalid and causes
-    // NVIDIA hardware TMUs to fail sRGB decoding, which results in elevated black levels (flickering).
-    // We use the sRGB format within the same format class, and pass the exact same component mapping.
+    // The frame generation image is written via compute storage writes in scene.color_format
+    // (R8G8B8A8Unorm or B8G8R8A8Unorm) with sRGB-encoded data.
+    // On NVIDIA GPUs, sampling a mutable _SRGB image view over a UNORM storage image causes
+    // hardware TMU decompression/sRGB decoding discrepancies (lifting blacks by ~4-8/255,
+    // which results in severe 60Hz strobing/flickering against real frames).
+    // By keeping the native UNORM view format and setting interp_encode.srgb_input = 1,
+    // present_encode.frag performs exact 32-bit software analytical sRGB Decode() and Encode(),
+    // avoiding all hardware TMU curve divergence and eliminating shadow strobing entirely.
     const bool rgba8 = format == vk::Format::eR8G8B8A8Unorm || format == vk::Format::eB8G8R8A8Unorm;
     const bool display8 = display_view_format == vk::Format::eB8G8R8A8Srgb ||
                           display_view_format == vk::Format::eR8G8B8A8Srgb;
     vk::Format view_format = format;
+    EncodePass::Settings interp_encode = encode;
     if (rgba8 && display8) {
-        view_format = (format == vk::Format::eR8G8B8A8Unorm) ? vk::Format::eR8G8B8A8Srgb
-                                                             : vk::Format::eB8G8R8A8Srgb;
+        interp_encode.srgb_input = 1;
         const bool image_is_bgra = (format == vk::Format::eB8G8R8A8Unorm);
         const bool display_is_bgra = (display_view_format == vk::Format::eB8G8R8A8Srgb);
         if (image_is_bgra != display_is_bgra) {
@@ -473,7 +476,7 @@ void Presenter::EncodeInterpolated(Frame* frame, vk::Image image, vk::Format for
         .subresourceRange = ColorRange,
     }));
     draw_scheduler.DeferOperation([device, source] { device.destroyImageView(source); });
-    draw_scheduler.Record([this, frame, image, source, encode](vk::CommandBuffer cmdbuf) {
+    draw_scheduler.Record([this, frame, image, source, interp_encode](vk::CommandBuffer cmdbuf) {
         const std::array<vk::ImageMemoryBarrier2, 2> before{{
             {
                 .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
@@ -496,7 +499,7 @@ void Presenter::EncodeInterpolated(Frame* frame, vk::Image image, vk::Format for
             },
         }};
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 2, .pImageMemoryBarriers = before.data()});
-        encode_pass.Render(cmdbuf, source, frame->interp_view, {frame->width, frame->height}, encode);
+        encode_pass.Render(cmdbuf, source, frame->interp_view, {frame->width, frame->height}, interp_encode);
         const std::array<vk::ImageMemoryBarrier2, 2> after{{
             {
                 .srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader,

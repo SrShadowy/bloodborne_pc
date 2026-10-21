@@ -203,9 +203,11 @@ static ABI int guest_memcmp(const void *a, const void *b, size_t size) {
 static ABI size_t guest_strlen(const char *text) { return strlen(text); }
 static ABI __attribute__((noreturn)) void guest_libc_exit(int status) {
     printf("Runtime: guest requested exit(%d)\n", status);
-    runtime_finalize(NULL);
-    runtime_report();
-    exit(status);
+    /* probe.c and runtime_kernel use _exit/_Exit because GPU, audio and guest threads
+       are still running. Running runtime_finalize() would invoke Dantelion2 C++
+       destructors while GXRenderThread is active, destroying mutexes and crashing. */
+    fflush(stdout);
+    _Exit(status);
 }
 uintptr_t runtime_libc_base;
 uintptr_t runtime_resolve(const char *name, int is_data) {

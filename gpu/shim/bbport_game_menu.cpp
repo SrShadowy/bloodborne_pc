@@ -16,8 +16,10 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include <SDL3/SDL.h>
 #include "bbport_guest_hooks.h"
 #include "bbport_settings.h"
 #include <fmt/format.h>
@@ -287,8 +289,13 @@ struct Page {
     std::vector<Row> rows; ///< at most the layout's
 };
 std::vector<Page> pages;
+u32 exit_title_text = 0;
+u32 exit_help_text = 0;
 
 void DefineTexts() {
+    exit_title_text = AddText("Exit Game", "Sair do Jogo", "Выйти из игры");
+    exit_help_text = AddText("Quit to desktop", "Sair para a área de trabalho", "Выход на рабочий стол");
+
     const u32 off = AddText("Off", "Desligado", "Выкл");
     const u32 on = AddText("On", "Ligado", "Вкл");
     const std::vector<u32> toggle = {off, on};
@@ -658,6 +665,9 @@ const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 categor
         }
         return TextOf(id);
     }
+    if (exit_title_text && id == 110004 && (category == TextName || category == TextHelp)) {
+        return (category == TextName) ? TextOf(exit_title_text) : TextOf(exit_help_text);
+    }
     if (const int p = building_page.load(); p >= 0 && category == TextName) {
         if (id == pages[p].layout->title) return TextOf(pages[p].name);
         if (pages[p].layout->subtitle && id == pages[p].layout->subtitle) return TextOf(pages[p].help);
@@ -710,20 +720,25 @@ const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 categor
         std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, building_page >= 0 ? " (our page)" : "",
                     (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));
     }
-    if (category == TextName && id == ScreenSoundItem && text) {
-        screen_sound_text = text;
+    if (category == TextName && (id == ScreenSoundItem || (id >= 401301 && id <= 401307)) && text) {
+        if (id == ScreenSoundItem) {
+            screen_sound_text = text;
+        }
         bool cyrillic = false;
         bool portuguese = false;
         for (const char16_t* c = text; *c; ++c) {
             cyrillic = cyrillic || (*c >= 0x400 && *c < 0x500);
-            portuguese = portuguese || *c == u'ã' || *c == u'õ' || *c == u'ç' || *c == u'é';
+            portuguese = portuguese || *c == u'ã' || *c == u'õ' || *c == u'ç' || *c == u'é' ||
+                         *c == u'Ã' || *c == u'Õ' || *c == u'Ç' || *c == u'É' || *c == u'Ó' ||
+                         *c == u'Í' || *c == u'Á' || *c == u'Ê';
         }
         if (cyrillic) {
             game_language = GameLanguage::Russian;
-        } else if (portuguese || BbSettings::Get().menu_language.load() ==
-                                     static_cast<int>(BbSettings::MenuLanguage::Portuguese)) {
+        } 
+        else if (portuguese) {
             game_language = GameLanguage::Portuguese;
-        } else {
+        } 
+        else if (id == ScreenSoundItem) {
             game_language = GameLanguage::English;
         }
     }
@@ -812,6 +827,88 @@ u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
     return nullptr;
 }
 
+extern "C" void PS4_SYSV_ABI TitleExitCallback(void* /*action_arg*/) {
+    std::printf("Game menu: Title Menu 'Exit Game' selected, requesting smooth exit...\n");
+    std::fflush(stdout);
+
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quit);
+
+    // Fallback: If SDL event loop does not exit within 300ms, exit cleanly without running destructors
+    std::thread([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        _exit(0);
+    }).detach();
+}
+
+void PatchTitleExit(unsigned char* image) {
+    if (const char* env = std::getenv("BB_TITLE_EXIT"); env && env[0] == '0') {
+        return;
+    }
+    const auto page_sz = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto unprotect = [page_sz](void* addr, std::size_t len) {
+        const auto start = reinterpret_cast<std::uintptr_t>(addr) & ~(page_sz - 1);
+        const auto end = (reinterpret_cast<std::uintptr_t>(addr) + len + page_sz - 1) & ~(page_sz - 1);
+        mprotect(reinterpret_cast<void*>(start), end - start, PROT_READ | PROT_WRITE | PROT_EXEC);
+    };
+    auto reprotect = [page_sz](void* addr, std::size_t len) {
+        const auto start = reinterpret_cast<std::uintptr_t>(addr) & ~(page_sz - 1);
+        const auto end = (reinterpret_cast<std::uintptr_t>(addr) + len + page_sz - 1) & ~(page_sz - 1);
+        mprotect(reinterpret_cast<void*>(start), end - start, PROT_READ | PROT_EXEC);
+    };
+
+    // 1. Title menu builder at 0x1b4abfa .. 0x1b4ac85
+    u8* const menu_site = image + 0x1b4abfa;
+    unprotect(menu_site, 0x1b4ac85 - 0x1b4abfa + 16);
+
+    static const u8 je_orig[] = {0x0f, 0x84, 0x45, 0x01, 0x00, 0x00};
+    static const u8 nops[] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+    if (std::memcmp(menu_site, je_orig, sizeof(je_orig)) == 0 ||
+        std::memcmp(menu_site, nops, sizeof(nops)) == 0) {
+        std::memcpy(menu_site, nops, sizeof(nops));
+
+        std::memcpy(image + 0x1b4ac0d, &exit_title_text, sizeof(u32));
+        std::memcpy(image + 0x1b4ac26, &exit_help_text, sizeof(u32));
+
+        static const u8 xor_ecx[] = {0x31, 0xc9, 0x0f, 0x1f, 0x44, 0x00, 0x00};
+        std::memcpy(image + 0x1b4ac70, xor_ecx, sizeof(xor_ecx));
+
+        static const u8 call_action[] = {0xe8, 0x1b, 0x1d, 0x00, 0x00};
+        std::memcpy(image + 0x1b4ac80, call_action, sizeof(call_action));
+    } else {
+        std::printf("Game menu: unexpected title menu code at %#llx, title exit not patched\n",
+                    (unsigned long long)0x1b4abfa);
+    }
+    reprotect(menu_site, 0x1b4ac85 - 0x1b4abfa + 16);
+
+    // 2. Action callback at 0x1b46030
+    u8* const callback_site = image + 0x1b46030;
+    unprotect(callback_site, 64);
+    const uintptr_t target_fn = reinterpret_cast<uintptr_t>(&TitleExitCallback);
+    u8 exit_fn[41] = {
+        0x55,                                           // push %rbp
+        0x48, 0x89, 0xe5,                               // mov %rsp, %rbp
+        0x53,                                           // push %rbx
+        0x48, 0x83, 0xec, 0x08,                         // sub $0x8, %rsp
+        0x48, 0x89, 0xfb,                               // mov %rdi, %rbx
+        0x48, 0xb8,                                     // movabs $target_fn, %rax
+        0, 0, 0, 0, 0, 0, 0, 0,                         // target_fn address
+        0xff, 0xd0,                                     // call *%rax
+        0x48, 0xc7, 0x03, 0x00, 0x00, 0x00, 0x00,       // movq $0, (%rbx)
+        0x48, 0x89, 0xd8,                               // mov %rbx, %rax
+        0x48, 0x83, 0xc4, 0x08,                         // add $0x8, %rsp
+        0x5b,                                           // pop %rbx
+        0x5d,                                           // pop %rbp
+        0xc3                                            // ret
+    };
+    std::memcpy(&exit_fn[14], &target_fn, sizeof(uintptr_t));
+    std::memcpy(callback_site, exit_fn, sizeof(exit_fn));
+    reprotect(callback_site, 64);
+
+    std::printf("Game menu: Title Menu 'Exit Game' installed (multi-language supported)\n");
+}
+
 } // namespace
 
 void PatchImage(unsigned char* image, std::uint64_t size) {
@@ -826,6 +923,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         return;
     }
     DefineTexts();
+    PatchTitleExit(image);
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {
             byte_field[r.field] = r.kind == Kind::Toggle || r.kind == Kind::Slider;
