@@ -20,6 +20,7 @@ import tarfile
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
+DEVELOPER = "SrShadowy"
 
 def run_command(cmd, cwd=ROOT_DIR, check=True):
     print(f"\n[*] Running: {' '.join(cmd)}")
@@ -640,9 +641,9 @@ def build_and_package(args):
     print("             RELEASE PACKAGE CREATED SUCCESSFULLY!")
     # 6. Optional: Create Native AppImage if requested
     if getattr(args, "appimage", False):
-        build_native_appimage(staging_dir, out_dist_dir, pkg_name)
+        build_native_appimage(staging_dir, out_dist_dir, pkg_name, version)
 
-def build_native_appimage(staging_dir, out_dist_dir, pkg_name):
+def build_native_appimage(staging_dir, out_dist_dir, pkg_name, version):
     print("\n" + "=" * 70)
     print("      BUILDING NATIVE APPIMAGE (HIGH COMPRESSION)")
     print("=" * 70)
@@ -658,6 +659,20 @@ def build_native_appimage(staging_dir, out_dist_dir, pkg_name):
 
     if desktop_src.exists():
         shutil.copy2(desktop_src, staging_dir / "bbport.desktop")
+        # Version (number only) and developer into the embedded .desktop; launchers like Steam
+        # read them instead of showing "Unknown".
+        try:
+            desktop_file = staging_dir / "bbport.desktop"
+            text = desktop_file.read_text(encoding="utf-8")
+            lines = [line for line in text.splitlines()
+                     if not (line.startswith("Version=") or line.startswith("Developer="))]
+            # Number only: drop any git suffix (e.g. 0.6-3-gabc123 -> 0.6).
+            number = version.split("-")[0]
+            lines.insert(1, f"Version={number}")
+            lines.insert(2, f"X-Developer={DEVELOPER}")
+            desktop_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as error:
+            print(f"[!] Warning: could not write Version into .desktop: {error}", file=sys.stderr)
 
     if icon_src.exists():
         shutil.copy2(icon_src, staging_dir / "bbport.png")

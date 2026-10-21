@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxxhash-dev \
     libx11-dev libxcb1-dev libwayland-dev libxext-dev \
     libasound2-dev libpulse-dev libxcursor-dev libxinerama-dev libxi-dev libxrandr-dev libxss-dev libxxf86vm-dev libxkbcommon-dev libdrm-dev libgbm-dev libxtst-dev \
+    libudev-dev libusb-1.0-0-dev \
     libzstd-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
     protobuf-compiler libprotobuf-dev nlohmann-json3-dev libssl-dev libminiupnpc-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -51,7 +52,17 @@ RUN curl --http1.1 -fSL --retry 3 https://archives.boost.io/release/1.84.0/sourc
     rm -rf /tmp/boost_1_84_0
 
 # 2. Build and install SDL3 from official source
-RUN git clone --depth 1 https://github.com/libsdl-org/SDL.git -b main /tmp/sdl3 && \
+# Pinned to the same release tag nixpkgs ships (shell.nix: pkgs.sdl3, currently release-3.4.x).
+# `-b main` was a moving target: every rebuild pulled a different SDL3, and Docker's layer cache
+# kept old snapshots for months. The Flydigi HIDAPI driver (SDL_hidapi_flydigi.c, default-on via
+# SDL_HINT_JOYSTICK_HIDAPI, forced to "1" by window.cpp/runtime_pad.c) claims Flydigi gamepads
+# and hides their generic HID interface (SDL_HIDAPI_ShouldIgnoreDevice); between snapshots its
+# identity detection and the vendor status handshake changed (data[10]->data[9], APEX5 ids
+# 128/129 added), so an old/new main build could fail to acquire a Flydigi Apex 5 connected via
+# its dock and the pad vanished from SDL_GetGamepads (launcher's controller list). Keep this in
+# sync with nixpkgs' sdl3 version so the Ubuntu and Nix packages detect the same controllers.
+ARG SDL_REF=release-3.4.18
+RUN git clone --depth 1 https://github.com/libsdl-org/SDL.git -b "$SDL_REF" /tmp/sdl3 && \
     cmake -G Ninja -S /tmp/sdl3 -B /tmp/sdl3/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DSDL_TEST_ENABLES=OFF -DSDL_X11_XSCRNSAVER=OFF -DSDL_X11_XTEST=OFF && \
     cmake --build /tmp/sdl3/build -j$(nproc) --target install && \
     rm -rf /tmp/sdl3
