@@ -401,7 +401,7 @@ static int key_from_name(const char *name) {
 }
 /* Mouse look (bbport.ini): mouse_look=0 leaves the mouse alone; mouse_sensitivity (default 1:
  * ~1000 pixels/s turn the camera at full speed), mouse_invert_y=1. */
-static int mouse_look=1, mouse_invert_y;
+static int mouse_look=1, mouse_invert_y, mouse_invert_x;
 static float mouse_sensitivity=1.0f;
 /* key.<input>= / pad.<input>= lines of the settings file. */
 /* Motion emulation (apply_motion): -1 unknown yet, from bbport.ini pad_motion; BB_PAD_MOTION wins. */
@@ -409,7 +409,7 @@ static int motion_enabled = -1;
 static void load_bindings(void) {
     bind_defaults();
     extra_pad_set_has_custom_touchpad(0);
-    mouse_look=1; mouse_invert_y=0; mouse_sensitivity=1.0f;
+    mouse_look=1; mouse_invert_y=0; mouse_invert_x=0; mouse_sensitivity=1.0f;
     const char *path=getenv("BB_CONFIG");
     FILE *f=path ? fopen(path,"r") : NULL;
     if (!f) return;
@@ -422,6 +422,7 @@ static void load_bindings(void) {
             if (!strncmp(line,"mouse_look=",11)) mouse_look=atoi(value)!=0;
             else if (!strncmp(line,"pad_motion=",11) && motion_enabled<0) motion_enabled=atoi(value)!=0;
             else if (!strncmp(line,"mouse_invert_y=",15)) mouse_invert_y=atoi(value)!=0;
+            else if (!strncmp(line,"mouse_invert_x=",15)) mouse_invert_x=atoi(value)!=0;
             else if (!strncmp(line,"mouse_sensitivity=",18)) {
                 const float v=strtof(value,NULL);
                 if (v>=0.05f && v<=20.0f) mouse_sensitivity=v;
@@ -671,9 +672,11 @@ static void apply_mouse_look(PadData *d, double dx, double dy, uint64_t now, int
     /* The free camera (patch) takes the mouse through the right stick below. */
     if (captured && (dx!=0 || dy!=0) && !bbgpu_free_camera()) {
         const float k=MOUSE_RAD_PER_PIXEL*mouse_sensitivity;
+        int look_inv_x = bbgpu_get_mouse_invert_x ? bbgpu_get_mouse_invert_x() : mouse_invert_x;
+        int look_inv_y = bbgpu_get_mouse_invert_y ? bbgpu_get_mouse_invert_y() : mouse_invert_y;
         /* The camera's pitch grows as it rises (looking down): the mouse moving down (dy > 0)
            looks down, as the stick pushed down does. */
-        if (bbgpu_camera_look((float)dx*k,(float)(mouse_invert_y ? -dy : dy)*k)) dx=dy=0;
+        if (bbgpu_camera_look((float)(look_inv_x ? -dx : dx)*k,(float)(look_inv_y ? -dy : dy)*k)) dx=dy=0;
     }
     float dt=look_last_us && now>look_last_us ? (float)(now-look_last_us) : 0.0f;
     look_last_us=now;
@@ -704,7 +707,7 @@ static void apply_mouse_look(PadData *d, double dx, double dy, uint64_t now, int
     }
     float sens = mouse_sensitivity;
     int inv_y = mouse_invert_y;
-    int inv_x = 0;
+    int inv_x = mouse_invert_x;
     if (bbgpu_get_mouse_sensitivity) {
         float s = bbgpu_get_mouse_sensitivity();
         if (s > 0.0f) sens = s;

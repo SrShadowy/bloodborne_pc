@@ -18,19 +18,16 @@ from pathlib import Path
 from bbport_assets import fsr411_problem
 from bbport_i18n import set_language, tr
 
-# Detect or configure launcher window backend (X11 / XWayland vs Wayland).
-# On Hyprland (or when BB_LAUNCHER_BACKEND=x11), native Wayland for GTK4 often fails to map
-# a window ("sem janela"). Default to XWayland with cairo renderer there. [extra]
+# Detect or configure launcher window backend (X11 vs Wayland).
+# Respect BB_LAUNCHER_BACKEND if set (x11 or wayland). Default to modern OpenGL renderer
+# without forcing X11/Cairo on Hyprland, allowing native Wayland to work smoothly.
 _launcher_backend = os.environ.get("BB_LAUNCHER_BACKEND", "").lower()
-_is_hyprland = bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or
-                    "hyprland" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower())
-if _launcher_backend == "x11" or (_launcher_backend != "wayland" and _is_hyprland and os.environ.get("DISPLAY")):
+if _launcher_backend == "x11":
     os.environ["GDK_BACKEND"] = "x11"
-    os.environ["GSK_RENDERER"] = "cairo"
-    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
-
-if os.environ.get("GDK_BACKEND", "").lower().endswith("x11"):
-    os.environ.setdefault("GSK_RENDERER", "cairo")
+    os.environ.setdefault("GSK_RENDERER", "gl")
+elif _launcher_backend == "wayland":
+    os.environ["GDK_BACKEND"] = "wayland"
+    os.environ.setdefault("GSK_RENDERER", "gl")
 else:
     os.environ.setdefault("GSK_RENDERER", "gl")
 
@@ -82,7 +79,7 @@ sys.path.insert(0, str(PORT_DIR / 'tools'))
 import game_check  # noqa: E402
 import fsr4_wizard  # noqa: E402
 from bbport_config import (
-    PORT_DIR, PACKAGED, DATA_DIR, CONFIG_FILE, DEFAULTS,
+    PORT_DIR, PACKAGED, DATA_DIR, CONFIG_FILE, DEFAULTS, BB_VERSION,
     PC_MODEL_SUBTITLE, PACKAGE_ONLY_ENV,
     UI_LANGUAGES, UPSCALERS, PRESETS, OUTPUT_RES, EFFECTS, MODEL_LOD,
     FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
@@ -383,9 +380,8 @@ class LauncherWindow(
         header = Adw.HeaderBar()
         self.stack = Adw.ViewStack()
 
-        title_lbl = Gtk.Label(label="Bloodborne")
-        title_lbl.add_css_class("title")
-        header.set_title_widget(title_lbl)
+        title_widget = Adw.WindowTitle(title="Bloodborne", subtitle=f"BBPort {BB_VERSION}")
+        header.set_title_widget(title_widget)
 
         self.theme_button = Gtk.Button()
         self.theme_button.add_css_class("flat")
@@ -1160,8 +1156,7 @@ class LauncherWindow(
 
 class LauncherApp(Adw.Application):
     def __init__(self):
-        flags = getattr(Gio.ApplicationFlags, "DEFAULT_FLAGS",
-                        getattr(Gio.ApplicationFlags, "FLAGS_NONE", 0))
+        flags = getattr(Gio.ApplicationFlags, "NON_UNIQUE", 0)
         super().__init__(application_id="io.github.bbport.Launcher", flags=flags)
 
     def do_activate(self):
@@ -1194,4 +1189,7 @@ if __name__ == "__main__":
         sys.exit(play())
     if "--build-fsr411" in sys.argv[1:]:
         sys.exit(build_fsr411(sys.argv[sys.argv.index("--build-fsr411") + 1:]))
-    sys.exit(LauncherApp().run(sys.argv))
+    # Pass only program name and recognized GTK/GIO flags so file managers
+    # passing file URLs/paths (like Dolphin) do not trigger GLib "cannot open files" error
+    gtk_args = [sys.argv[0]] + [arg for arg in sys.argv[1:] if arg.startswith("--g-") or arg.startswith("--gtk-")]
+    sys.exit(LauncherApp().run(gtk_args))

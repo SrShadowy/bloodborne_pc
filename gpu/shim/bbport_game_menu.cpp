@@ -665,7 +665,7 @@ const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 categor
         }
         return TextOf(id);
     }
-    if (exit_title_text && id == 110004 && (category == TextName || category == TextHelp)) {
+    if (exit_title_text && (id == 110004 || id == exit_title_text || id == exit_help_text) && (category == TextName || category == TextHelp)) {
         return (category == TextName) ? TextOf(exit_title_text) : TextOf(exit_help_text);
     }
     if (const int p = building_page.load(); p >= 0 && category == TextName) {
@@ -828,18 +828,9 @@ u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
 }
 
 extern "C" void PS4_SYSV_ABI TitleExitCallback(void* /*action_arg*/) {
-    std::printf("Game menu: Title Menu 'Exit Game' selected, requesting smooth exit...\n");
+    std::printf("Game menu: Title Menu 'Exit Game' selected, terminating smoothly...\n");
     std::fflush(stdout);
-
-    SDL_Event quit{};
-    quit.type = SDL_EVENT_QUIT;
-    SDL_PushEvent(&quit);
-
-    // Fallback: If SDL event loop does not exit within 300ms, exit cleanly without running destructors
-    std::thread([] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        _exit(0);
-    }).detach();
+    _exit(0);
 }
 
 void PatchTitleExit(unsigned char* image) {
@@ -868,8 +859,9 @@ void PatchTitleExit(unsigned char* image) {
         std::memcmp(menu_site, nops, sizeof(nops)) == 0) {
         std::memcpy(menu_site, nops, sizeof(nops));
 
-        std::memcpy(image + 0x1b4ac0d, &exit_title_text, sizeof(u32));
-        std::memcpy(image + 0x1b4ac26, &exit_help_text, sizeof(u32));
+        const u32 exit_id = 110004;
+        std::memcpy(image + 0x1b4ac0d, &exit_id, sizeof(u32));
+        std::memcpy(image + 0x1b4ac26, &exit_id, sizeof(u32));
 
         static const u8 xor_ecx[] = {0x31, 0xc9, 0x0f, 0x1f, 0x44, 0x00, 0x00};
         std::memcpy(image + 0x1b4ac70, xor_ecx, sizeof(xor_ecx));

@@ -102,7 +102,7 @@ extern "C" void ApplyMouseTurn(std::uint8_t* cam, std::uint8_t* rbp, float* stic
 
     const float sens = std::clamp(s.mouse_sensitivity.load(std::memory_order_relaxed), 0.05f, 20.0f);
     const float scale = kRadiansPerCount * sens;
-    const float sign_x = s.mouse_invert_x.load(std::memory_order_relaxed) ? 1.0f : -1.0f;
+    const float sign_x = s.mouse_invert_x.load(std::memory_order_relaxed) ? -1.0f : 1.0f;
     const float sign_y = s.mouse_invert_y.load(std::memory_order_relaxed) ? -1.0f : 1.0f;
 
     float pitch = 0.0f, yaw = 0.0f, highest = 0.0f, lowest = 0.0f;

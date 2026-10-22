@@ -33,6 +33,39 @@ CONFIG_FILE = CONFIG_DIR / "settings.json"
 ACCOUNT_FILE = CONFIG_DIR / "account.json"  # the Hunter's Dream sign-in (bbport_bbhost)
 MAX_LOG_LINES = 5000
 
+def get_launcher_version():
+    """Resolves the build/release version string for display in UI."""
+    for cand in [PORT_DIR / "VERSION", DATA_DIR / "VERSION", Path(__file__).resolve().parent / "VERSION"]:
+        if cand.is_file():
+            try:
+                v = cand.read_text(encoding="utf-8").strip()
+                if v:
+                    return v
+            except OSError:
+                pass
+    if os.environ.get("BB_VERSION"):
+        return os.environ["BB_VERSION"].strip()
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            cwd=PORT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if res.returncode == 0:
+            ver = res.stdout.strip()
+            if ver.startswith("v"):
+                ver = ver[1:]
+            return ver
+    except Exception:
+        pass
+    return "0.6.2"
+
+BB_VERSION = get_launcher_version()
+
+
 # The memory model (run.sh: BB_PC_MODEL): "auto" leaves it to the GPU (the new one on AMD, the
 # 0.3 one elsewhere), or either by hand. The new one goes through the layer's memory module on
 # every GPU (no sparse binding of the game's memory; BB_LAYER_MEMORY=0: AMD's sparse arena).

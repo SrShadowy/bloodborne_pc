@@ -130,12 +130,16 @@ if [[ -d "$HERE/fsr4_shaders" && -z "${BB_FSR4_SHADERS:-}" ]]; then
     export BB_FSR4_SHADERS="$HERE/fsr4_shaders"
 fi
 
-# Auto-detect Hyprland or BB_LAUNCHER_BACKEND=x11 for launcher XWayland support [extra]
-if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]] || \
-   [[ "${BB_LAUNCHER_BACKEND:-auto}" != "wayland" && (-n "${HYPRLAND_INSTANCE_SIGNATURE:-}" || "${XDG_CURRENT_DESKTOP:-}" =~ [Hh]yprland) && -n "${DISPLAY:-}" ]]; then
+# Configure launcher backend: respect BB_LAUNCHER_BACKEND if set (x11 or wayland),
+# otherwise default to modern OpenGL renderer and let GTK negotiate native Wayland/X11 automatically.
+if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]]; then
     export GDK_BACKEND="x11"
-    export GSK_RENDERER="cairo"
-    export QT_QPA_PLATFORM="xcb"
+    export GSK_RENDERER="${GSK_RENDERER:-gl}"
+elif [[ "${BB_LAUNCHER_BACKEND:-}" == "wayland" ]]; then
+    export GDK_BACKEND="wayland"
+    export GSK_RENDERER="${GSK_RENDERER:-gl}"
+else
+    export GSK_RENDERER="${GSK_RENDERER:-gl}"
 fi
 
 # Modo direto (--play ou --game)
@@ -299,12 +303,16 @@ if [[ -d "$ROOT/fsr4_shaders" && -z "${BB_FSR4_SHADERS:-}" ]]; then
     export BB_FSR4_SHADERS="$ROOT/fsr4_shaders"
 fi
 
-# Auto-detect Hyprland or BB_LAUNCHER_BACKEND=x11 for launcher XWayland support [extra]
-if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]] || \
-   [[ "${BB_LAUNCHER_BACKEND:-auto}" != "wayland" && (-n "${HYPRLAND_INSTANCE_SIGNATURE:-}" || "${XDG_CURRENT_DESKTOP:-}" =~ [Hh]yprland) && -n "${DISPLAY:-}" ]]; then
+# Configure launcher backend: respect BB_LAUNCHER_BACKEND if set (x11 or wayland),
+# otherwise default to modern OpenGL renderer and let GTK negotiate native Wayland/X11 automatically.
+if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]]; then
     export GDK_BACKEND="x11"
-    export GSK_RENDERER="cairo"
-    export QT_QPA_PLATFORM="xcb"
+    export GSK_RENDERER="${GSK_RENDERER:-gl}"
+elif [[ "${BB_LAUNCHER_BACKEND:-}" == "wayland" ]]; then
+    export GDK_BACKEND="wayland"
+    export GSK_RENDERER="${GSK_RENDERER:-gl}"
+else
+    export GSK_RENDERER="${GSK_RENDERER:-gl}"
 fi
 
 # 1. Native system Python with GTK 4 and Libadwaita (best desktop integration, native theme and 0 ABI conflicts)
@@ -570,6 +578,7 @@ def build_and_package(args):
 
     create_start_script(staging_dir)
     create_readme(staging_dir, version)
+    (staging_dir / "VERSION").write_text(version + "\n", encoding="utf-8")
 
     if (ROOT_DIR / "patches.json").exists():
         shutil.copy2(ROOT_DIR / "patches.json", staging_dir / "patches.json")
@@ -577,6 +586,7 @@ def build_and_package(args):
     # Directory trees
     print("[*] Copying launcher...")
     copy_tree_filtered(ROOT_DIR / "launcher", staging_dir / "launcher")
+    (staging_dir / "launcher" / "VERSION").write_text(version + "\n", encoding="utf-8")
     # Make launcher scripts executable
     if (staging_dir / "launcher" / "bb-launcher.sh").exists():
         (staging_dir / "launcher" / "bb-launcher.sh").chmod(0o755)
