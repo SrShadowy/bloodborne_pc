@@ -164,6 +164,7 @@ class LauncherWindow(
 ):
     def __init__(self, app):
         setup_icons()
+        super().__init__(application=app, title="Bloodborne")
         self.settings = load_settings()
         saved_w = self.settings.get("window_width", 980)
         saved_h = self.settings.get("window_height", 780)
