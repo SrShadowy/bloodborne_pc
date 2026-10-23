@@ -80,13 +80,28 @@ if getattr(sys, "frozen", False):
     if _meipass_typelibs.is_dir():
         os.environ["GI_TYPELIB_PATH"] = str(_meipass_typelibs)
 
-import gi
+_HAS_GTK = True
+_GTK_ERR = None
+try:
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    import bbport_compat  # noqa: E402
+    bbport_compat.apply_shims()
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
+except Exception as _err:
+    _HAS_GTK = False
+    _GTK_ERR = _err
+    class _DummyGtk:
+        def __getattr__(self, name):
+            return object
+    Adw = _DummyGtk()
+    Gdk = _DummyGtk()
+    Gio = _DummyGtk()
+    GLib = _DummyGtk()
+    Gtk = _DummyGtk()
+    Pango = _DummyGtk()
 
-gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-import bbport_compat  # noqa: E402
-bbport_compat.apply_shims()
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 if "BB_PORT_DIR" in os.environ:
     PORT_DIR = Path(os.environ["BB_PORT_DIR"]).resolve()
 elif getattr(sys, "frozen", False):
@@ -113,17 +128,33 @@ from bbport_devices import connected_gpus
 from bbport_fsr_builder import (
     FSR4CAP_DIR, FSR411_BUILD_ERRORS, Fsr411Manager, fsr411_dir, fsr411_build_command,
 )
-from bbport_ui_helpers import (
-    flat_button, open_folder, combo_row, combo_value,
-)
-from bbport_cache import CacheMixin
-from bbport_controls import ControlsMixin
-from bbport_mods import ModsMixin
-from bbport_online import OnlineMixin
-from bbport_bbhost_ui import BbhostAccountMixin
-from bbport_dlss import DlssMixin
-from bbport_log import LogMixin
-from bbport_game_runner import GameRunnerMixin
+
+if _HAS_GTK:
+    from bbport_ui_helpers import (
+        flat_button, open_folder, combo_row, combo_value,
+    )
+    from bbport_cache import CacheMixin
+    from bbport_controls import ControlsMixin
+    from bbport_mods import ModsMixin
+    from bbport_online import OnlineMixin
+    from bbport_bbhost_ui import BbhostAccountMixin
+    from bbport_dlss import DlssMixin
+    from bbport_log import LogMixin
+    from bbport_game_runner import GameRunnerMixin
+else:
+    flat_button = lambda *a, **kw: None
+    open_folder = lambda *a, **kw: None
+    combo_row = lambda *a, **kw: None
+    combo_value = lambda *a, **kw: None
+    class CacheMixin: pass
+    class ControlsMixin: pass
+    class ModsMixin: pass
+    class OnlineMixin: pass
+    class BbhostAccountMixin: pass
+    class DlssMixin: pass
+    class LogMixin: pass
+    class GameRunnerMixin: pass
+
 from bbport_gamepad import GamepadNavigator, load_custom_gamepad_mappings, get_gamepad_type_label
 
 
@@ -1286,8 +1317,13 @@ class LauncherWindow(
         self.fsr411_mgr.stop()
 
 
-class LauncherApp(Adw.Application):
+_AdwAppBase = Adw.Application if _HAS_GTK and isinstance(Adw.Application, type) else object
+
+
+class LauncherApp(_AdwAppBase):
     def __init__(self):
+        if not _HAS_GTK:
+            return
         flags = getattr(Gio.ApplicationFlags, "NON_UNIQUE", 0)
         super().__init__(application_id="io.github.bbport.Launcher", flags=flags)
         self.startup_t0 = time.monotonic()
@@ -1362,6 +1398,9 @@ def ensure_display():
 
     Returns the active Gdk.Display or None if no display could be opened.
     """
+    if not _HAS_GTK:
+        return None
+
     if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
         return None
 
@@ -1396,6 +1435,13 @@ def ensure_display():
 
 
 def main():
+    if "--debug" in sys.argv[1:] or "--verbose" in sys.argv[1:]:
+        os.environ["LAUNCHER_DEBUG"] = "1"
+        import logging
+        LOG.setLevel(logging.DEBUG)
+        for h in LOG.handlers:
+            h.setLevel(logging.DEBUG)
+        LOG.debug("Verbose debug logging enabled via CLI flag")
     if "--play" in sys.argv[1:]:
         return play()
     if "--build-fsr411" in sys.argv[1:]:
@@ -1415,6 +1461,7 @@ def main():
         print("  --diagnostics      Gera e exibe relatório de diagnóstico do sistema e encerra")
         print("  --version, -v      Exibe a versão do launcher e encerra")
         print("  --help, -h         Exibe esta mensagem de ajuda e encerra")
+        print("  --debug, --verbose Ativa modo de log detalhado (debug)")
         print("  --x11              Força o uso do backend X11/XWayland")
         print("  --wayland          Força o uso do backend Wayland nativo")
         print("  --build-fsr411     Compila os shaders FSR 4.1.1 em segundo plano")
@@ -1426,11 +1473,29 @@ def main():
         print("Error: Python >= 3.9 is required to run BBPort Launcher.", file=sys.stderr)
         return 1
 
+    if not _HAS_GTK:
+        LOG.critical("[E-GTK-001] GTK 4 or Libadwaita unavailable: %s", _GTK_ERR)
+        print("=" * 70, file=sys.stderr)
+        print(" [E-GTK-001] Erro: GTK 4 ou Libadwaita não estão instalados no sistema.", file=sys.stderr)
+        print(f" Detalhes: {_GTK_ERR}\n", file=sys.stderr)
+        print(" Para instalar as dependências necessárias:", file=sys.stderr)
+        print("   • Ubuntu/Debian: sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1", file=sys.stderr)
+        print("   • Fedora:        sudo dnf install python3-gobject gtk4 libadwaita", file=sys.stderr)
+        print("   • Arch/CachyOS:  sudo pacman -S python-gobject gtk4 libadwaita", file=sys.stderr)
+        if _LAUNCHER_LOG:
+            print(f"\n Log gravado em: {_LAUNCHER_LOG}", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        return 1
+
     display = ensure_display()
     if not display:
         err_msg = "[E-DISP-001] Nenhum display gráfico disponível (servidores Wayland e X11 inacessíveis). Execute em uma sessão gráfica ou use --diagnostics / --play."
         LOG.error("startup.preflight.failed: %s", err_msg)
-        print(f"Erro: {err_msg}", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        print(f" {err_msg}", file=sys.stderr)
+        if _LAUNCHER_LOG:
+            print(f"\n Log gravado em: {_LAUNCHER_LOG}", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
         return 1
 
     LOG.info("startup.preflight.ok: active_display=%s", get_runtime_backend(display))

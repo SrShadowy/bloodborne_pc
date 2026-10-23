@@ -48,24 +48,14 @@ export BB_CONFIG="${BB_CONFIG:-$BB_DATA_DIR/bbport.ini}"
 
 cd "$HERE"
 
-# If --play, -p, or --game is specified, route to launcher --play (which loads saved settings and exports BB_ONLINE=1)
-# or fallback to run.sh directly
-if [[ "${1:-}" == "--play" || "${1:-}" == "-p" || "${1:-}" == "--game" ]]; then
-    if command -v python3 >/dev/null 2>&1 && python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
-        exec python3 "$HERE/launcher/bbport_launcher.py" "$@"
-    elif [[ -x "$HERE/launcher/bbport-launcher" ]]; then
-        exec "$HERE/launcher/bbport-launcher" "$@"
-    else
-        shift
-        exec "$HERE/run.sh" "$@"
-    fi
+# If Python 3 is installed on the host, delegate to the unified launcher entry point.
+# It handles --play, --diagnostics, --version, --help, and prints clear [E-GTK-001] if GTK4/Adw is missing.
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 "$HERE/launcher/bbport_launcher.py" "$@"
 fi
 
-# 1. Tenta abrir via Python nativo do sistema se GTK 4 e Libadwaita estiverem instalados
-if command -v python3 >/dev/null 2>&1 && python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
-    exec python3 "$HERE/launcher/bbport_launcher.py" "$@"
-# 2. Fallback: Launcher standalone empacotado
-elif [[ -x "$HERE/launcher/bbport-launcher" ]]; then
+# Fallback when Python 3 is not installed on the host system:
+if [[ -x "$HERE/launcher/bbport-launcher" ]]; then
     exec "$HERE/launcher/bbport-launcher" "$@"
 elif [[ -x "$HERE/bin/bbport-launcher" ]]; then
     exec "$HERE/bin/bbport-launcher" "$@"
@@ -73,7 +63,7 @@ elif [[ -x "$HERE/bbport" ]]; then
     exec "$HERE/bbport" "$@"
 else
     echo "================================================================="
-    echo "Aviso: Launcher GTK 4/Libadwaita não encontrado."
+    echo "Aviso: Python 3 não foi encontrado no sistema host."
     echo "Iniciando Bloodborne diretamente via run.sh..."
     echo "================================================================="
     exec "$HERE/run.sh" "$@"

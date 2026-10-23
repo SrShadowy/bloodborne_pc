@@ -229,9 +229,34 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
         # Verify async trigger starts thread without blocking
         check_for_updates_async("999.0.0", lambda *_: None)
 
+    def test_missing_gtk_preflight(self):
+        import subprocess
+        code = (
+            "import sys; sys.path.insert(0, 'launcher'); "
+            "import bbport_launcher; "
+            "bbport_launcher._HAS_GTK = False; "
+            "bbport_launcher._GTK_ERR = 'Mock missing GTK'; "
+            "sys.argv = ['bbport-launcher']; "
+            "sys.exit(bbport_launcher.main())"
+        )
+        res = subprocess.run([sys.executable, "-c", code],
+                             cwd=str(ROOT), capture_output=True, text=True, timeout=5)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("E-GTK-001", res.stderr)
+        self.assertIn("apt install", res.stderr)
+        self.assertIn("pacman -S", res.stderr)
+        self.assertIn("dnf install", res.stderr)
+
+    def test_debug_cli_flag(self):
+        import subprocess
+        launcher_script = ROOT / "launcher" / "bbport_launcher.py"
+        res = subprocess.run([sys.executable, str(launcher_script), "--debug", "--help"],
+                             capture_output=True, text=True, timeout=5)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("--debug", res.stdout)
     def test_pycache_prefix_configured(self):
         import subprocess
-        code = f"""
+        code = """
 import sys
 from pathlib import Path
 sys.path.insert(0, 'launcher')
