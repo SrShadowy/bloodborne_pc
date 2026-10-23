@@ -210,6 +210,16 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
         self.assertIsInstance(mappings, int)
         self.assertGreaterEqual(mappings, 0)
 
+    def test_gpu_and_pci_diagnostics(self):
+        from diagnostics import detect_pci_gpus, check_gpu_diagnostics
+        pci_gpus = detect_pci_gpus()
+        self.assertIsInstance(pci_gpus, list)
+        for dev_id, vendor in pci_gpus:
+            self.assertIsInstance(dev_id, str)
+            self.assertIsInstance(vendor, str)
+        advisories = check_gpu_diagnostics()
+        self.assertIsInstance(advisories, list)
+
     def test_pycache_prefix_configured(self):
         import subprocess
         code = f"""

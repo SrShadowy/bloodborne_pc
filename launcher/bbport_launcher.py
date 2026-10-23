@@ -44,6 +44,7 @@ from diagnostics import (
     get_log_file,
     get_runtime_backend,
     detect_audio_server,
+    check_gpu_diagnostics,
     collect_diagnostics_report,
 )
 
@@ -738,7 +739,13 @@ class LauncherWindow(
         self.gpu_row.set_model(Gtk.StringList.new([label for label, _ in choices]))
         self.gpu_row.values = [value for _, value in choices]
         self.gpu_row.set_selected(self.gpu_row.values.index(current) if current in self.gpu_row.values else 0)
-        self.gpu_row.set_subtitle(tr("На ноутбуке с двумя видеокартами — дискретная; применяется при запуске игры"))
+        advisories = check_gpu_diagnostics()
+        if advisories:
+            for adv in advisories:
+                LOG.warning("gpu.advisory: %s", adv)
+            self.gpu_row.set_subtitle(advisories[0])
+        else:
+            self.gpu_row.set_subtitle(tr("На ноутбуке с двумя видеокартами — дискретная; применяется при запуске игры"))
 
 
     # --- Graphics page -------------------------------------------------------------------

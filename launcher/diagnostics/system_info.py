@@ -72,6 +72,90 @@ def detect_audio_server() -> str:
     return "Unknown / None"
 
 
+def detect_pci_gpus() -> list[tuple[str, str]]:
+    """Detects graphics hardware directly on the PCI bus (/sys/bus/pci/devices)."""
+    pci_dir = Path("/sys/bus/pci/devices")
+    gpus = []
+    if not pci_dir.is_dir():
+        return gpus
+    vendor_map = {
+        "0x1002": "AMD",
+        "0x10de": "NVIDIA",
+        "0x8086": "Intel",
+    }
+    for dev in sorted(pci_dir.iterdir()):
+        class_file = dev / "class"
+        vendor_file = dev / "vendor"
+        if class_file.is_file() and vendor_file.is_file():
+            try:
+                cls = int(class_file.read_text().strip(), 16)
+                if (cls >> 16) == 0x03:
+                    raw_vendor = vendor_file.read_text().strip().lower()
+                    vendor_name = vendor_map.get(raw_vendor, raw_vendor)
+                    gpus.append((dev.name, vendor_name))
+            except Exception:
+                pass
+    return gpus
+
+
+def check_gpu_diagnostics() -> list[str]:
+    """Analyzes hardware PCI GPUs, Vulkan devices, and driver status.
+
+    Returns a list of advisory/diagnostic messages (warnings/recommendations).
+    """
+    messages = []
+    try:
+        from bbport_devices import connected_gpus
+        vk_gpus = connected_gpus()
+    except Exception:
+        vk_gpus = []
+
+    pci_gpus = detect_pci_gpus()
+
+    # 1. Vulkan availability
+    if not vk_gpus:
+        has_vulkan_icd = False
+        for icd_path in [Path("/usr/share/vulkan/icd.d"), Path("/etc/vulkan/icd.d"), Path("/run/opengl-driver/share/vulkan/icd.d")]:
+            if icd_path.is_dir() and any(icd_path.glob("*.json")):
+                has_vulkan_icd = True
+                break
+        if not has_vulkan_icd:
+            messages.append("Nenhum driver Vulkan ICD detectado no sistema. Instale os drivers Vulkan para sua GPU.")
+        else:
+            messages.append("Nenhuma GPU Vulkan compatível foi encontrada pelo carregador Vulkan.")
+
+    # 2. Check NVIDIA specific issues
+    has_nvidia_pci = any(vendor == "NVIDIA" for _, vendor in pci_gpus)
+    has_nvidia_vk = any(str(vendor).lower() in ("0x10de", "nvidia") for _, vendor, _, _, _ in vk_gpus)
+
+    if has_nvidia_pci:
+        nvidia_ver_file = Path("/proc/driver/nvidia/version")
+        if not nvidia_ver_file.is_file():
+            messages.append("GPU NVIDIA detectada no barramento PCI, mas o módulo do kernel (nvidia) não está carregado.")
+        else:
+            try:
+                content = nvidia_ver_file.read_text(encoding="utf-8")
+                import re
+                m = re.search(r"Module\s+(\d+\.\d+)", content)
+                if m:
+                    ver_float = float(m.group(1))
+                    if ver_float < 535.0:
+                        messages.append(f"Driver NVIDIA {m.group(1)} é antigo. Recomenda-se driver >= 550 para estabilidade Vulkan.")
+            except Exception:
+                pass
+        if not has_nvidia_vk and nvidia_ver_file.is_file():
+            messages.append("Driver NVIDIA carregado, mas a GPU NVIDIA não apareceu na lista de dispositivos Vulkan.")
+
+    # 3. Check AMD specific issues
+    for _, vendor, _, name, _ in vk_gpus:
+        if str(vendor).lower() in ("0x1002", "amd"):
+            name_lower = name.lower()
+            if "amdgpu-pro" in name_lower or "amdvlk" in name_lower:
+                messages.append(f"GPU AMD usando driver alternativo ({name}). O driver RADV (Mesa) é recomendado para maior estabilidade.")
+
+    return messages
+
+
 def get_runtime_backend(display=_UNSPECIFIED) -> str:
     """Returns the actual active GDK display backend (e.g. Wayland, X11)."""
     if display is _UNSPECIFIED:
@@ -176,6 +260,10 @@ def collect_diagnostics_report() -> str:
 
     # 7. GPUs & Hardware
     lines.append("\n[Graphics & GPUs]")
+    pci_devs = detect_pci_gpus()
+    if pci_devs:
+        pci_str = ", ".join(f"{vendor} ({dev_id})" for dev_id, vendor in pci_devs)
+        lines.append(f"  PCI Hardware:        {pci_str}")
     try:
         from bbport_devices import connected_gpus
         gpus = connected_gpus()
@@ -189,9 +277,15 @@ def collect_diagnostics_report() -> str:
                 else:
                     lines.append(f"  GPU:                 {item}")
         else:
-            lines.append("  GPUs:                No devices returned by bbport_devices")
+            lines.append("  Vulkan GPUs:         None returned by Vulkan loader")
     except Exception as e:
         lines.append(f"  GPU Detection:       Failed to query devices ({e})")
+
+    advisories = check_gpu_diagnostics()
+    if advisories:
+        lines.append("\n[GPU & Driver Advisories]")
+        for adv in advisories:
+            lines.append(f"  * {adv}")
 
     lines.append("\n======================================================================")
     lines.append("                  End of Report (Ready to share)                      ")

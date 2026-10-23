@@ -6,6 +6,8 @@ from .system_info import (
     detect_audio_server,
     get_distro_id,
     get_sdl3_install_command,
+    detect_pci_gpus,
+    check_gpu_diagnostics,
     collect_diagnostics_report,
 )
 
@@ -18,5 +20,7 @@ __all__ = [
     "detect_audio_server",
     "get_distro_id",
     "get_sdl3_install_command",
+    "detect_pci_gpus",
+    "check_gpu_diagnostics",
     "collect_diagnostics_report",
 ]
