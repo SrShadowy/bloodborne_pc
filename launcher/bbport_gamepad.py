@@ -289,6 +289,20 @@ class GamepadNavigator:
         left = btns[BTN_DPAD_LEFT] or (lx < -STICK_DEADZONE)
         right = btns[BTN_DPAD_RIGHT] or (lx > STICK_DEADZONE)
 
+        # Fast idle path: if no buttons/sticks are active now, and none were active
+        # in the previous frame, skip all GTK widget hierarchy traversals completely.
+        # This keeps idle poll overhead near ~0.002ms and eliminates main-loop CPU starvation.
+        has_input = any(btns) or up or down or left or right or (abs(ry) > STICK_DEADZONE)
+        if not has_input:
+            if any(self.prev_buttons) or self.prev_up or self.prev_down or self.prev_left or self.prev_right:
+                self.prev_buttons = btns
+                self.prev_up = False
+                self.prev_down = False
+                self.prev_left = False
+                self.prev_right = False
+                self.repeat_dir = None
+            return True
+
         # 1. Check if a ComboRow dropdown / choice popover is open
         pop = self._get_active_popover()
         if pop:
@@ -358,16 +372,44 @@ class GamepadNavigator:
     # --- Popover (ComboRow Dropdown) Handling ------------------------------------------------
 
     def _get_active_popover(self):
+        # 1. Fast check: if focus is currently inside a popover (typical when open)
+        focused = self.window.get_focus()
+        curr = focused
+        while curr:
+            if isinstance(curr, Gtk.Popover) and curr.get_visible():
+                return curr
+            curr = curr.get_parent()
+
+        # 2. Check if focused widget has a direct popover child
+        if focused:
+            c = focused.get_first_child()
+            while c:
+                if isinstance(c, Gtk.Popover) and c.get_visible():
+                    return c
+                c = c.get_next_sibling()
+
+        # 3. Targeted search on visible tree only (never scan inactive stack pages)
         def find_pop(w):
+            if not w or not w.get_visible():
+                return None
+            if isinstance(w, (Adw.ViewStack, Gtk.Stack)):
+                vc = w.get_visible_child()
+                return find_pop(vc) if vc else None
             c = w.get_first_child()
             while c:
                 if isinstance(c, Gtk.Popover) and c.get_visible():
                     return c
-                p = find_pop(c)
-                if p:
-                    return p
+                res = find_pop(c)
+                if res:
+                    return res
                 c = c.get_next_sibling()
             return None
+
+        if hasattr(self.window, "stack") and self.window.stack:
+            vis = self.window.stack.get_visible_child()
+            p = find_pop(vis)
+            if p:
+                return p
         return find_pop(self.window)
 
     def _get_popover_items(self, pop):
@@ -512,17 +554,28 @@ class GamepadNavigator:
                 if top != self.window and top.get_visible():
                     return top
 
-        def find_adw_dialog(w):
-            c = w.get_first_child()
-            while c:
-                if isinstance(c, (Adw.Dialog, Adw.AlertDialog)) and c.get_visible():
-                    return c
-                res = find_adw_dialog(c)
-                if res:
-                    return res
-                c = c.get_next_sibling()
-            return None
-        return find_adw_dialog(self.window)
+        # In Libadwaita, Adw.Dialog / Adw.AlertDialog are attached directly to
+        # the window or under AdwDialogHost at the top of the window hierarchy.
+        focused = self.window.get_focus()
+        curr = focused
+        while curr:
+            if isinstance(curr, (Adw.Dialog, Adw.AlertDialog)) and curr.get_visible():
+                return curr
+            curr = curr.get_parent()
+
+        c = self.window.get_first_child()
+        while c:
+            if isinstance(c, (Adw.Dialog, Adw.AlertDialog)) and c.get_visible():
+                return c
+            if type(c).__name__ == "AdwDialogHost" or isinstance(c, Gtk.Widget):
+                sub = c.get_first_child()
+                while sub:
+                    if isinstance(sub, (Adw.Dialog, Adw.AlertDialog)) and sub.get_visible():
+                        return sub
+                    sub = sub.get_next_sibling()
+            c = c.get_next_sibling()
+
+        return None
 
     def _get_dialog_targets(self, dialog):
         targets = []
