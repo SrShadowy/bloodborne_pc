@@ -7,6 +7,7 @@ path resolution, and game launch environment generation.
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -321,10 +322,21 @@ CONTROLS = [
 
 def load_settings():
     settings = dict(DEFAULTS)
+    loaded = False
     try:
         settings.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
+        loaded = True
     except (OSError, ValueError):
         pass
+
+    if not loaded:
+        bak_file = CONFIG_FILE.with_suffix(".json.bak")
+        if bak_file.is_file():
+            try:
+                settings.update(json.loads(bak_file.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                pass
+
     for key, old_values in getattr(online, "OLD_DEFAULTS", {}).items():
         if str(settings.get(key, "")).strip() in old_values:
             settings[key] = DEFAULTS.get(key, "")
@@ -332,10 +344,35 @@ def load_settings():
 
 
 def save_settings(settings):
+    """Saves settings atomically with .bak preservation and restricted permissions."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.touch(mode=0o600)
-    CONFIG_FILE.chmod(0o600)  # it holds the shadNet password
-    CONFIG_FILE.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp_file = CONFIG_DIR / f".settings.json.tmp.{os.getpid()}"
+    bak_file = CONFIG_FILE.with_suffix(".json.bak")
+    data = json.dumps(settings, indent=2, ensure_ascii=False)
+
+    try:
+        tmp_file.write_text(data, encoding="utf-8")
+        try:
+            tmp_file.chmod(0o600)  # holds sensitive credentials (shadNet password)
+        except OSError:
+            pass
+
+        # Preserve previous valid config as backup
+        if CONFIG_FILE.is_file():
+            try:
+                shutil.copy2(CONFIG_FILE, bak_file)
+            except OSError:
+                pass
+
+        # Atomic rename on POSIX filesystems
+        os.replace(tmp_file, CONFIG_FILE)
+    except Exception as e:
+        if tmp_file.exists():
+            try:
+                tmp_file.unlink()
+            except OSError:
+                pass
+        raise e
 
 
 # DLSS (vk_dlss.cpp): the bridge (libbbport_dlss.so) and NVIDIA's runtime library

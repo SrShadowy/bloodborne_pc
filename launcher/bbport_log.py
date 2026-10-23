@@ -41,9 +41,23 @@ class LogMixin:
         clear_btn.connect("clicked", self.on_clear_log)
         toolbar.append(clear_btn)
 
+        diag_btn = Gtk.Button(label=tr("Диагностика"), icon_name="dialog-information-symbolic")
+        diag_btn.add_css_class("flat")
+        diag_btn.connect("clicked", self.on_copy_diagnostics)
+        toolbar.append(diag_btn)
+
         open_logs_btn = Gtk.Button(label=tr("Открыть папку журнала"), icon_name="folder-open-symbolic")
         open_logs_btn.add_css_class("flat")
-        open_logs_btn.connect("clicked", lambda _b: open_folder(self, DATA_DIR / "logs"))
+
+        def _open_logs(_b):
+            try:
+                from diagnostics import get_log_dir
+                target = get_log_dir() or (DATA_DIR / "logs")
+            except Exception:
+                target = DATA_DIR / "logs"
+            open_folder(self, target)
+
+        open_logs_btn.connect("clicked", _open_logs)
         toolbar.append(open_logs_btn)
 
         self.autoscroll_check = Gtk.CheckButton(label=tr("Автопрокрутка"), active=True)
@@ -88,6 +102,12 @@ class LogMixin:
     def on_copy_log(self, _button):
         self.get_clipboard().set(self.log_text())
         self.toasts.add_toast(Adw.Toast(title=tr("Журнал скопирован")))
+
+    def on_copy_diagnostics(self, _button):
+        from diagnostics import collect_diagnostics_report
+        report = collect_diagnostics_report()
+        self.get_clipboard().set(report)
+        self.toasts.add_toast(Adw.Toast(title=tr("Диагностика скопирована в буфер обмена")))
 
     def on_clear_log(self, _button):
         self.log_view.get_buffer().set_text("")

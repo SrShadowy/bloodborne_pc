@@ -31,29 +31,26 @@ elif _launcher_backend == "wayland":
 else:
     os.environ.setdefault("GSK_RENDERER", "gl")
 
-# [extra] Launcher crash/startup log: Steam hides the launcher's stderr, so a crash there
-# (Hyprland/XWayland reports) leaves no trace. faulthandler dumps the Python stack on a fatal
-# signal, and the startup line records the toolkit environment for the next report.
-_LAUNCHER_LOG = Path(os.environ.get("BB_LAUNCHER_LOG",
-                                    Path.home() / ".config" / "bbport-launcher" / "launcher.log"))
+# [Diagnostics & Logging Bootstrap — Phase 0]
+_LAUNCHER_DIR = Path(__file__).resolve().parent
+if str(_LAUNCHER_DIR) not in sys.path:
+    sys.path.insert(0, str(_LAUNCHER_DIR))
+
+from diagnostics import (
+    LOG,
+    setup_logging,
+    get_log_dir,
+    get_log_file,
+    get_runtime_backend,
+    collect_diagnostics_report,
+)
+
+_LOG_DIR = setup_logging()
+_LAUNCHER_LOG = get_log_file() or (Path.home() / ".config" / "bbport-launcher" / "launcher.log")
 
 
 def _launcher_log(line):
-    try:
-        _LAUNCHER_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with _LAUNCHER_LOG.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-    except OSError:
-        pass
-
-
-try:
-    _launcher_log("--- launcher start {} GDK_BACKEND={} GSK_RENDERER={} XDG_SESSION_TYPE={}".format(
-        time.strftime("%Y-%m-%d %H:%M:%S"), os.environ.get("GDK_BACKEND", "(unset)"),
-        os.environ.get("GSK_RENDERER", "(unset)"), os.environ.get("XDG_SESSION_TYPE", "(unset)")))
-    faulthandler.enable(file=open(_LAUNCHER_LOG, "ab", buffering=0), all_threads=True)
-except OSError:
-    pass
+    LOG.info(line)
 
 if getattr(sys, "frozen", False):
     _meipass_typelibs = Path(getattr(sys, "_MEIPASS", "")) / "girepository-1.0"
@@ -159,10 +156,18 @@ class LauncherWindow(
         self.stream = None
         self.fsr411_mgr = Fsr411Manager(self)
         self.best_detected_dll = None
-        self.best_detected_loader = None
         self.gamepad_nav = None
         self.build()
-        self.gamepad_nav = GamepadNavigator(self)
+        LOG.info("startup.sdl.begin")
+        try:
+            self.gamepad_nav = GamepadNavigator(self)
+            if self.gamepad_nav and self.gamepad_nav.pad_handle:
+                LOG.info("startup.sdl.ok: gamepad_connected=%s", self.gamepad_nav.pad_name)
+            else:
+                LOG.info("startup.sdl.ok: no gamepad currently connected")
+        except Exception as e:
+            LOG.warning("startup.sdl.degraded: gamepad navigation unavailable (%s)", e)
+            self.gamepad_nav = None
         self.connect("close-request", self.on_close)
 
     @property
@@ -1190,15 +1195,25 @@ class LauncherApp(Adw.Application):
     def __init__(self):
         flags = getattr(Gio.ApplicationFlags, "NON_UNIQUE", 0)
         super().__init__(application_id="io.github.bbport.Launcher", flags=flags)
+        self.startup_t0 = time.monotonic()
 
     def do_startup(self):
+        LOG.info("startup.gtk.begin")
         super().do_startup()
         setup_icons()
+        display = Gdk.Display.get_default()
+        LOG.info("startup.gtk.ok: active_backend=%s", get_runtime_backend(display))
 
     def do_activate(self):
         setup_icons()
-        window = self.get_active_window() or LauncherWindow(self)
+        window = self.get_active_window()
+        if not window:
+            LOG.info("startup.application.begin")
+            window = LauncherWindow(self)
+            LOG.info("startup.application.ok")
         window.present()
+        t_total = (time.monotonic() - getattr(self, "startup_t0", time.monotonic())) * 1000.0
+        LOG.info("startup.completed: total_elapsed=%.1fms", t_total)
 
 
 def play():
@@ -1221,12 +1236,32 @@ def build_fsr411(arguments):
     return subprocess.call(command, env=env, cwd=PORT_DIR)
 
 
-if __name__ == "__main__":
+def main():
     if "--play" in sys.argv[1:]:
-        sys.exit(play())
+        return play()
     if "--build-fsr411" in sys.argv[1:]:
-        sys.exit(build_fsr411(sys.argv[sys.argv.index("--build-fsr411") + 1:]))
+        return build_fsr411(sys.argv[sys.argv.index("--build-fsr411") + 1:])
+    if "--diagnostics" in sys.argv[1:]:
+        print(collect_diagnostics_report())
+        return 0
+
+    LOG.info("startup.preflight.begin")
+    if sys.version_info < (3, 9):
+        LOG.error("startup.preflight.failed: Python >= 3.9 required, found %s", sys.version)
+        print("Error: Python >= 3.9 is required to run BBPort Launcher.", file=sys.stderr)
+        return 1
+    LOG.info("startup.preflight.ok")
+
     # Pass only program name and recognized GTK/GIO flags so file managers
     # passing file URLs/paths (like Dolphin) do not trigger GLib "cannot open files" error
     gtk_args = [sys.argv[0]] + [arg for arg in sys.argv[1:] if arg.startswith("--g-") or arg.startswith("--gtk-")]
-    sys.exit(LauncherApp().run(gtk_args))
+    app = LauncherApp()
+    return app.run(gtk_args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        LOG.exception("startup.fatal: unrecoverable exception")
+        sys.exit(1)
