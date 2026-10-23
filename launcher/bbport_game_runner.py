@@ -162,7 +162,7 @@ class GameRunnerMixin:
                 self.toasts.add_toast(Adw.Toast(title=f"Jogo encerrado (código {status})"))
         else:
             LOG.info("game.exit: process exited normally (status 0)")
-            self.append_log(tr("\n— игра завершилась (код 0) —\n"))
+            self.append_log(tr("\n— игра завершилась (код {}) —\n").format(0))
 
     def reload_ini_from_disk(self):
         """Reloads bbport.ini from disk and refreshes all launcher widgets that display ini values."""
