@@ -1199,7 +1199,7 @@ class LauncherApp(Adw.Application):
 
     def do_startup(self):
         LOG.info("startup.gtk.begin")
-        super().do_startup()
+        Adw.Application.do_startup(self)
         setup_icons()
         display = Gdk.Display.get_default()
         LOG.info("startup.gtk.ok: active_backend=%s", get_runtime_backend(display))

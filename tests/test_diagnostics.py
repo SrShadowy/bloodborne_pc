@@ -112,5 +112,18 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
                 bbport_config.CONFIG_FILE = orig_file
 
 
+    def test_launcher_app_startup(self):
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            gi.require_version("Adw", "1")
+            from bbport_launcher import LauncherApp
+            app = LauncherApp()
+            app.register()
+            self.assertTrue(app.get_is_registered())
+        except Exception as e:
+            self.fail(f"LauncherApp registration/startup failed: {e}")
+
+
 if __name__ == "__main__":
     unittest.main()
