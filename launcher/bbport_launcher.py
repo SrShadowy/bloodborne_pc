@@ -43,6 +43,7 @@ from diagnostics import (
     get_log_dir,
     get_log_file,
     get_runtime_backend,
+    detect_audio_server,
     collect_diagnostics_report,
 )
 
@@ -122,7 +123,7 @@ from bbport_bbhost_ui import BbhostAccountMixin
 from bbport_dlss import DlssMixin
 from bbport_log import LogMixin
 from bbport_game_runner import GameRunnerMixin
-from bbport_gamepad import GamepadNavigator
+from bbport_gamepad import GamepadNavigator, load_custom_gamepad_mappings, get_gamepad_type_label
 
 
 def setup_icons():
@@ -202,11 +203,16 @@ class LauncherWindow(
         self.best_detected_dll = None
         self.gamepad_nav = None
         self.build()
+        LOG.info("startup.audio: server='%s'", detect_audio_server())
         LOG.info("startup.sdl.begin")
         try:
+            mappings_count = load_custom_gamepad_mappings()
+            if mappings_count > 0:
+                LOG.info("startup.sdl: loaded %d custom controller mappings", mappings_count)
             self.gamepad_nav = GamepadNavigator(self)
             if self.gamepad_nav and self.gamepad_nav.pad_handle:
-                LOG.info("startup.sdl.ok: gamepad_connected=%s", self.gamepad_nav.pad_name)
+                pad_type = get_gamepad_type_label(self.gamepad_nav.pad_handle)
+                LOG.info("startup.sdl.ok: gamepad_connected='%s' (type=%s)", self.gamepad_nav.pad_name, pad_type)
             else:
                 LOG.info("startup.sdl.ok: no gamepad currently connected")
         except Exception as e:

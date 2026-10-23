@@ -7,10 +7,69 @@ import platform
 import sys
 from pathlib import Path
 
+import subprocess
+import ctypes
+
 from .logging_setup import get_log_dir, get_log_file
 
 
 _UNSPECIFIED = object()
+
+
+def get_distro_id() -> str:
+    """Reads ID from /etc/os-release."""
+    os_release = Path("/etc/os-release")
+    if os_release.is_file():
+        try:
+            data = os_release.read_text(encoding="utf-8")
+            for line in data.splitlines():
+                if line.startswith("ID="):
+                    return line.split("=", 1)[1].strip('"').lower()
+        except OSError:
+            pass
+    return "linux"
+
+
+def get_sdl3_install_command() -> str:
+    """Returns the recommended terminal command to install SDL3 on the detected distro."""
+    distro = get_distro_id()
+    if distro in ("arch", "cachyos", "manjaro", "endeavouros", "artix"):
+        return "sudo pacman -S sdl3"
+    elif distro in ("ubuntu", "debian", "pop", "linuxmint", "elementary", "zorin"):
+        return "sudo apt install libsdl3-0"
+    elif distro in ("fedora", "rhel", "centos", "nobara"):
+        return "sudo dnf install SDL3"
+    elif distro in ("opensuse", "suse", "opensuse-tumbleweed", "opensuse-leap"):
+        return "sudo zypper install libSDL3-0"
+    elif distro in ("gentoo",):
+        return "sudo emerge media-libs/libsdl3"
+    elif distro in ("nixos",):
+        return "nix-shell -p sdl3"
+    return "Instale o pacote SDL3 da sua distribuição (ex: libsdl3 ou sdl3)."
+
+
+def detect_audio_server() -> str:
+    """Detects active Linux audio server (PipeWire, PulseAudio, ALSA)."""
+    try:
+        res = subprocess.run(["pactl", "info"], capture_output=True, text=True, timeout=1.0)
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                if line.startswith("Server Name:"):
+                    return line.split(":", 1)[1].strip()
+    except (FileNotFoundError, subprocess.SubprocessError, PermissionError):
+        pass
+
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        if (Path(runtime_dir) / "pipewire-0").exists():
+            return "PipeWire (socket detected)"
+        if (Path(runtime_dir) / "pulse" / "native").exists():
+            return "PulseAudio (socket detected)"
+
+    if Path("/proc/asound").is_dir():
+        return "ALSA (direct kernel sound)"
+
+    return "Unknown / None"
 
 
 def get_runtime_backend(display=_UNSPECIFIED) -> str:
@@ -62,7 +121,11 @@ def collect_diagnostics_report() -> str:
     lines.append(f"  GSK_RENDERER (env):  {os.environ.get('GSK_RENDERER', 'default')}")
     lines.append(f"  Active GDK Backend:  {get_runtime_backend()}")
 
-    # 3. GUI Toolkits
+    # 3. Audio Subsystem
+    lines.append("\n[Audio Subsytem]")
+    lines.append(f"  Audio Server:        {detect_audio_server()}")
+
+    # 4. GUI Toolkits
     lines.append("\n[GUI Toolkits]")
     try:
         import gi
@@ -76,7 +139,7 @@ def collect_diagnostics_report() -> str:
     except Exception as e:
         lines.append(f"  GTK/Libadwaita:      Error querying versions ({e})")
 
-    # 4. Storage & Paths
+    # 5. Storage & Paths
     lines.append("\n[Storage & Paths]")
     data_dir = os.environ.get("BB_DATA_DIR")
     if not data_dir:
@@ -87,19 +150,31 @@ def collect_diagnostics_report() -> str:
     log_file = get_log_file()
     lines.append(f"  Log File:            {log_file or 'None'}")
 
-    # 5. Controller Subsytem (SDL3)
+    # 6. Controller Subsytem (SDL3)
     lines.append("\n[Gamepad Subsytem]")
     try:
-        from bbport_gamepad import _load_sdl3, _SDL3
+        from bbport_gamepad import _load_sdl3, _SDL3, get_gamepad_type_label
         sdl = _SDL3 or _load_sdl3()
         if sdl:
             lines.append("  SDL3 Library:        Loaded successfully")
+            count = ctypes.c_int(0)
+            pads = sdl.SDL_GetGamepads(ctypes.byref(count)) if hasattr(sdl, "SDL_GetGamepads") else None
+            lines.append(f"  Connected Gamepads:  {count.value}")
+            if count.value > 0 and pads:
+                for idx in range(count.value):
+                    handle = sdl.SDL_OpenGamepad(pads[idx])
+                    if handle:
+                        name = sdl.SDL_GetGamepadName(handle)
+                        name_str = name.decode("utf-8", "replace") if name else "Gamepad"
+                        t_label = get_gamepad_type_label(handle)
+                        lines.append(f"    Pad #{idx}:          {name_str} (Type: {t_label})")
         else:
             lines.append("  SDL3 Library:        Not available (Gamepad navigation disabled)")
+            lines.append(f"  Install Instruction: {get_sdl3_install_command()}")
     except Exception as e:
         lines.append(f"  SDL3 Library:        Failed to load ({e})")
 
-    # 6. GPUs & Hardware
+    # 7. GPUs & Hardware
     lines.append("\n[Graphics & GPUs]")
     try:
         from bbport_devices import connected_gpus

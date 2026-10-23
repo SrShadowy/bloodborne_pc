@@ -189,6 +189,27 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
     def test_theme_mode_default(self):
         self.assertEqual(bbport_config.DEFAULTS.get("theme_mode"), "system")
 
+    def test_audio_server_detection(self):
+        from diagnostics import detect_audio_server
+        server = detect_audio_server()
+        self.assertIsInstance(server, str)
+        self.assertTrue(len(server) > 0)
+
+    def test_distro_and_sdl3_install_command(self):
+        from diagnostics import get_distro_id, get_sdl3_install_command
+        distro = get_distro_id()
+        self.assertIsInstance(distro, str)
+        cmd = get_sdl3_install_command()
+        self.assertIsInstance(cmd, str)
+        self.assertTrue(len(cmd) > 0)
+
+    def test_gamepad_helpers(self):
+        from bbport_gamepad import get_gamepad_type_label, load_custom_gamepad_mappings
+        self.assertEqual(get_gamepad_type_label(None), "Gamepad")
+        mappings = load_custom_gamepad_mappings()
+        self.assertIsInstance(mappings, int)
+        self.assertGreaterEqual(mappings, 0)
+
     def test_pycache_prefix_configured(self):
         import subprocess
         code = f"""
@@ -206,4 +227,5 @@ print('prefix:', sys.pycache_prefix)
 
 if __name__ == "__main__":
     unittest.main()
+
 

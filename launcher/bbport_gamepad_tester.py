@@ -12,9 +12,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk, Pango
 
+import os
 from bbport_i18n import tr
 from bbport_gamepad import (
     _SDL3,
+    get_gamepad_type_label,
+    load_custom_gamepad_mappings,
     BTN_SOUTH, BTN_EAST, BTN_WEST, BTN_NORTH,
     BTN_BACK, BTN_GUIDE, BTN_START,
     BTN_LEFT_STICK, BTN_RIGHT_STICK,
@@ -99,6 +102,7 @@ class GamepadTesterDialog(Adw.Window):
         if _SDL3:
             try:
                 _SDL3.SDL_Init(0x00002000)  # SDL_INIT_GAMEPAD
+                load_custom_gamepad_mappings()
             except Exception:
                 pass
             self.poll_timer_id = GLib.timeout_add(16, self._on_poll)
@@ -218,8 +222,13 @@ class GamepadTesterDialog(Adw.Window):
             if self.pad_handle:
                 name_bytes = _SDL3.SDL_GetGamepadName(self.pad_handle)
                 self.pad_name = name_bytes.decode("utf-8", "replace") if name_bytes else "Gamepad"
-                self.device_row.set_title(self.pad_name)
-                self.device_row.set_subtitle(tr("Контроллер подключён и отвечает (SDL3)"))
+                type_label = get_gamepad_type_label(self.pad_handle)
+                self.device_row.set_title(f"{self.pad_name} ({type_label})")
+                is_steam = any(k in os.environ for k in ("STEAM_COMPAT_CLIENT_INSTALL_PATH", "SteamTenfoot", "SteamGamepad", "SteamAppId"))
+                if is_steam:
+                    self.device_row.set_subtitle(tr("Steam Input ativo: a Steam gerencia este controle"))
+                else:
+                    self.device_row.set_subtitle(tr("Контроллер подключён и отвечает (SDL3)"))
                 return True
         return False
 

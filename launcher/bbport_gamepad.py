@@ -74,6 +74,71 @@ if _SDL3:
     _SDL3.SDL_PumpEvents.argtypes = []
     _SDL3.SDL_PumpEvents.restype = None
 
+    if hasattr(_SDL3, "SDL_GetGamepadType"):
+        _SDL3.SDL_GetGamepadType.argtypes = [ctypes.c_void_p]
+        _SDL3.SDL_GetGamepadType.restype = ctypes.c_int
+
+    if hasattr(_SDL3, "SDL_GetGamepadStringForType"):
+        _SDL3.SDL_GetGamepadStringForType.argtypes = [ctypes.c_int]
+        _SDL3.SDL_GetGamepadStringForType.restype = ctypes.c_char_p
+
+    if hasattr(_SDL3, "SDL_AddGamepadMappingsFromFile"):
+        _SDL3.SDL_AddGamepadMappingsFromFile.argtypes = [ctypes.c_char_p]
+        _SDL3.SDL_AddGamepadMappingsFromFile.restype = ctypes.c_int
+
+
+def get_gamepad_type_label(pad_handle) -> str:
+    """Returns user-facing controller family (Xbox, PlayStation, Nintendo Switch, Steam Deck, etc.)."""
+    if not _SDL3 or not pad_handle or not hasattr(_SDL3, "SDL_GetGamepadType"):
+        return "Gamepad"
+    try:
+        t = _SDL3.SDL_GetGamepadType(pad_handle)
+        if hasattr(_SDL3, "SDL_GetGamepadStringForType"):
+            s = _SDL3.SDL_GetGamepadStringForType(t)
+            if s:
+                type_str = s.decode("utf-8", "replace").lower()
+                if "xbox" in type_str:
+                    return "Xbox"
+                elif "ps" in type_str or "playstation" in type_str:
+                    return "PlayStation"
+                elif "switch" in type_str or "joycon" in type_str:
+                    return "Nintendo Switch"
+                elif "deck" in type_str:
+                    return "Steam Deck"
+        if t in (2, 3):
+            return "Xbox"
+        elif t in (4, 5, 6):
+            return "PlayStation"
+        elif t in (7, 8, 9, 10):
+            return "Nintendo Switch"
+    except Exception:
+        pass
+    return "Gamepad"
+
+
+def load_custom_gamepad_mappings() -> int:
+    """Loads community gamecontrollerdb.txt if present and registers mappings with SDL3."""
+    if not _SDL3 or not hasattr(_SDL3, "SDL_AddGamepadMappingsFromFile"):
+        return 0
+
+    from pathlib import Path
+    launcher_dir = Path(__file__).resolve().parent
+    candidates = [
+        launcher_dir.parent / "gamecontrollerdb.txt",
+        launcher_dir / "gamecontrollerdb.txt",
+        Path.home() / ".local" / "share" / "bbport" / "gamecontrollerdb.txt",
+    ]
+    total_added = 0
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                added = _SDL3.SDL_AddGamepadMappingsFromFile(str(cand).encode("utf-8"))
+                if added > 0:
+                    total_added += added
+            except Exception:
+                pass
+    return total_added
+
 
 # SDL_GamepadButton enum values
 BTN_SOUTH = 0           # A (Xbox) / Cross (PlayStation)
