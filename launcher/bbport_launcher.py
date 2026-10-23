@@ -162,9 +162,18 @@ class LauncherWindow(
 ):
     def __init__(self, app):
         setup_icons()
-        super().__init__(application=app, title="Bloodborne")
-        self.set_default_size(980, 780)
         self.settings = load_settings()
+        saved_w = self.settings.get("window_width", 980)
+        saved_h = self.settings.get("window_height", 780)
+        try:
+            saved_w = max(700, min(int(saved_w), 3840))
+            saved_h = max(500, min(int(saved_h), 2160))
+        except (ValueError, TypeError):
+            saved_w, saved_h = 980, 780
+        self.set_default_size(saved_w, saved_h)
+        if self.settings.get("window_maximized", False):
+            self.maximize()
+
         self.theme_mode = self.settings.get("theme_mode", "dark")
         self.apply_theme(self.theme_mode)
         try:

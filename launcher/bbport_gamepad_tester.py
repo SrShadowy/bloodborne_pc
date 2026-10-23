@@ -10,7 +10,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk, Pango
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango
 
 from bbport_i18n import tr
 from bbport_gamepad import (
@@ -21,10 +21,8 @@ from bbport_gamepad import (
     BTN_LEFT_SHOULDER, BTN_RIGHT_SHOULDER,
     BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
     AXIS_LEFTX, AXIS_LEFTY, AXIS_RIGHTX, AXIS_RIGHTY,
+    AXIS_LEFT_TRIGGER, AXIS_RIGHT_TRIGGER,
 )
-
-AXIS_LEFT_TRIGGER = 4
-AXIS_RIGHT_TRIGGER = 5
 
 BUTTON_DEFS = [
     (BTN_SOUTH, "A / ✕"),
@@ -44,6 +42,39 @@ BUTTON_DEFS = [
     (BTN_DPAD_RIGHT, "D-Pad →"),
 ]
 
+_CSS_SETUP_DONE = False
+
+def _setup_tester_css():
+    global _CSS_SETUP_DONE
+    if _CSS_SETUP_DONE:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_string("""
+    .pad-chip {
+        background-color: alpha(@window_fg_color, 0.08);
+        border: 1px solid alpha(@window_fg_color, 0.18);
+        border-radius: 8px;
+        padding: 8px 12px;
+        color: @window_fg_color;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 60ms ease-out;
+    }
+    .pad-chip-active {
+        background-color: #2ec27e;
+        border-color: #26a269;
+        color: #ffffff;
+        font-weight: bold;
+        box-shadow: 0 0 12px rgba(46, 194, 126, 0.6);
+    }
+    """)
+    display = Gdk.Display.get_default()
+    if display:
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+    _CSS_SETUP_DONE = True
+
 
 class GamepadTesterDialog(Adw.Window):
     """Real-time controller tester dialog with live axis and button visualization."""
@@ -51,7 +82,7 @@ class GamepadTesterDialog(Adw.Window):
     def __init__(self, parent_window=None):
         super().__init__()
         self.set_title(tr("Тестирование геймпада"))
-        self.set_default_size(540, 620)
+        self.set_default_size(540, 640)
         self.set_modal(True)
         if parent_window:
             self.set_transient_for(parent_window)
@@ -60,6 +91,7 @@ class GamepadTesterDialog(Adw.Window):
         self.pad_name = ""
         self.poll_timer_id = None
 
+        _setup_tester_css()
         self._build_ui()
         self.connect("close-request", self.on_close)
 
@@ -136,6 +168,11 @@ class GamepadTesterDialog(Adw.Window):
 
         # Buttons Group
         buttons_group = Adw.PreferencesGroup(title=tr("Кнопки"))
+
+        self.active_row = Adw.ActionRow(title=tr("Нажатые кнопки:"))
+        self.active_row.set_subtitle(tr("Нажмите любую кнопку на геймпаде"))
+        buttons_group.add(self.active_row)
+
         btn_flow = Gtk.FlowBox()
         btn_flow.set_selection_mode(Gtk.SelectionMode.NONE)
         btn_flow.set_max_children_per_line(3)
@@ -146,12 +183,11 @@ class GamepadTesterDialog(Adw.Window):
 
         self.btn_widgets = {}
         for btn_id, btn_label in BUTTON_DEFS:
-            label = Gtk.Label(label=btn_label)
-            label.set_size_request(130, 36)
-            label.add_css_class("card")
-            label.add_css_class("pill")
+            label = Gtk.Label(label=f"○  {btn_label}")
+            label.set_size_request(130, 38)
+            label.add_css_class("pad-chip")
             btn_flow.append(label)
-            self.btn_widgets[btn_id] = label
+            self.btn_widgets[btn_id] = (label, btn_label)
 
         buttons_group.add(btn_flow)
         content.append(buttons_group)
@@ -191,8 +227,11 @@ class GamepadTesterDialog(Adw.Window):
         for bar, val_label, is_bipolar in self.axis_widgets.values():
             bar.set_fraction(0.5 if is_bipolar else 0.0)
             val_label.set_text("0.00" if is_bipolar else "0%")
-        for widget in self.btn_widgets.values():
-            widget.remove_css_class("suggested-action")
+        for widget, base_name in self.btn_widgets.values():
+            widget.remove_css_class("pad-chip-active")
+            widget.set_label(f"○  {base_name}")
+        if hasattr(self, "active_row"):
+            self.active_row.set_subtitle(tr("Нажмите любую кнопку на геймпаде"))
 
     def _on_poll(self):
         if not self.get_visible():
@@ -218,14 +257,23 @@ class GamepadTesterDialog(Adw.Window):
                     val_label.set_text(f"{int(fraction * 100)}%")
 
             # Poll buttons
-            for btn_id, widget in self.btn_widgets.items():
+            pressed_names = []
+            for btn_id, (widget, base_name) in self.btn_widgets.items():
                 is_pressed = _SDL3.SDL_GetGamepadButton(self.pad_handle, btn_id)
                 if is_pressed:
-                    if not widget.has_css_class("suggested-action"):
-                        widget.add_css_class("suggested-action")
+                    pressed_names.append(base_name)
+                    if not widget.has_css_class("pad-chip-active"):
+                        widget.add_css_class("pad-chip-active")
+                        widget.set_label(f"●  {base_name}")
                 else:
-                    if widget.has_css_class("suggested-action"):
-                        widget.remove_css_class("suggested-action")
+                    if widget.has_css_class("pad-chip-active"):
+                        widget.remove_css_class("pad-chip-active")
+                        widget.set_label(f"○  {base_name}")
+
+            if pressed_names:
+                self.active_row.set_subtitle("  •  ".join(pressed_names))
+            else:
+                self.active_row.set_subtitle(tr("Нажмите любую кнопку на геймпаде"))
         except Exception:
             pass
 

@@ -187,6 +187,11 @@ class GameRunnerMixin:
             self.update_upscaler_status()
 
     def on_close(self, _window):
+        if hasattr(self, "is_maximized") and not self.is_maximized():
+            self.settings["window_width"] = self.get_width()
+            self.settings["window_height"] = self.get_height()
+        if hasattr(self, "is_maximized"):
+            self.settings["window_maximized"] = self.is_maximized()
         self.store()
         if hasattr(self, "gamepad_nav") and self.gamepad_nav:
             self.gamepad_nav.close()

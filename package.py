@@ -237,52 +237,14 @@ def copy_tree_filtered(src_dir, dst_dir, ignore_patterns=(".pyc", "__pycache__",
             dst_f = target_sub / f
             shutil.copy2(src_f, dst_f)
 
-def ensure_pyinstaller():
-    """Locates pyinstaller or bootstraps a virtualenv with pyinstaller if missing."""
-    for candidate in [
-        shutil.which("pyinstaller"),
-        ROOT_DIR / "out" / ".venv" / "bin" / "pyinstaller",
-        Path("/tmp/test_venv/bin/pyinstaller"),
-    ]:
-        if candidate and Path(candidate).is_file():
-            return Path(candidate)
-
-    venv_dir = ROOT_DIR / "out" / ".venv"
-    venv_pyi = venv_dir / "bin" / "pyinstaller"
-    if venv_pyi.is_file():
-        return venv_pyi
-
-    venv_dir.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        print("[*] PyInstaller not found. Bootstrapping out/.venv with system-site-packages...")
-        subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
-        subprocess.run([str(venv_dir / "bin" / "pip"), "install", "pyinstaller"], check=True)
-        return venv_pyi
-    except Exception as e:
-        print(f"[*] Note: Virtualenv creation failed ({e}). Attempting direct pip install...")
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "--no-cache-dir", "pyinstaller"], check=True)
-            pyi = shutil.which("pyinstaller")
-            if pyi:
-                return Path(pyi)
-        except Exception:
-            pass
-        raise
-
-def deploy_launcher_wrapper(staging_dir, cached_binary=None):
+def deploy_launcher_wrapper(staging_dir):
     """
     Deploys the smart launcher wrapper at launcher/bbport-launcher.
-    If a standalone binary is available, deploys it as launcher/bbport-launcher.bin.
+    Executes bbport_launcher.py directly via Python with precompiled bytecode and XDG cache.
     """
     launcher_dir = staging_dir / "launcher"
     launcher_dir.mkdir(parents=True, exist_ok=True)
     wrapper_path = launcher_dir / "bbport-launcher"
-    binary_path = launcher_dir / "bbport-launcher.bin"
-
-    if cached_binary and cached_binary.is_file():
-        shutil.copy2(cached_binary, binary_path)
-        binary_path.chmod(0o755)
-        print(f"[✓] Standalone Launcher binary deployed to {binary_path}")
 
     wrapper_content = """#!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-or-later
@@ -321,17 +283,6 @@ else
     export GSK_RENDERER="${GSK_RENDERER:-gl}"
 fi
 
-# 1. Native system Python with GTK 4 and Libadwaita (best desktop integration, native theme and 0 ABI conflicts)
-if python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
-    exec python3 "$HERE/bbport_launcher.py" "$@"
-fi
-
-# 2. Standalone compiled executable (bundled fallback)
-if [[ -x "$HERE/bbport-launcher.bin" ]]; then
-    exec "$HERE/bbport-launcher.bin" "$@"
-fi
-
-# 3. Direct execution fallback
 exec python3 "$HERE/bbport_launcher.py" "$@"
 """
     wrapper_path.write_text(wrapper_content, encoding="utf-8")
@@ -346,91 +297,6 @@ exec python3 "$HERE/bbport_launcher.py" "$@"
         except OSError:
             pass
 
-
-def build_standalone_launcher(staging_dir, force_rebuild=False):
-    """
-    Builds a standalone executable for bbport_launcher with embedded GTK4, Libadwaita,
-    PyGObject, and Python runtime using PyInstaller.
-    """
-    cached_binary = ROOT_DIR / "out" / "bbport-launcher"
-
-    need_rebuild = force_rebuild or not cached_binary.is_file()
-    if not need_rebuild:
-        cached_mtime = cached_binary.stat().st_mtime
-        for check_dir in [ROOT_DIR / "launcher", ROOT_DIR / "scripts", ROOT_DIR / "tools"]:
-            if need_rebuild:
-                break
-            for root, _, files in os.walk(check_dir):
-                for f in files:
-                    if f.endswith(".py"):
-                        if (Path(root) / f).stat().st_mtime > cached_mtime:
-                            need_rebuild = True
-                            break
-                if need_rebuild:
-                    break
-
-    if not need_rebuild and cached_binary.is_file():
-        print(f"\\n[+] Reusing existing compiled launcher binary: {cached_binary}")
-        deploy_launcher_wrapper(staging_dir, cached_binary)
-        return
-
-    print("\\n[+] Building standalone GTK4/Libadwaita Launcher executable...")
-    try:
-        pyi_path = ensure_pyinstaller()
-        print(f"[*] Using PyInstaller: {pyi_path}")
-    except Exception as e:
-        print(f"[!] Warning: PyInstaller is unavailable in this environment: {e}")
-        deploy_launcher_wrapper(staging_dir, cached_binary if cached_binary.is_file() else None)
-        return
-
-    launcher_src_dir = ROOT_DIR / "launcher"
-    dist_dir = ROOT_DIR / "out" / "pyi_dist"
-    work_dir = ROOT_DIR / "out" / "pyi_work"
-    pyi_cmd = [
-        str(pyi_path),
-        "--noconfirm",
-        "--onefile",
-        "--clean",
-        "--name", "bbport-launcher",
-        "--paths", str(ROOT_DIR / "launcher"),
-        "--paths", str(ROOT_DIR / "scripts"),
-        "--paths", str(ROOT_DIR / "tools"),
-        "--collect-all", "gi",
-        "--hidden-import", "gi",
-        "--hidden-import", "gi.module",
-        "--hidden-import", "gi.repository.Gtk",
-        "--hidden-import", "gi.repository.Adw",
-        "--hidden-import", "gi.repository.Gio",
-        "--hidden-import", "gi.repository.GLib",
-        "--hidden-import", "gi.repository.Gdk",
-        "--hidden-import", "gi.repository.Pango",
-    ]
-    for typelib_cand in [
-        Path("/usr/lib/x86_64-linux-gnu/girepository-1.0"),
-        Path("/usr/lib/girepository-1.0"),
-    ]:
-        if typelib_cand.is_dir():
-            pyi_cmd.extend(["--add-data", f"{typelib_cand}:girepository-1.0"])
-            break
-    pyi_cmd.extend([
-        "--distpath", str(dist_dir),
-        "--workpath", str(work_dir),
-        "--specpath", str(work_dir),
-        str(launcher_src_dir / "bbport_launcher.py"),
-    ])
-    try:
-        ret = run_command(pyi_cmd, check=False)
-        if ret != 0:
-            raise RuntimeError(f"PyInstaller exited with code {ret}")
-        built_file = dist_dir / "bbport-launcher"
-        if not built_file.is_file():
-            raise RuntimeError(f"PyInstaller failed to create {built_file}")
-        shutil.copy2(built_file, cached_binary)
-        cached_binary.chmod(0o755)
-    except Exception as e:
-        print(f"[!] Warning: Failed to compile standalone launcher with PyInstaller: {e}")
-
-    deploy_launcher_wrapper(staging_dir, cached_binary if cached_binary.is_file() else None)
 
 def build_and_package(args):
     print("=" * 70)
@@ -604,10 +470,7 @@ def build_and_package(args):
     except Exception:
         pass
 
-    if args.standalone_launcher:
-        build_standalone_launcher(staging_dir, force_rebuild=args.rebuild_launcher)
-    else:
-        deploy_launcher_wrapper(staging_dir)
+    deploy_launcher_wrapper(staging_dir)
 
     print("[*] Copying scripts...")
     copy_tree_filtered(ROOT_DIR / "scripts", staging_dir / "scripts")
@@ -771,10 +634,8 @@ def main():
                         help="Do not bundle fsr4_shaders/ folder")
     parser.add_argument("--no-strip", dest="strip", action="store_false", default=True,
                         help="Do not strip debug symbols from libbbgpu.so")
-    parser.add_argument("--no-standalone-launcher", dest="standalone_launcher", action="store_false", default=True,
-                        help="Do not compile a standalone PyInstaller launcher with bundled GTK4/Libadwaita")
-    parser.add_argument("--rebuild-launcher", action="store_true", default=False,
-                        help="Force rebuilding standalone launcher executable even if cached binary is present")
+    parser.add_argument("--no-standalone-launcher", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--rebuild-launcher", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--docker", action="store_true", default=False,
                         help="Build inside an Ubuntu 22.04 Docker container for maximum Linux distribution compatibility (glibc 2.35)")
     parser.add_argument("--clean", action="store_true", default=True,
