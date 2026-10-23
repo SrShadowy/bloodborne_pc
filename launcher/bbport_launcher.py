@@ -165,16 +165,30 @@ class LauncherWindow(
         self.settings = load_settings()
         saved_w = self.settings.get("window_width", 980)
         saved_h = self.settings.get("window_height", 780)
+
+        # Clamp to current display/monitor dimensions to fit smaller screens (e.g. Steam Deck 1280x800)
+        max_w, max_h = 3840, 2160
+        disp = Gdk.Display.get_default()
+        if disp:
+            monitors = disp.get_monitors()
+            if monitors and monitors.get_n_items() > 0:
+                m = monitors.get_item(0)
+                geom = m.get_geometry()
+                if geom.width > 0 and geom.height > 0:
+                    max_w = max(700, geom.width - 40)
+                    max_h = max(500, geom.height - 80)
+
         try:
-            saved_w = max(700, min(int(saved_w), 3840))
-            saved_h = max(500, min(int(saved_h), 2160))
+            saved_w = max(700, min(int(saved_w), max_w))
+            saved_h = max(500, min(int(saved_h), max_h))
         except (ValueError, TypeError):
-            saved_w, saved_h = 980, 780
+            saved_w, saved_h = min(980, max_w), min(780, max_h)
+
         self.set_default_size(saved_w, saved_h)
         if self.settings.get("window_maximized", False):
             self.maximize()
 
-        self.theme_mode = self.settings.get("theme_mode", "dark")
+        self.theme_mode = self.settings.get("theme_mode", "system")
         self.apply_theme(self.theme_mode)
         try:
             self.setup_css()
@@ -400,7 +414,9 @@ class LauncherWindow(
     def update_theme_button(self):
         if not hasattr(self, "theme_button") or not self.theme_button:
             return
-        if getattr(self, "theme_mode", "dark") == "light":
+        sm = Adw.StyleManager.get_default()
+        is_dark = sm.get_dark() if getattr(self, "theme_mode", "system") == "system" else (self.theme_mode == "dark")
+        if not is_dark:
             self.theme_button.set_icon_name("weather-clear-night-symbolic")
             self.theme_button.set_tooltip_text(tr("Тёмная тема"))
         else:
@@ -409,26 +425,51 @@ class LauncherWindow(
 
     def apply_theme(self, mode=None, save=False):
         if mode is None:
-            mode = self.settings.get("theme_mode", "dark")
+            mode = self.settings.get("theme_mode", "system")
         self.theme_mode = mode
         self.settings["theme_mode"] = mode
         if save:
             save_settings(self.settings)
 
         sm = Adw.StyleManager.get_default()
+        high_contrast = sm.get_high_contrast() if hasattr(sm, "get_high_contrast") else False
+
         if mode == "light":
             sm.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
             self.remove_css_class("dark-theme")
-            self.add_css_class("light-theme")
-        else:
+            if not high_contrast:
+                self.add_css_class("light-theme")
+        elif mode == "dark":
             sm.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             self.remove_css_class("light-theme")
-            self.add_css_class("dark-theme")
+            if not high_contrast:
+                self.add_css_class("dark-theme")
+        else:  # "system"
+            sm.set_color_scheme(Adw.ColorScheme.DEFAULT)
+            if high_contrast:
+                # Preserve high contrast theme without clobbering with custom palette
+                self.remove_css_class("light-theme")
+                self.remove_css_class("dark-theme")
+            elif sm.get_dark():
+                self.remove_css_class("light-theme")
+                self.add_css_class("dark-theme")
+            else:
+                self.remove_css_class("dark-theme")
+                self.add_css_class("light-theme")
+
+        if not hasattr(self, "_theme_notify_connected") and sm:
+            try:
+                sm.connect("notify::dark", lambda *_: self.apply_theme("system", save=False) if getattr(self, "theme_mode", "system") == "system" else None)
+                self._theme_notify_connected = True
+            except Exception:
+                pass
 
         self.update_theme_button()
 
     def on_toggle_theme(self, _button):
-        next_mode = "dark" if self.theme_mode == "light" else "light"
+        sm = Adw.StyleManager.get_default()
+        current_is_dark = sm.get_dark() if self.theme_mode == "system" else (self.theme_mode == "dark")
+        next_mode = "light" if current_is_dark else "dark"
         self.apply_theme(next_mode, save=True)
 
     def build(self):
@@ -1292,6 +1333,44 @@ def build_fsr411(arguments):
     return subprocess.call(command, env=env, cwd=PORT_DIR)
 
 
+def ensure_display():
+    """Verifies display availability with graceful Wayland-to-X11 fallback.
+
+    Returns the active Gdk.Display or None if no display could be opened.
+    """
+    if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+        return None
+
+    if os.environ.get("GDK_BACKEND") == "wayland" and not os.environ.get("WAYLAND_DISPLAY"):
+        if os.environ.get("DISPLAY"):
+            LOG.warning("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.")
+            print("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "x11"
+        else:
+            return None
+
+    try:
+        Gtk.init_check()
+    except Exception as e:
+        LOG.warning("Gtk.init_check() exception: %s", e)
+
+    disp = Gdk.Display.get_default()
+    if disp is None:
+        if os.environ.get("DISPLAY"):
+            LOG.warning("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.")
+            print("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "x11"
+            try:
+                disp_x11 = Gdk.Display.open(os.environ["DISPLAY"])
+                if disp_x11:
+                    Gdk.DisplayManager.get().set_default_display(disp_x11)
+                    disp = disp_x11
+            except Exception as e:
+                LOG.error("Failed to open X11 fallback display: %s", e)
+
+    return Gdk.Display.get_default()
+
+
 def main():
     if "--play" in sys.argv[1:]:
         return play()
@@ -1323,14 +1402,14 @@ def main():
         print("Error: Python >= 3.9 is required to run BBPort Launcher.", file=sys.stderr)
         return 1
 
-    # Preflight: Check display server availability for graphical session
-    if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
-        err_msg = "[E-DISP-001] Nenhum display gráfico detectado (WAYLAND_DISPLAY e DISPLAY não definidos). Execute em uma sessão gráfica ou use --diagnostics / --play."
+    display = ensure_display()
+    if not display:
+        err_msg = "[E-DISP-001] Nenhum display gráfico disponível (servidores Wayland e X11 inacessíveis). Execute em uma sessão gráfica ou use --diagnostics / --play."
         LOG.error("startup.preflight.failed: %s", err_msg)
         print(f"Erro: {err_msg}", file=sys.stderr)
         return 1
 
-    LOG.info("startup.preflight.ok")
+    LOG.info("startup.preflight.ok: active_display=%s", get_runtime_backend(display))
 
     # Pass only program name and recognized GTK/GIO flags so file managers
     # passing file URLs/paths (like Dolphin) do not trigger GLib "cannot open files" error

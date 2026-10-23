@@ -260,7 +260,7 @@ DEFAULTS = {
     "aspect": "auto",
     # The game window's SDL backend: auto (run.sh decides), x11 or wayland.
     "video_backend": "auto",
-    "theme_mode": "dark",
+    "theme_mode": "system",
     "discord_client_id": "1560890616811102219",
 }
 

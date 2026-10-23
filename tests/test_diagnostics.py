@@ -170,6 +170,25 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
             self.fail(f"GamepadTesterDialog failed: {e}")
 
 
+    def test_wayland_fallback_to_x11(self):
+        import subprocess
+        env = dict(os.environ)
+        env["GDK_BACKEND"] = "wayland"
+        env["WAYLAND_DISPLAY"] = "invalid_nonexistent_wayland_socket"
+        code = (
+            "import sys; sys.path.insert(0, 'launcher'); "
+            "from bbport_launcher import ensure_display, get_runtime_backend; "
+            "d = ensure_display(); print('backend:', get_runtime_backend(d))"
+        )
+        res = subprocess.run([sys.executable, "-c", code],
+                             cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", res.stderr)
+        self.assertIn("X11", res.stdout)
+
+    def test_theme_mode_default(self):
+        self.assertEqual(bbport_config.DEFAULTS.get("theme_mode"), "system")
+
     def test_pycache_prefix_configured(self):
         import subprocess
         code = f"""
@@ -187,3 +206,4 @@ print('prefix:', sys.pycache_prefix)
 
 if __name__ == "__main__":
     unittest.main()
+
