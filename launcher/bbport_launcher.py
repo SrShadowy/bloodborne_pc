@@ -18,19 +18,6 @@ from pathlib import Path
 from bbport_assets import fsr411_problem
 from bbport_i18n import set_language, tr
 
-# Detect or configure launcher window backend (X11 vs Wayland).
-# Respect BB_LAUNCHER_BACKEND if set (x11 or wayland). Default to modern OpenGL renderer
-# without forcing X11/Cairo on Hyprland, allowing native Wayland to work smoothly.
-_launcher_backend = os.environ.get("BB_LAUNCHER_BACKEND", "").lower()
-if _launcher_backend == "x11":
-    os.environ["GDK_BACKEND"] = "x11"
-    os.environ.setdefault("GSK_RENDERER", "gl")
-elif _launcher_backend == "wayland":
-    os.environ["GDK_BACKEND"] = "wayland"
-    os.environ.setdefault("GSK_RENDERER", "gl")
-else:
-    os.environ.setdefault("GSK_RENDERER", "gl")
-
 # [Diagnostics & Logging Bootstrap — Phase 0]
 _LAUNCHER_DIR = Path(__file__).resolve().parent
 if str(_LAUNCHER_DIR) not in sys.path:
@@ -51,6 +38,26 @@ _LAUNCHER_LOG = get_log_file() or (Path.home() / ".config" / "bbport-launcher" /
 
 def _launcher_log(line):
     LOG.info(line)
+
+
+# Detect or configure launcher window backend (X11 vs Wayland).
+# Respect CLI flags (--x11, --wayland) or BB_LAUNCHER_BACKEND env var. Default to modern OpenGL renderer.
+if "--x11" in sys.argv:
+    os.environ["GDK_BACKEND"] = "x11"
+    os.environ.setdefault("GSK_RENDERER", "gl")
+elif "--wayland" in sys.argv:
+    os.environ["GDK_BACKEND"] = "wayland"
+    os.environ.setdefault("GSK_RENDERER", "gl")
+else:
+    _launcher_backend = os.environ.get("BB_LAUNCHER_BACKEND", "").lower()
+    if _launcher_backend == "x11":
+        os.environ["GDK_BACKEND"] = "x11"
+        os.environ.setdefault("GSK_RENDERER", "gl")
+    elif _launcher_backend == "wayland":
+        os.environ["GDK_BACKEND"] = "wayland"
+        os.environ.setdefault("GSK_RENDERER", "gl")
+    else:
+        os.environ.setdefault("GSK_RENDERER", "gl")
 
 if getattr(sys, "frozen", False):
     _meipass_typelibs = Path(getattr(sys, "_MEIPASS", "")) / "girepository-1.0"
@@ -166,7 +173,7 @@ class LauncherWindow(
             else:
                 LOG.info("startup.sdl.ok: no gamepad currently connected")
         except Exception as e:
-            LOG.warning("startup.sdl.degraded: gamepad navigation unavailable (%s)", e)
+            LOG.warning("[W-SDL-001] startup.sdl.degraded: gamepad navigation unavailable (%s)", e)
             self.gamepad_nav = None
         self.connect("close-request", self.on_close)
 
@@ -1199,10 +1206,17 @@ class LauncherApp(Adw.Application):
 
     def do_startup(self):
         LOG.info("startup.gtk.begin")
-        Adw.Application.do_startup(self)
+        try:
+            Adw.Application.do_startup(self)
+        except Exception as e:
+            LOG.exception("[E-GTK-001] startup.gtk.failed: falha ao inicializar backend gráfico GTK: %s", e)
+            raise
         setup_icons()
         display = Gdk.Display.get_default()
-        LOG.info("startup.gtk.ok: active_backend=%s", get_runtime_backend(display))
+        if not display:
+            LOG.error("[E-GTK-001] startup.gtk.failed: Gdk.Display.get_default() retornou None. O backend gráfico não pôde conectar ao servidor de exibição.")
+        else:
+            LOG.info("startup.gtk.ok: active_backend=%s", get_runtime_backend(display))
 
     def do_activate(self):
         setup_icons()
@@ -1214,6 +1228,25 @@ class LauncherApp(Adw.Application):
         window.present()
         t_total = (time.monotonic() - getattr(self, "startup_t0", time.monotonic())) * 1000.0
         LOG.info("startup.completed: total_elapsed=%.1fms", t_total)
+
+
+def get_launcher_version():
+    ver_file = Path(__file__).resolve().parent / "VERSION"
+    if ver_file.is_file():
+        try:
+            return ver_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    try:
+        res = subprocess.run(["git", "describe", "--tags", "--always"],
+                             cwd=Path(__file__).resolve().parent.parent,
+                             capture_output=True, text=True, timeout=1.0)
+        if res.returncode == 0 and res.stdout.strip():
+            ver = res.stdout.strip()
+            return ver[1:] if ver.startswith("v") else ver
+    except Exception:
+        pass
+    return "0.6.2"
 
 
 def play():
@@ -1244,12 +1277,36 @@ def main():
     if "--diagnostics" in sys.argv[1:]:
         print(collect_diagnostics_report())
         return 0
+    if "--version" in sys.argv[1:] or "-v" in sys.argv[1:]:
+        print(f"BBPort Launcher {get_launcher_version()}")
+        return 0
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(f"BBPort Launcher {get_launcher_version()} - Bloodborne PC Port Launcher")
+        print("\nUso:")
+        print("  bbport-launcher [opções]\n")
+        print("Opções:")
+        print("  --play             Inicia o jogo diretamente com as configurações salvas (Steam Deck / Game Mode)")
+        print("  --diagnostics      Gera e exibe relatório de diagnóstico do sistema e encerra")
+        print("  --version, -v      Exibe a versão do launcher e encerra")
+        print("  --help, -h         Exibe esta mensagem de ajuda e encerra")
+        print("  --x11              Força o uso do backend X11/XWayland")
+        print("  --wayland          Força o uso do backend Wayland nativo")
+        print("  --build-fsr411     Compila os shaders FSR 4.1.1 em segundo plano")
+        return 0
 
     LOG.info("startup.preflight.begin")
     if sys.version_info < (3, 9):
         LOG.error("startup.preflight.failed: Python >= 3.9 required, found %s", sys.version)
         print("Error: Python >= 3.9 is required to run BBPort Launcher.", file=sys.stderr)
         return 1
+
+    # Preflight: Check display server availability for graphical session
+    if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+        err_msg = "[E-DISP-001] Nenhum display gráfico detectado (WAYLAND_DISPLAY e DISPLAY não definidos). Execute em uma sessão gráfica ou use --diagnostics / --play."
+        LOG.error("startup.preflight.failed: %s", err_msg)
+        print(f"Erro: {err_msg}", file=sys.stderr)
+        return 1
+
     LOG.info("startup.preflight.ok")
 
     # Pass only program name and recognized GTK/GIO flags so file managers

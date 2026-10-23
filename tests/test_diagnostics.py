@@ -124,6 +124,51 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
         except Exception as e:
             self.fail(f"LauncherApp registration/startup failed: {e}")
 
+    def test_cli_flags(self):
+        import subprocess
+        launcher_script = ROOT / "launcher" / "bbport_launcher.py"
+
+        # --help
+        res_help = subprocess.run([sys.executable, str(launcher_script), "--help"],
+                                  capture_output=True, text=True, timeout=5)
+        self.assertEqual(res_help.returncode, 0)
+        self.assertIn("BBPort Launcher", res_help.stdout)
+        self.assertIn("--diagnostics", res_help.stdout)
+        self.assertIn("--x11", res_help.stdout)
+        self.assertIn("--wayland", res_help.stdout)
+
+        # --version
+        res_ver = subprocess.run([sys.executable, str(launcher_script), "--version"],
+                                 capture_output=True, text=True, timeout=5)
+        self.assertEqual(res_ver.returncode, 0)
+        self.assertIn("BBPort Launcher", res_ver.stdout)
+
+    def test_headless_display_preflight(self):
+        import subprocess
+        launcher_script = ROOT / "launcher" / "bbport_launcher.py"
+        env = dict(os.environ)
+        env.pop("WAYLAND_DISPLAY", None)
+        env.pop("DISPLAY", None)
+
+        res = subprocess.run([sys.executable, str(launcher_script)],
+                             env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(res.returncode, 1)
+        output = res.stdout + res.stderr
+        self.assertIn("E-DISP-001", output)
+
+    def test_gamepad_tester_dialog(self):
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            gi.require_version("Adw", "1")
+            from bbport_gamepad_tester import GamepadTesterDialog
+            dialog = GamepadTesterDialog()
+            self.assertIsNotNone(dialog)
+            self.assertEqual(dialog.get_title(), "Тестирование геймпада")
+            dialog.on_close(dialog)
+        except Exception as e:
+            self.fail(f"GamepadTesterDialog failed: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()

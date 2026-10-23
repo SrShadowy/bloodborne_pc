@@ -85,6 +85,14 @@ class ControlsMixin:
         self.fill_gamepads()
         gamepad_group.add(self.gamepad_row)
 
+        test_row = Adw.ActionRow(title=tr("Проверить геймпад"),
+                                 subtitle=tr("Тестирование кнопок, стиков и триггеров в реальном времени"))
+        test_btn = flat_button("input-gaming-symbolic", tr("Проверить"),
+                               lambda _button: self.on_test_gamepad())
+        test_row.add_suffix(test_btn)
+        test_row.set_activatable_widget(test_btn)
+        gamepad_group.add(test_row)
+
         self.disable_gyro_row = Adw.SwitchRow(
             title=tr("Отключить гироскоп"),
             subtitle=tr("Игнорировать датчики движения (жесты SixAxis)"),
@@ -261,3 +269,11 @@ class ControlsMixin:
         selected = names[idx] if names and 0 <= idx < len(names) else ""
         self.gamepad_row.set_subtitle("\n".join(
             line for line in (selected, tr("Выбранный берётся, как только подключится")) if line))
+
+    def on_test_gamepad(self):
+        try:
+            from bbport_gamepad_tester import GamepadTesterDialog
+            dialog = GamepadTesterDialog(parent_window=self)
+            dialog.present()
+        except Exception as e:
+            self.toasts.add_toast(Adw.Toast(title=tr("Не удалось открыть тест геймпада: {}").format(e)))
