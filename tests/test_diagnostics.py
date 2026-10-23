@@ -170,5 +170,20 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
             self.fail(f"GamepadTesterDialog failed: {e}")
 
 
+    def test_pycache_prefix_configured(self):
+        import subprocess
+        code = f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, 'launcher')
+import bbport_launcher
+print('prefix:', sys.pycache_prefix)
+"""
+        res = subprocess.run([sys.executable, "-c", code],
+                             cwd=str(ROOT), capture_output=True, text=True, timeout=5)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("bbport/pycache", res.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

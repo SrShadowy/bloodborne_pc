@@ -130,6 +130,9 @@ if [[ -d "$HERE/fsr4_shaders" && -z "${BB_FSR4_SHADERS:-}" ]]; then
     export BB_FSR4_SHADERS="$HERE/fsr4_shaders"
 fi
 
+# Python bytecode cache for instant startup and fast cold launches
+export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/bbport/pycache"
+
 # Configure launcher backend: respect BB_LAUNCHER_BACKEND if set (x11 or wayland),
 # otherwise default to modern OpenGL renderer and let GTK negotiate native Wayland/X11 automatically.
 if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]]; then
@@ -302,6 +305,9 @@ export BB_PREBUILT=1
 if [[ -d "$ROOT/fsr4_shaders" && -z "${BB_FSR4_SHADERS:-}" ]]; then
     export BB_FSR4_SHADERS="$ROOT/fsr4_shaders"
 fi
+
+# Python bytecode cache for instant startup and fast cold launches
+export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/bbport/pycache"
 
 # Configure launcher backend: respect BB_LAUNCHER_BACKEND if set (x11 or wayland),
 # otherwise default to modern OpenGL renderer and let GTK negotiate native Wayland/X11 automatically.
@@ -590,6 +596,13 @@ def build_and_package(args):
     # Make launcher scripts executable
     if (staging_dir / "launcher" / "bb-launcher.sh").exists():
         (staging_dir / "launcher" / "bb-launcher.sh").chmod(0o755)
+
+    # Precompile Python bytecode in staging for fast cold launches
+    try:
+        import compileall
+        compileall.compile_dir(staging_dir / "launcher", quiet=1)
+    except Exception:
+        pass
 
     if args.standalone_launcher:
         build_standalone_launcher(staging_dir, force_rebuild=args.rebuild_launcher)

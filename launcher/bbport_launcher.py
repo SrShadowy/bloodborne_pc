@@ -15,13 +15,27 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from bbport_assets import fsr411_problem
-from bbport_i18n import set_language, tr
+
+# [Python Bytecode Cache Optimization]
+# Cache compiled .pyc files in user's XDG cache directory (~/.cache/bbport/pycache).
+# Accelerates startup, eliminates re-parsing on read-only filesystems (AppImage/Nix),
+# and prevents cluttering working directories with __pycache__.
+_cache_home = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+_pycache_dir = Path(_cache_home) / "bbport" / "pycache"
+try:
+    _pycache_dir.mkdir(parents=True, exist_ok=True)
+    sys.pycache_prefix = str(_pycache_dir)
+    os.environ.setdefault("PYTHONPYCACHEPREFIX", str(_pycache_dir))
+except OSError:
+    pass
 
 # [Diagnostics & Logging Bootstrap — Phase 0]
 _LAUNCHER_DIR = Path(__file__).resolve().parent
 if str(_LAUNCHER_DIR) not in sys.path:
     sys.path.insert(0, str(_LAUNCHER_DIR))
+
+from bbport_assets import fsr411_problem
+from bbport_i18n import set_language, tr
 
 from diagnostics import (
     LOG,
