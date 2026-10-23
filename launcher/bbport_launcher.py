@@ -107,6 +107,27 @@ from bbport_game_runner import GameRunnerMixin
 from bbport_gamepad import GamepadNavigator
 
 
+def setup_icons():
+    """Configures fallback icon search path and ensures symbolic icons are loaded."""
+    display = Gdk.Display.get_default()
+    if display:
+        try:
+            icon_theme = Gtk.IconTheme.get_for_display(display)
+            icons_dir = Path(__file__).resolve().parent / "icons"
+            if icons_dir.is_dir():
+                icon_theme.add_search_path(str(icons_dir))
+
+            # If current desktop icon theme lacks standard Adwaita symbolics (e.g. on KDE Breeze),
+            # fall back to Adwaita icon theme
+            settings = Gtk.Settings.get_default()
+            if settings:
+                current_theme = settings.get_property("gtk-icon-theme-name")
+                if not current_theme or not icon_theme.has_icon("video-display-symbolic"):
+                    settings.set_property("gtk-icon-theme-name", "Adwaita")
+        except Exception as e:
+            print(f"[!] Warning: Icon theme setup failed: {e}", file=sys.stderr)
+
+
 _AdwWindowBase = Adw.ApplicationWindow if isinstance(Adw.ApplicationWindow, type) else object
 
 
@@ -122,6 +143,7 @@ class LauncherWindow(
     _AdwWindowBase,
 ):
     def __init__(self, app):
+        setup_icons()
         super().__init__(application=app, title="Bloodborne")
         self.set_default_size(980, 780)
         self.settings = load_settings()
@@ -435,10 +457,20 @@ class LauncherWindow(
 
         log_text = self.log_text() if hasattr(self, "log_view") else ""
 
+        perf_icon = "speedometer-symbolic"
+        try:
+            display = Gdk.Display.get_default()
+            if display:
+                it = Gtk.IconTheme.get_for_display(display)
+                if not it.has_icon("speedometer-symbolic") and it.has_icon("power-profile-performance-symbolic"):
+                    perf_icon = "power-profile-performance-symbolic"
+        except Exception:
+            pass
+
         tab_items = [
             ("overview", tr("Главная"), "user-home-symbolic", self.build_overview_page),
             ("graphics", tr("Графика"), "video-display-symbolic", self.build_graphics_page),
-            ("performance", tr("Производительность"), "speedometer-symbolic", self.build_performance_page),
+            ("performance", tr("Производительность"), perf_icon, self.build_performance_page),
             ("controls", tr("Управление"), "input-gaming-symbolic", self.build_controls_page),
             ("online", tr("Онлайн"), "network-workgroup-symbolic", self.build_online_page),
             ("mods", tr("Моды и патчи"), "application-x-addon-symbolic", self.build_mods_page),
@@ -1159,7 +1191,12 @@ class LauncherApp(Adw.Application):
         flags = getattr(Gio.ApplicationFlags, "NON_UNIQUE", 0)
         super().__init__(application_id="io.github.bbport.Launcher", flags=flags)
 
+    def do_startup(self):
+        super().do_startup()
+        setup_icons()
+
     def do_activate(self):
+        setup_icons()
         window = self.get_active_window() or LauncherWindow(self)
         window.present()
 
