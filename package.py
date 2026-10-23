@@ -31,6 +31,14 @@ def run_command(cmd, cwd=ROOT_DIR, check=True):
     return res.returncode
 
 def get_git_version():
+    ver_file = ROOT_DIR / "VERSION"
+    if ver_file.is_file():
+        try:
+            v = ver_file.read_text(encoding="utf-8").strip()
+            if v:
+                return v
+        except OSError:
+            pass
     try:
         res = subprocess.run(
             ["git", "describe", "--tags", "--always"],
@@ -44,7 +52,7 @@ def get_git_version():
             ver = ver[1:]
         return ver
     except Exception:
-        return "0.6"
+        return "0.6.5-dev-24"
 
 def get_ldd_dependencies(binary_path):
     """Parses ldd output to find dynamic library dependencies."""

@@ -62,7 +62,7 @@ def get_launcher_version():
             return ver
     except Exception:
         pass
-    return "0.6.2"
+    return "0.6.5-dev-24"
 
 BB_VERSION = get_launcher_version()
 

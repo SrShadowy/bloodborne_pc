@@ -1355,12 +1355,14 @@ class LauncherApp(_AdwAppBase):
 
 
 def get_launcher_version():
-    ver_file = Path(__file__).resolve().parent / "VERSION"
-    if ver_file.is_file():
-        try:
-            return ver_file.read_text(encoding="utf-8").strip()
-        except OSError:
-            pass
+    for cand in [Path(__file__).resolve().parent / "VERSION", PORT_DIR / "VERSION"]:
+        if cand.is_file():
+            try:
+                v = cand.read_text(encoding="utf-8").strip()
+                if v:
+                    return v
+            except OSError:
+                pass
     try:
         res = subprocess.run(["git", "describe", "--tags", "--always"],
                              cwd=Path(__file__).resolve().parent.parent,
@@ -1370,7 +1372,7 @@ def get_launcher_version():
             return ver[1:] if ver.startswith("v") else ver
     except Exception:
         pass
-    return "0.6.2"
+    return "0.6.5-dev-24"
 
 
 def play():
