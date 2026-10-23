@@ -220,6 +220,15 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
         advisories = check_gpu_diagnostics()
         self.assertIsInstance(advisories, list)
 
+    def test_updater_version_parsing(self):
+        from bbport_updater import parse_ver_tuple, check_for_updates_async
+        self.assertEqual(parse_ver_tuple("v0.6.2"), (0, 6, 2))
+        self.assertEqual(parse_ver_tuple("0.6.3-15-gabcdef"), (0, 6, 3))
+        self.assertGreater(parse_ver_tuple("v0.6.3"), parse_ver_tuple("v0.6.2"))
+        self.assertLess(parse_ver_tuple("0.6.1"), parse_ver_tuple("0.6.2"))
+        # Verify async trigger starts thread without blocking
+        check_for_updates_async("999.0.0", lambda *_: None)
+
     def test_pycache_prefix_configured(self):
         import subprocess
         code = f"""

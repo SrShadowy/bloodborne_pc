@@ -221,6 +221,16 @@ class LauncherWindow(
             self.gamepad_nav = None
         self.connect("close-request", self.on_close)
 
+        if self.settings.get("check_updates", True):
+            try:
+                from bbport_updater import check_for_updates_async, notify_update_in_window
+                check_for_updates_async(
+                    BB_VERSION,
+                    lambda tag, url: notify_update_in_window(self, tag, url),
+                )
+            except Exception as e:
+                LOG.debug("updater: initial trigger failed: %s", e)
+
     @property
     def fsr411_build(self):
         return self.fsr411_mgr.build_proc

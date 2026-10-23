@@ -81,6 +81,9 @@ EN = {
     "Тёмная": "Dark",
     "Применится после перезапуска лаунчера, пока игра запущена":
         "Applies after restarting the launcher while the game is running",
+    "Nova versão disponível (AppImage): {}": "New version available (AppImage): {}",
+    "Nova versão disponível: {}": "New version available: {}",
+    "Ver no GitHub": "View on GitHub",
     # Game
     "Игра": "Game",
     "Папка игры (CUSA03173)": "Game folder (CUSA03173)",
@@ -1055,6 +1058,9 @@ PT_BR = {
     "Тёмная": "Escuro",
     "Применится после перезапуска лаунчера, пока игра запущена":
         "Será aplicado após reiniciar o launcher enquanto o jogo estiver em execução",
+    "Nova versão disponível (AppImage): {}": "Nova versão disponível (AppImage): {}",
+    "Nova versão disponível: {}": "Nova versão disponível: {}",
+    "Ver no GitHub": "Ver no GitHub",
     # Game
     "Игра": "Jogo",
     "Папка игры (CUSA03173)": "Pasta do jogo (CUSA03173)",
