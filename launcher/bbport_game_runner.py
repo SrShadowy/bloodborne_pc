@@ -43,6 +43,22 @@ class GameRunnerMixin:
                                         "зарегистрированное на сервере, а не адрес email"))
             self.stack.set_visible_child_name("online")
             return
+
+        game_path = self.game_dir()
+        if not game_path or not (game_path / "eboot.bin").is_file():
+            self.alert("Bloodborne", tr("Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar."))
+            self.stack.set_visible_child_name("main")
+            return
+
+        from bbport_config import DATA_DIR
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            if not os.access(DATA_DIR, os.W_OK):
+                self.alert("Bloodborne", tr("Sem permissão de escrita no diretório de dados: {}").format(DATA_DIR))
+                return
+        except Exception:
+            pass
+
         self.store()
         self.log_view.get_buffer().set_text("")
         launcher = Gio.SubprocessLauncher.new(
@@ -102,7 +118,11 @@ class GameRunnerMixin:
             process.wait_finish(result)
         except GLib.Error:
             pass
-        status = process.get_exit_status() if process.get_if_exited() else -1
+        exited = process.get_if_exited()
+        signaled = process.get_if_signaled()
+        status = process.get_exit_status() if exited else -1
+        term_sig = process.get_term_sig() if signaled else 0
+
         self.process = None
         self.reload_ini_from_disk()
         self.update_launch_button()
@@ -113,7 +133,36 @@ class GameRunnerMixin:
             self.log_status_badge.set_label(tr("Игра не запущена"))
             self.log_status_badge.remove_css_class("badge-success")
             self.log_status_badge.add_css_class("badge-warning")
-        self.append_log(tr("\n— игра завершилась (код {}) —\n").format(status))
+
+        from pathlib import Path
+        from diagnostics import get_log_file, LOG
+        log_file = get_log_file() or (Path.home() / ".local" / "state" / "bbport" / "logs" / "launcher.log")
+
+        if signaled:
+            try:
+                sig_name = signal.Signals(term_sig).name
+            except (ValueError, AttributeError):
+                sig_name = f"SIG#{term_sig}"
+            LOG.error("game.crash: process terminated by signal %d (%s)", term_sig, sig_name)
+            msg = (
+                f"\n— O jogo foi encerrado inesperadamente (sinal {term_sig} / {sig_name}). —\n"
+                f"Consulte o log em: {log_file}\n"
+            )
+            self.append_log(msg)
+            if hasattr(self, "toasts"):
+                self.toasts.add_toast(Adw.Toast(title=f"Jogo encerrado (sinal {term_sig} / {sig_name})"))
+        elif status != 0:
+            LOG.error("game.exit: process exited with error code %d", status)
+            msg = (
+                f"\n— O jogo foi encerrado com código de erro {status}. —\n"
+                f"Consulte o log em: {log_file}\n"
+            )
+            self.append_log(msg)
+            if hasattr(self, "toasts"):
+                self.toasts.add_toast(Adw.Toast(title=f"Jogo encerrado (código {status})"))
+        else:
+            LOG.info("game.exit: process exited normally (status 0)")
+            self.append_log(tr("\n— игра завершилась (код 0) —\n"))
 
     def reload_ini_from_disk(self):
         """Reloads bbport.ini from disk and refreshes all launcher widgets that display ini values."""
