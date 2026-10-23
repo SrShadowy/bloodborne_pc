@@ -237,6 +237,14 @@ pkgs.stdenv.mkDerivation {
       done
       [ -f out/NVIDIA-DLSS-LICENSE.txt ] && install -m644 out/NVIDIA-DLSS-LICENSE.txt $d/NVIDIA-DLSS-LICENSE.txt
     fi
+
+    # Desktop integration: icons and application entry
+    mkdir -p $out/share/applications $out/share/pixmaps $out/share/icons/hicolor/256x256/apps
+    install -Dm644 ${./bbport.png} $out/share/pixmaps/bbport.png
+    install -Dm644 ${./bbport.png} $out/share/icons/hicolor/256x256/apps/bbport.png
+    sed 's|Exec=AppRun|Exec=bbport|' ${./bbport.desktop} > $out/share/applications/bbport.desktop
+    chmod 644 $out/share/applications/bbport.desktop
+
     runHook postInstall
   '';
   postFixup = ''
