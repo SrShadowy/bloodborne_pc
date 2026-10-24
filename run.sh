@@ -274,6 +274,8 @@ if [[ -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/
 fi
 if [[ -n ${BB_PREBUILT:-} ]]; then
     probe=${BB_PROBE:-bin/bb-probe}
+elif [[ ${BB_NO_BUILD:-0} == 1 && -x out/bb-probe && -f out/gpu/libbbgpu.so ]]; then
+    probe=${BB_PROBE:-out/bb-probe}
 else
     bash build.sh
     probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
