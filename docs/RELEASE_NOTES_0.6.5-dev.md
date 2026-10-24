@@ -8,6 +8,7 @@
 ## 🚀 Destaques Principais
 
 - ⚡ **AppImage Nativo Ultraleve (-80% de tamanho):** Substituição completa do antigo empacotador pesado pelo runtime nativo. O tamanho do AppImage caiu de **88 MB** para apenas **17.7 MB**, e o tempo de abertura foi reduzido para ~2 segundos com cache de bytecode XDG.
+- 💡 **Diagnóstico do Flickering (Filtro de Brilho no Display Pass):** Descoberta a causa raiz das oscilações visuais e flashes repentinos de brilho (*flickering*): a calibração de luminosidade do jogo passa por um filtro de brilho aplicado tardiamente na etapa de apresentação (**Display Pass**), descompassando com os buffers dos upscalers temporais (FSR/TAA).
 - 🖥️ **Compatibilidade Universal Wayland & X11:** Negociação dinâmica de backend gráfico sem poluir o sistema. Suporte de primeira classe para **KDE Plasma**, **GNOME**, **Hyprland/Sway** e **XFCE/MATE**, com fallback automático para X11/XWayland se o compositor Wayland não responder.
 - 🎮 **Nova Ferramenta Visual de Teste de Controles:** Interface dedicada em tempo real na aba *Controles* com chips luminosos para todos os 15 botões, indicadores de eixos analógicos e gatilhos (L2/R2), detecção de modelo (PlayStation DualSense, Xbox, Switch, Deck) e suporte a hotplug.
 - 🔍 **Subsistema de Diagnóstico & Observabilidade:** Novo gerador de relatórios técnicos redigidos (`--diagnostics`), logs rotativos seguros em `$XDG_STATE_HOME/bbport/logs/` e captura antecipada de crashes nativos via `faulthandler`.
@@ -15,6 +16,15 @@
 ---
 
 ## 📋 Registro Detalhado de Alterações (Changelog)
+
+### 🖥️ Gráficos, Vulkan & Pipeline de Renderização
+- **Descoberta da Causa Raiz do Flickering:** Isolado o comportamento que causava variações abruptas de intensidade luminosa entre frames. O filtro de brilho calibrado pelo jogo é injetado tardiamente durante o **Display Pass**, gerando inconsistências visuais ao interagir com renderização dinâmica e upscaling temporal. A localização exata do filtro permite o desacoplamento e correção definitiva nas próximas revisões.
+- **Detecção PCI & Vulkan:** Identificação direta das GPUs via barramento PCI (`/sys/bus/pci/devices`) e dispositivos Vulkan físicos.
+- **Priorização Inteligente em Híbridas:** Em notebooks com gráficos híbridos (APU + dGPU), prioriza a GPU dedicada por padrão.
+- **Diagnóstico de Drivers:**
+  - Alerta caso placas AMD estejam usando drivers proprietários alternativos (AMDGPU-PRO/AMDVLK) e recomenda o driver open-source **RADV (Mesa)**.
+  - Verificação de versão do driver NVIDIA com alerta caso a versão seja inferior a 535 ou o módulo do kernel `nvidia` não esteja carregado.
+  - Alerta claro se nenhum driver Vulkan ICD for encontrado no sistema.
 
 ### 🎛️ Launcher & Interface (GTK 4 / Libadwaita)
 - **Correção Crítica de Inicialização:** Resolvido o erro de ciclo de vida do GObject (`LauncherWindow is not initialized`) ao restaurar e posicionar a janela.
@@ -29,14 +39,6 @@
 - **Mapeamentos Comunitários:** Carregamento automático de arquivos `gamecontrollerdb.txt` presentes na pasta do jogo ou do usuário.
 - **Detecção de Steam Input:** Exibe alerta na interface quando o Steam Input está ativo para evitar sobreposição ou duplo mapeamento de botões.
 - **Identificação do Servidor de Áudio:** Detecção e logging automático no boot para **PipeWire**, **PulseAudio** e **ALSA**.
-
-### 🖥️ Gráficos, Vulkan & Hardware
-- **Detecção PCI & Vulkan:** Identificação direta das GPUs via barramento PCI (`/sys/bus/pci/devices`) e dispositivos Vulkan físicos.
-- **Priorização Inteligente em Híbridas:** Em notebooks com gráficos híbridos (APU + dGPU), prioriza a GPU dedicada por padrão.
-- **Diagnóstico de Drivers:**
-  - Alerta caso placas AMD estejam usando drivers proprietários alternativos (AMDGPU-PRO/AMDVLK) e recomenda o driver open-source **RADV (Mesa)**.
-  - Verificação de versão do driver NVIDIA com alerta caso a versão seja inferior a 535 ou o módulo do kernel `nvidia` não esteja carregado.
-  - Alerta claro se nenhum driver Vulkan ICD for encontrado no sistema.
 
 ### 🛡️ Preflight Checks & Execução do Jogo
 - **Validação Pré-Lançamento:** Checagem prévia da presença do `eboot.bin` e permissões de escrita antes de chamar o processo.
