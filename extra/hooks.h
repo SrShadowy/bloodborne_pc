@@ -10,3 +10,9 @@
 #include "core/video_backend/bbport_video_backend.h"
 #include "core/debugger/mem_map.h"
 #include "core/bbsc/bbport_bbsc_kit.h"
+
+#ifdef __cplusplus
+#include "vulkan/vk_common.h"
+void extra_fg_set_display_lut(vk::ImageView lut);
+vk::ImageView extra_fg_get_display_lut();
+#endif

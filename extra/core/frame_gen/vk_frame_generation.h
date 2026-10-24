@@ -118,6 +118,15 @@ private:
     };
     std::mutex targets_mutex;
     std::unordered_map<VAddr, Target> targets;
+
+    void ApplyDisplayLut(vk::CommandBuffer cmdbuf, vk::ImageView target_view, u32 width, u32 height,
+                         vk::Format format);
+    void EnsureLutPipeline();
+
+    vk::UniqueSampler lut_sampler;
+    vk::UniqueDescriptorSetLayout lut_desc_layout;
+    vk::UniquePipelineLayout lut_pipeline_layout;
+    vk::UniquePipeline lut_pipeline;
 };
 
 } // namespace Vulkan

@@ -11,6 +11,19 @@
 #include "ffx_vk_portable.h"
 #include "render/scheduler.h"
 #include "vulkan/instance.h"
+#include "vulkan/shader_module.h"
+#include "display_lut_comp.h"
+#include "extra/hooks.h"
+
+static std::atomic<VkImageView> s_display_lut{VK_NULL_HANDLE};
+
+void extra_fg_set_display_lut(vk::ImageView lut) {
+    s_display_lut.store(static_cast<VkImageView>(lut), std::memory_order_relaxed);
+}
+
+vk::ImageView extra_fg_get_display_lut() {
+    return vk::ImageView{s_display_lut.load(std::memory_order_relaxed)};
+}
 
 namespace Vulkan {
 
@@ -115,6 +128,10 @@ void FrameGeneration::Destroy() {
     hudless_ready = false;
     hudless_w = hudless_h = 0;
     hudless_format = vk::Format::eUndefined;
+    lut_pipeline.reset();
+    lut_pipeline_layout.reset();
+    lut_desc_layout.reset();
+    lut_sampler.reset();
 }
 
 bool FrameGeneration::EnsureContext(u32 render_width, u32 render_height, u32 width, u32 height,
@@ -461,6 +478,8 @@ void FrameGeneration::Interpolate(vk::Image color, VAddr display) {
                 std::printf("Frame generation: the interpolation could not be recorded (%s %d)\n",
                             prepared != FFX_VK_PORTABLE_OK ? "prepare" : "dispatch", int(dispatched));
             }
+        } else {
+            ApplyDisplayLut(cmdbuf, *target->view, target->width, target->height, target->format);
         }
         ImageBarrier(cmdbuf, color, vk::PipelineStageFlagBits2::eComputeShader,
                      vk::AccessFlagBits2::eShaderRead, all,
@@ -479,6 +498,118 @@ void FrameGeneration::Interpolate(vk::Image color, VAddr display) {
                          vk::AccessFlagBits2::eTransferWrite, all, vk::AccessFlagBits2::eMemoryRead);
         }
     });
+}
+
+void FrameGeneration::EnsureLutPipeline() {
+    if (lut_pipeline) {
+        return;
+    }
+    const auto device = instance.GetDevice();
+    lut_sampler = Check<"create fg lut sampler">(device.createSamplerUnique({
+        .magFilter = vk::Filter::eLinear,
+        .minFilter = vk::Filter::eLinear,
+        .mipmapMode = vk::SamplerMipmapMode::eNearest,
+        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+        .maxAnisotropy = 1.0f,
+        .minLod = -1000.0f,
+        .maxLod = 1000.0f,
+    }));
+
+    const std::array<vk::DescriptorSetLayoutBinding, 2> bindings{{
+        {
+            .binding = 0,
+            .descriptorType = vk::DescriptorType::eStorageImage,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eCompute,
+        },
+        {
+            .binding = 1,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eCompute,
+        },
+    }};
+    lut_desc_layout = Check<"create fg lut desc layout">(device.createDescriptorSetLayoutUnique({
+        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+        .bindingCount = u32(bindings.size()),
+        .pBindings = bindings.data(),
+    }));
+
+    const vk::PushConstantRange pc_range{
+        .stageFlags = vk::ShaderStageFlagBits::eCompute,
+        .offset = 0,
+        .size = sizeof(u32) * 3,
+    };
+    const vk::DescriptorSetLayout set_layout = *lut_desc_layout;
+    lut_pipeline_layout = Check<"create fg lut pipe layout">(device.createPipelineLayoutUnique({
+        .setLayoutCount = 1,
+        .pSetLayouts = &set_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &pc_range,
+    }));
+
+    const vk::ShaderModule comp_module = CompileSPV(display_lut_comp, device);
+    lut_pipeline = Check<"create fg lut pipeline">(device.createComputePipelineUnique(
+        {}, vk::ComputePipelineCreateInfo{
+                .stage = {
+                    .stage = vk::ShaderStageFlagBits::eCompute,
+                    .module = comp_module,
+                    .pName = "main",
+                },
+                .layout = *lut_pipeline_layout,
+            }));
+    device.destroyShaderModule(comp_module);
+}
+
+void FrameGeneration::ApplyDisplayLut(vk::CommandBuffer cmdbuf, vk::ImageView target_view,
+                                     u32 width, u32 height, vk::Format format) {
+    const vk::ImageView lut = extra_fg_get_display_lut();
+    if (!lut) {
+        return;
+    }
+    EnsureLutPipeline();
+    if (!lut_pipeline) {
+        return;
+    }
+
+    const vk::DescriptorImageInfo target_info{
+        .imageView = target_view,
+        .imageLayout = vk::ImageLayout::eGeneral,
+    };
+    const vk::DescriptorImageInfo lut_info{
+        .sampler = *lut_sampler,
+        .imageView = lut,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    };
+    const std::array<vk::WriteDescriptorSet, 2> writes{{
+        {
+            .dstBinding = 0,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eStorageImage,
+            .pImageInfo = &target_info,
+        },
+        {
+            .dstBinding = 1,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .pImageInfo = &lut_info,
+        },
+    }};
+    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *lut_pipeline);
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *lut_pipeline_layout, 0, writes);
+    const struct {
+        u32 width;
+        u32 height;
+        u32 is_bgra;
+    } pc{
+        .width = width,
+        .height = height,
+        .is_bgra = (format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb) ? 1u : 0u,
+    };
+    cmdbuf.pushConstants(*lut_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(pc), &pc);
+    cmdbuf.dispatch((width + 15) / 16, (height + 15) / 16, 1);
 }
 
 bool FrameGeneration::TakeOutput(VAddr display, Output& out) {
