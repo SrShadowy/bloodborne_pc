@@ -268,6 +268,9 @@ class GameRunnerMixin:
             set_combo(self.live_row, self.ini.get("live_resolution", "auto"))
         if hasattr(self, "video_backend_row"):
             set_combo(self.video_backend_row, self.ini.get("video_backend", "auto"))
+        if hasattr(self, "p2p_relay_row"):
+            relay_val = self.ini.get("p2p_relay", "1")
+            self.p2p_relay_row.set_active(relay_val not in ("0", "false", "False", "off"))
         # Effects
         if hasattr(self, "effect_rows"):
             for key, row in self.effect_rows.items():

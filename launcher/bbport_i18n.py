@@ -360,6 +360,8 @@ EN = {
     "Эта сборка без модуля онлайна (libbbnet.so): игра только офлайн": "This build has no online module (libbbnet.so): offline play only",
     'Online ID — это имя учётной записи (NPID), зарегистрированное на сервере, а не адрес email': 'The Online ID is the account name (NPID) you registered on the server, not your email address',
     'UPnP (открыть порт на роутере автоматически)': 'UPnP (open a port on the router automatically)',
+    'Резервный P2P-реле (BBR1)': 'P2P fallback relay (BBR1)',
+    'Отключите для принудительного прямого P2P по UDP и отладки': 'Disable to force and debug direct UDP peer-to-peer connections',
     'play.seamlesshunt.com:31313 — сервер Seamless Hunt (BBSC). Публичный сервер shadPS4 принимает только сборки shadPS4. Для частного сервера укажите host:port от его владельца. WebAPI: оставьте пустым, тогда берётся адрес сервера с портом 31315': "play.seamlesshunt.com:31313 is Seamless Hunt's server (BBSC). shadPS4's public server accepts only shadPS4 builds. For a private server, enter host:port from the person who runs it. WebAPI: leave it empty to use the server address with port 31315",
     'Адрес WebAPI': 'WebAPI address',
     'Адрес сервера': 'Server address',
@@ -901,6 +903,8 @@ PT = {
     "The Hunter's Dream": "The Hunter's Dream",
     "The Hunter's Dream (thehuntersdream.com)": "The Hunter's Dream (thehuntersdream.com)",
     "UPnP (открыть порт на роутере автоматически)": "UPnP (abrir porta no router automaticamente)",
+    "Резервный P2P-реле (BBR1)": "Relay de fallback P2P (BBR1)",
+    "Отключите для принудительного прямого P2P по UDP и отладки": "Desative para forçar e depurar conexões P2P diretas via UDP",
     "eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой":
         "eboot.bin não é da versão 1.09: copie o eboot.bin do dump da atualização 1.09 para a pasta do jogo substituindo o ficheiro",
     "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":
@@ -1414,6 +1418,8 @@ PT_BR = {
     "The Hunter's Dream": "The Hunter's Dream",
     "The Hunter's Dream (thehuntersdream.com)": "The Hunter's Dream (thehuntersdream.com)",
     "UPnP (открыть порт на роутере автоматически)": "UPnP (abrir porta no roteador automaticamente)",
+    "Резервный P2P-реле (BBR1)": "Relay de fallback P2P (BBR1)",
+    "Отключите для принудительного прямого P2P по UDP и отладки": "Desative para forçar e depurar conexões P2P diretas via UDP",
     "eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой":
         "eboot.bin não é da versão 1.09: copie o eboot.bin do dump da atualização 1.09 para a pasta do jogo substituindo o arquivo",
     "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":

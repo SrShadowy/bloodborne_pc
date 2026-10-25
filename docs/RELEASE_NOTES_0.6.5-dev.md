@@ -1,38 +1,69 @@
-# 🩸 Bloodborne PC Port (BBPort) — Pre-Release `v0.6.5-dev-24`
+# 🩸 Bloodborne PC Port (BBPort) — Pre-Release `v0.6.6-5`
 
-> ⚠️ **Build de Desenvolvimento & Testes Públicos (Dev Preview)**  
-> Esta compilação destina-se a testes de compatibilidade, estabilidade do launcher nativo, novos recursos de controle e diagnósticos no Linux.
+> ⚠️ **Build de Desenvolvimento & Testes Públicos (Dev Preview — v0.6.6-5)**  
+> Esta compilação consolida o **Grimório do Caçador (Hunter's Grimoire)** com pré-compilação de shaders offline, suporte completo e resiliente ao **BBSC Relay em Linux**, novo **FPS HUD com telemetria de hardware (CPU/GPU/RAM/VRAM)**, **filtragem de níveis de log**, **resolução dinâmica inteligente (`live_resolution=auto`)** e refinamentos de usabilidade e interface.  
+> *(Documento consolidado também disponível em [`docs/RELEASE_NOTES_0.6.6-5.md`](RELEASE_NOTES_0.6.6-5.md))*
 
 ---
 
 ## 🚀 Destaques Principais
 
-- ⚡ **AppImage Nativo Ultraleve (-80% de tamanho):** Substituição completa do antigo empacotador pesado pelo runtime nativo. O tamanho do AppImage caiu de **88 MB** para apenas **17.7 MB**, e o tempo de abertura foi reduzido para ~2 segundos com cache de bytecode XDG.
-- 💡 **Diagnóstico do Flickering (Filtro de Brilho no Display Pass):** Descoberta a causa raiz das oscilações visuais e flashes repentinos de brilho (*flickering*): a calibração de luminosidade do jogo passa por um filtro de brilho aplicado tardiamente na etapa de apresentação (**Display Pass**), descompassando com os buffers dos upscalers temporais (FSR/TAA).
-- 🖥️ **Compatibilidade Universal Wayland & X11:** Negociação dinâmica de backend gráfico sem poluir o sistema. Suporte de primeira classe para **KDE Plasma**, **GNOME**, **Hyprland/Sway** e **XFCE/MATE**, com fallback automático para X11/XWayland se o compositor Wayland não responder.
+- 🗡️ **Grimório do Caçador & Tela de Splash Cinematográfica:** Reconstrução offline de pipelines Vulkan via `pipeline-reconstruct-test`, eliminando completamente os travamentos de compilação (*shader compilation stutter*) durante o gameplay. Inclui uma tela de splash cinematográfica em SDL3 com barra de progresso visual em tempo real e arte oficial Full HD em letterbox 16:9 (`packaging/splash_bloodborne.png`), acionável via launcher ou pela flag CLI `--precompile-shaders`.
+- 🌐 **BBSC Seamless Co-op & Relay Nativo em Linux (POSIX):** Cliente de relay TCP/UDP totalmente portado para Linux (porta 20444) sem qualquer dependência do Windows Winsock. Adicionado mecanismo de fallback automático para o relay BBR1 (`169.254.x.x:3173`) e fila de retry de ativação assíncrona, eliminando a queda por timeout de 30 segundos em redes com CGNAT. Sincronização dos batimentos de vida/morte (`0x23` `BbscLife` a cada 500 ms) e escala (`0x24` `BbscScale`), silenciando warnings repetitivos no terminal.
+- 📊 **Novo FPS HUD Modular com Telemetria de Hardware (CPU, GPU, RAM, VRAM):** Telemetria em tempo real nativa no Linux (`bbport_perf_metrics`). Controles customizáveis no overlay (<kbd>Insert</kbd> ou <kbd>L3+R3</kbd>), incluindo presets (*Padrão*, *Compacto*, *Detalhado*), gráfico de frametime, escala de fonte e exibição da resolução interna renderizada vs resolução final de tela com upscaler (`%dx%d < %dx%d`).
+- 🔇 **Controle de Níveis de Log (Logging Levels) no Launcher e Runner:** Novo seletor de verbosidade no launcher (`Minimal`, `Error`, `Warning`, `Verbose`, `None`), suprimindo mensagens redundantes em tempo de execução, aliviando o uso de I/O em disco e mantendo o terminal limpo.
+- 🎯 **Resolução Dinâmica Padrão em Auto (`live_resolution=-1`):** A configuração de resolução dinâmica agora vem por padrão em `"auto"` (`-1`), ativando aceleração otimizada automaticamente de acordo com as capacidades da GPU (dGPUs modernas usam o caminho acelerado, enquanto Steam Deck e GPUs integradas mantêm máxima estabilidade).
+- 🧹 **Purga Automática de Cache de Pipelines & Limpeza de Pacotes:** Auto-pruning de chaves corrompidas ou obsoletas (`ForEachBlobPath`), resultando em 623 pipelines mestre 100% verificadas, 0 warnings de colisão de permutação no boot e latência média de pré-carregamento de apenas 66.6 µs por pipeline.
+- 🎛️ **Refinamento de UX com Tooltips em Configurações:** Dicas contextuais interativas em cada `Adw.ComboRow` detalhando cada parâmetro gráfico e de sistema no launcher GTK4 / Libadwaita.
+- ⚡ **AppImage Nativo Ultraleve (-80% de tamanho):** Mantido o runtime nativo ultraleve (~17 MB base / ~44 MB completo com caches e splash Full HD), abrindo em ~2 segundos com cache de bytecode XDG.
+- 💡 **Diagnóstico e Estabilização do Flickering (Display Pass):** Filtro de brilho desacoplado na etapa de apresentação, estabilizando a iluminação com upscalers temporais (FSR/TAA).
 - 🎮 **Nova Ferramenta Visual de Teste de Controles:** Interface dedicada em tempo real na aba *Controles* com chips luminosos para todos os 15 botões, indicadores de eixos analógicos e gatilhos (L2/R2), detecção de modelo (PlayStation DualSense, Xbox, Switch, Deck) e suporte a hotplug.
-- 🔍 **Subsistema de Diagnóstico & Observabilidade:** Novo gerador de relatórios técnicos redigidos (`--diagnostics`), logs rotativos seguros em `$XDG_STATE_HOME/bbport/logs/` e captura antecipada de crashes nativos via `faulthandler`.
 
 ---
 
 ## 📋 Registro Detalhado de Alterações (Changelog)
 
+### 🗡️ Shaders, Cache & Grimório do Caçador
+- **Pré-compilador Offline (`pipeline-reconstruct-test`):** Integrado ao `build.sh` e empacotado no AppImage/Tarball via `package.py` com RPATH relativo. Permite reconstruir e aquecer todo o acervo de pipelines gráficas antes do boot da emulação.
+- **Tela de Splash Cinematográfica (`extra/ui/splash/bbport_shader_splash.cpp`):** Interface visual em SDL3 renderizando barra de progresso em tempo real sobre a arte de Bloodborne. Resolução proporcional e independente de DPI via `SDL_SetRenderLogicalPresentation` em letterbox 16:9, com busca canônica da imagem através de `$APPDIR`, `$BB_PORT_DIR` ou caminho relativo.
+- **Purga Automática de Chaves Stale (`gpu/render/blob_store.cpp`):** Função `ForEachBlobPath` com exclusão automática (`std::filesystem::remove`) de pipelines corrompidas ou em conflito de permutação, evitando poluição de logs e falhas de pré-carregamento.
+- **Proteção de Cache do Usuário:** Isolamento de dumps de telemetria e inventário (`shader_inventory.json`, `shader_diagnostic_report.json`), gerados apenas quando explicitamente requisitados via variáveis de ambiente (`BB_SHADER_DISCOVERY_DUMP=1`, `BB_SHADER_REPORT=1`).
+- **Trigger no Launcher & CLI:** Opção de disparar a pré-compilação diretamente pela interface do launcher ou via linha de comando com `--precompile-shaders` / `./run.sh --precompile-shaders`.
+
+### 🌐 Multiplayer Online & BBSC (Seamless Co-op)
+- **Cliente BBSC Relay Nativo em Linux (`gpu/bbnet/` e `gpu/bbnet20/`):** Implementação completa em C++ usando POSIX sockets (`bbsc_relay_client.cpp`), conectando à porta 20444 do servidor de relay com reconexão periódica, gerenciamento assíncrono de threads e tratamento resiliente de erros.
+- **Mecanismo de Fallback para Relay UDP (BBR1):** Em `np_matching2_mm.cpp`, fallback automático para alocação de pseudo-endpoints (`169.254.x.x:3173`) roteados pelo relay BBR1 quando o broker shadNet expira ou o par ainda não registrou IP público direto.
+- **Fila de Retry de Ativação:** Fila assíncrona (`PendingActivation retry`) em `np_signaling_state.cpp`, eliminando o erro de *timeout* aos 30 segundos ("peer endpoint unresolved; connection timeout").
+- **Pacotes 0x23 (`BbscLife`) e 0x24 (`BbscScale`):** Despacho dos batimentos cardíacos de vida/morte (500 ms) e escala dos jogadores em `np_signaling_helpers.cpp` e `signaling_handler.cpp`, direcionando-os a `OnBbscLifePacket` e `OnBbscScalePacket`. Corrige o warning recorrente `unexpected SHAD packet type=35 size=14`.
+- **Supressão de Ruído de Rede:** Ajuste de logs de chamadas assíncronas normais bem-sucedidas (`result = 0x0` em `sceNpWaitAsync`, `sceNpPollAsync`, `sceNpAuthWaitAsync`, `sceNpAuthPollAsync`) e `sceNetEpollControl` de `WARNING` para `DEBUG`.
+- **Title Menu Scaleform Hook:** Injeção de linhas extras no menu principal para controle e opções integradas do BBSC Seamless Co-op (`bbport_title_menu.{h,cpp}`).
+- **Toggle de Fallback do Relay P2P (BBR1) no Launcher:** Adicionada opção configurável na aba de rede/online permitindo desativar o relay UDP de fallback (`p2p_relay=0` / `SHADPS4_P2P_RELAY=0`) para testes e depuração de conexões P2P puras sem interferência de servidores intermediários.
+
+### 📊 HUD de Performance, Métricas de Hardware & Resolução
+- **Métricas de Hardware em Tempo Real (`extra/management/hud/bbport_perf_metrics.cpp`):** Leitura de estatísticas de CPU (total e por núcleo via `/proc/stat`), uso de GPU (sysfs DRM/hwmon AMD/NVIDIA/Intel), consumo de RAM (`/proc/meminfo`) e VRAM.
+- **Configuração Completa do FPS HUD (`extra/management/hud/bbport_fps_hud.cpp`):**
+  - Toggles individuais para FPS, Frametime, CPU, GPU, RAM, VRAM e gráfico de frametime.
+  - Seleção de layout e presets visuais: *Padrão*, *Compacto* e *Detalhado*.
+  - Configuração de posição nos 4 cantos da tela, escala de fonte (`ImGui::SetWindowFontScale`) e opacidade de fundo.
+  - Exibição dinâmica da resolução de renderização interna versus resolução de saída com upscaling (`1920x1080 < 1280x720`).
+- **Painel de Controle no Overlay In-Game:** Nova seção no overlay (<kbd>Insert</kbd> ou <kbd>L3+R3</kbd>) em `extra/management/sections/bbport_overlay_sections.cpp` permitindo ligar e desligar métricas e presets dinamicamente durante o jogo.
+- **Resolução Dinâmica Auto:** Padrão de `live_resolution` configurado para `"auto"` (`-1`), adaptando-se automaticamente à GPU do usuário.
+
+### 🎛️ Launcher, Configuração & Logging
+- **Níveis de Log Configuráveis:** Nova opção de verbosidade (`Minimal`, `Error`, `Warning`, `Verbose`, `None`) no launcher (`launcher/bbport_config.py`, `launcher/bbport_launcher.py`), com filtragem ativa no `bbport_game_runner.py` para reduzir I/O e ruído no terminal.
+- **Tooltips Explicativos em `ComboRow`:** Suporte a dicas contextuais em cada opção de configuração para facilitar o entendimento de parâmetros gráficos e de sistema.
+- **Bateria de Testes Automatizados:** Adicionados testes cobrindo o gerenciamento de logs, configurações do HUD e componentes da UI em `tests/test_launcher_dev.py` e `tests/test_launcher_log.py`.
+- **Geometria Responsiva & Configuração Atômica:** Persistência segura de largura, altura e estado maximizado com *clamping* automático para telas menores (Steam Deck), gravação atômica de `settings.json` com `fsync` e backup `.bak`.
+- **Localização Completa:** Interface disponível em Português do Brasil, Inglês, Russo e Chinês Simplificado.
+
 ### 🖥️ Gráficos, Vulkan & Pipeline de Renderização
-- **Descoberta da Causa Raiz do Flickering:** Isolado o comportamento que causava variações abruptas de intensidade luminosa entre frames. O filtro de brilho calibrado pelo jogo é injetado tardiamente durante o **Display Pass**, gerando inconsistências visuais ao interagir com renderização dinâmica e upscaling temporal. A localização exata do filtro permite o desacoplamento e correção definitiva nas próximas revisões.
+- **Descoberta e Isolamento do Flickering:** Isolado o comportamento que causava variações abruptas de intensidade luminosa entre frames devido ao filtro de brilho injetado tardiamente durante o **Display Pass**, permitindo a sincronização 1:1 de brilho e contraste com FSR/TAA.
 - **Detecção PCI & Vulkan:** Identificação direta das GPUs via barramento PCI (`/sys/bus/pci/devices`) e dispositivos Vulkan físicos.
 - **Priorização Inteligente em Híbridas:** Em notebooks com gráficos híbridos (APU + dGPU), prioriza a GPU dedicada por padrão.
 - **Diagnóstico de Drivers:**
   - Alerta caso placas AMD estejam usando drivers proprietários alternativos (AMDGPU-PRO/AMDVLK) e recomenda o driver open-source **RADV (Mesa)**.
   - Verificação de versão do driver NVIDIA com alerta caso a versão seja inferior a 535 ou o módulo do kernel `nvidia` não esteja carregado.
   - Alerta claro se nenhum driver Vulkan ICD for encontrado no sistema.
-
-### 🎛️ Launcher & Interface (GTK 4 / Libadwaita)
-- **Correção Crítica de Inicialização:** Resolvido o erro de ciclo de vida do GObject (`LauncherWindow is not initialized`) ao restaurar e posicionar a janela.
-- **Tema & Acessibilidade:** Suporte ao `Adw.StyleManager` com valor padrão `"system"`, sincronizando automaticamente com o modo claro/escuro do desktop e respeitando configurações de alto contraste.
-- **Geometria Responsiva:** Persistência segura de largura, altura e estado maximizado com *clamping* automático para telas menores (ex.: **Steam Deck** 1280x800 ou laptops 1366x768).
-- **Configuração Atômica e Resiliente:** Gravação de `settings.json` com permissão estrita `0600`, gravação temporária com `fsync` e backup automático (`settings.json.bak`) para recuperação contra desligamentos abruptos.
-- **Verificador de Atualizações Assíncrono:** Notificação sutil via Toast para novas releases do BBPort sem bloquear o carregamento e sem autoatualizações invasivas.
-- **Localização Completa:** Interface disponível em **Português do Brasil**, **Inglês**, **Russo** e **Chinês Simplificado**.
 
 ### 🎮 Controles & Áudio (SDL3 / PipeWire / PulseAudio)
 - **Isolamento de Falhas (Degradação Segura):** A ausência ou falha da biblioteca SDL3 não derruba o launcher; a interface abre normalmente com aviso amigável.
@@ -43,19 +74,17 @@
 ### 🛡️ Preflight Checks & Execução do Jogo
 - **Validação Pré-Lançamento:** Checagem prévia da presença do `eboot.bin` e permissões de escrita antes de chamar o processo.
 - **Tratamento de Crashes e Sinais:** Captura clara de sinais de terminação (`SIGSEGV` código 11, `SIGABRT` código 6) com indicação direta da localização do log para depuração.
-- **Preflight de Dependências (`[E-GTK-001]`):** Se o GTK 4 ou Libadwaita estiverem ausentes no host, o launcher exibe os comandos exatos de instalação para **Ubuntu/Debian**, **Arch/CachyOS** e **Fedora** sem tracebacks confusos.  
-  *(Testado e validado em **Arch Linux / CachyOS (KDE Plasma Wayland)** e **Fedora 44**)*.
+- **Preflight de Dependências (`[E-GTK-001]`):** Se o GTK 4 ou Libadwaita estiverem ausentes no host, o launcher exibe os comandos exatos de instalação para **Ubuntu/Debian**, **Arch/CachyOS** e **Fedora** sem tracebacks confusos.
 - **Proteção Headless (`[E-DISP-001]`):** Se executado em terminal sem display gráfico, instrui o uso de `--play` ou `--diagnostics`.
 
 ### 📦 Empacotamento, CLI & Distribuição
 - **Opções CLI Adicionadas:**
+  - `--precompile-shaders`: Executa a rotina de pré-compilação do Grimório com a tela de splash SDL3 e sai.
   - `--diagnostics`: Exibe relatório completo de hardware, display, Vulkan, áudio e dependências.
   - `--debug` / `--verbose`: Ativa modo de log detalhado (`LAUNCHER_DEBUG=1`).
   - `--wayland` / `--x11`: Força a escolha do backend de exibição.
   - `--play`: Execução direta sem interface gráfica (ideal para Steam Deck / Big Picture).
   - `--version`, `-v` e `--help`, `-h`: Informações de versão e uso.
-- **Pacote Nix:** Corrigida instalação de arquivos `.desktop` e ícones no derivation `packaging/default.nix`.
-- **Documentação:** Criado o guia completo de dependências por família de distribuição em [`docs/LINUX_COMPATIBILITY.md`](docs/LINUX_COMPATIBILITY.md).
 
 ---
 
@@ -66,17 +95,20 @@
 # 1. Torne o arquivo executável:
 chmod +x Bloodborne-bbport-native-x86_64.AppImage
 
-# 2. Execute o launcher:
+# 2. Executar o launcher com a interface gráfica:
 ./Bloodborne-bbport-native-x86_64.AppImage
 
-# Ou inicie o jogo direto no Steam Deck (Game Mode):
+# Ou pré-compilar os shaders com a tela de splash:
+./Bloodborne-bbport-native-x86_64.AppImage --precompile-shaders
+
+# Ou iniciar o jogo direto no Steam Deck (Game Mode):
 ./Bloodborne-bbport-native-x86_64.AppImage --play
 ```
 
 ### Opção 2: Via Pacote Tarball (.tar.gz)
 ```bash
-tar -xzf BBPort-0.6.5-dev-24-linux-x86_64.tar.gz
-cd BBPort-0.6.5-dev-24-linux-x86_64
+tar -xzf BBPort-0.6.6-5-linux-x86_64.tar.gz
+cd BBPort-0.6.6-5-linux-x86_64
 ./start.sh
 ```
 
@@ -84,32 +116,16 @@ cd BBPort-0.6.5-dev-24-linux-x86_64
 
 ## ⚖️ Qual versão baixar? Entenda as diferenças
 
-Para atender aos diferentes perfis de usuários e ambientes Linux, o BBPort é disponibilizado em três formatos principais:
+Para atender aos diferentes perfis de usuários e ambientes Linux, o BBPort é disponibilizado em formatos adaptados:
 
 | Característica | 🚀 AppImage Nativo (Recomendado) | 📦 Arquivo Tarball (`.tar.gz`) | 🐘 AppImage Grande (Nix) |
 | :--- | :--- | :--- | :--- |
-| **Tamanho do Download** | **~17 MB - 18 MB** (Ultraleve) | **~18 MB** | **~400 MB a 1 GB+** (Pesado) |
+| **Tamanho do Download** | **~44 MB** (Com shaders/splash) | **~44 MB** | **~400 MB a 1 GB+** (Pesado) |
 | **Formato de Entrega** | Executável único portátil (`.AppImage`) | Pasta compactada extraível | Executável único portátil (`.AppImage`) |
 | **Dependências de Sistema** | Usa GTK4/Python do sistema host | Usa GTK4/Python do sistema host | **Autossuficiente** (Traz tudo embutido) |
 | **Tempo de Abertura** | Quase instantâneo (~2s) | Instantâneo | Mais lento (descompacta store Nix) |
 | **Integração Visual** | Perfeita (temas KDE/GNOME nativos) | Perfeita (temas do sistema) | Pode divergir do tema do sistema |
 | **Ideal para...** | Maioria dos usuários (Arch, Fedora, Ubuntu) | Steam Deck (Non-Steam Game) e customização | Distros antigas/mínimas sem GTK4 |
-
-### Detalhamento dos Formatos:
-
-1. **🚀 AppImage Nativo (`Bloodborne-bbport-native-x86_64.AppImage`):**
-   - **O que é:** O melhor equilíbrio entre portabilidade e leveza. Empacota os binários do jogo, bibliotecas essenciais portáteis (como SDL3, xxhash, fmt) e shaders em um arquivo único de clique duplo.
-   - **Vantagem:** Download minúsculo (17 MB), abre em 2 segundos e se integra de forma nativa aos temas escuro/claro e ao compositor Wayland da sua distro.
-   - **Requisito:** Requer que o sistema tenha Python 3 e GTK 4 instalados (já presentes por padrão na grande maioria das distros modernas). Caso falte algo, o launcher informa o comando exato para instalar.
-
-2. **📦 Tarball Portátil (`BBPort-*-linux-x86_64.tar.gz`):**
-   - **O que é:** O pacote clássico em formato de pasta extraível contendo todos os binários, ferramentas e scripts de execução (`start.sh`, `run.sh`).
-   - **Vantagem:** Perfeito para adicionar como *"Jogo não-Steam"* no SteamOS (Steam Deck), permitindo apontar diretamente para os scripts ou inspecionar/modificar arquivos de configuração localmente.
-
-3. **🐘 AppImage Grande via Nix (`Bloodborne-bbport-nix-x86_64.AppImage`):**
-   - **O que é:** Um pacote completamente hermético gerado pelo ecossistema Nix. Traz dentro de si uma árvore inteira do `/nix/store` com seu próprio Python, GTK 4, Libadwaita, GObject Introspection e todas as bibliotecas C/C++.
-   - **Vantagem:** Funciona em absolutamente qualquer distribuição Linux (mesmo distros muito antigas ou minimalistas corporativas) sem requerer a instalação de nenhum pacote no sistema.
-   - **Desvantagem:** Download consideravelmente mais pesado e inicialização mais lenta.
 
 ---
 

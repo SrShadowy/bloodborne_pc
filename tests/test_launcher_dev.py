@@ -269,7 +269,26 @@ class LauncherDevUITests(unittest.TestCase):
             self.assertEqual(matching[0].get_ellipsize(), Pango.EllipsizeMode.NONE)
             self.assertEqual(matching[0].get_tooltip_text(), choice_str)
 
+    def test_p2p_relay_setting_and_env(self):
+        from launcher.bbport_config import DEFAULTS, INI_DEFAULTS, game_environment
+        self.assertIn("p2p_relay", DEFAULTS)
+        self.assertTrue(DEFAULTS["p2p_relay"])
+        self.assertIn("p2p_relay", INI_DEFAULTS)
+        self.assertEqual(INI_DEFAULTS["p2p_relay"], "1")
+
+        s_on = dict(DEFAULTS)
+        s_on["p2p_relay"] = True
+        env_on = game_environment(s_on)
+        self.assertEqual(env_on.get("BB_P2P_RELAY"), "1")
+        self.assertNotIn("SHADPS4_P2P_RELAY", env_on)
+
+        s_off = dict(DEFAULTS)
+        s_off["p2p_relay"] = False
+        env_off = game_environment(s_off)
+        self.assertEqual(env_off.get("BB_P2P_RELAY"), "0")
+        self.assertEqual(env_off.get("SHADPS4_P2P_RELAY"), "0")
 
 
 if __name__ == "__main__":
     unittest.main()
+

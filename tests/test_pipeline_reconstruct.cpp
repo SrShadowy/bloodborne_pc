@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: offline pipeline reconstruction with Monster Hunter Rise style splash screen
+// bbport: offline pipeline reconstruction with cinematic splash screen
 // and rigorous technical metric auditing (Cold vs Warm, Portable vs Device-Specific).
 #include <cassert>
 #include <chrono>

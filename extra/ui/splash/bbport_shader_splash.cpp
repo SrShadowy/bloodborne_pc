@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: Monster Hunter Rise style shader precompilation splash screen implementation.
+// bbport: cinematic shader precompilation splash screen implementation.
 #include "bbport_shader_splash.h"
 #include "extra/core/shader_precompile/bbport_shader_discovery.h"
 

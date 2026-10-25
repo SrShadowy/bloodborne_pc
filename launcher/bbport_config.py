@@ -258,6 +258,7 @@ DEFAULTS = {
     "online_npid": "",
     "online_password": "",
     "online_upnp": True,
+    "p2p_relay": True,
     # Online pool: "seamless" (Seamless Hunt + BBSC), "huntersdream" (The Hunter's Dream, bbhost), or "legacy"
     "online_pool": "seamless",
     "thd_server": "",
@@ -296,6 +297,7 @@ INI_DEFAULTS = {
     "draw_pipe": "2",
     "fps_limit": "0",
     "video_backend": "auto",
+    "p2p_relay": "1",
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 
@@ -512,6 +514,12 @@ def game_environment(s):
         env["BB_FRAME_STATS"] = "1"
     if s.get("save_log"):
         env["BB_SAVE_LOG"] = "1"
+    p2p_relay_enabled = s.get("p2p_relay", True)
+    if p2p_relay_enabled is False or str(p2p_relay_enabled).strip() in ("0", "false", "False", "off"):
+        env["SHADPS4_P2P_RELAY"] = "0"
+        env["BB_P2P_RELAY"] = "0"
+    else:
+        env["BB_P2P_RELAY"] = "1"
     log_level = s.get("log_level", "verbose")
     env["BB_LOG_LEVEL"] = log_level
     if "BB_GPU_LOG" not in env:

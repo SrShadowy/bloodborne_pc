@@ -333,7 +333,16 @@ if [[ -z ${BB_ONLINE:-} && -f $BB_CONFIG ]]; then
         if [[ $line =~ ^online_backend=(.+)$ ]]; then
             export BB_ONLINE_BACKEND=${BASH_REMATCH[1]}
         fi
+        if [[ $line =~ ^p2p_relay=([01])$ ]]; then
+            export BB_P2P_RELAY=${BASH_REMATCH[1]}
+            if [[ ${BASH_REMATCH[1]} == 0 ]]; then
+                export SHADPS4_P2P_RELAY=0
+            fi
+        fi
     done < "$BB_CONFIG"
+fi
+if [[ ${BB_P2P_RELAY:-1} == 0 ]]; then
+    export SHADPS4_P2P_RELAY=0
 fi
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
     # The shadPS4 0.20 module (gpu/bbnet20) answers both pools: Seamless Hunt (shadNet with BBSC) and

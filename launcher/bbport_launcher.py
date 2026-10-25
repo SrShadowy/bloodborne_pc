@@ -1308,6 +1308,9 @@ class LauncherWindow(
         s["online_npid"] = self.npid_row.get_text().strip()
         s["online_password"] = self.password_row.get_text()
         s["online_upnp"] = self.upnp_row.get_active()
+        if hasattr(self, "p2p_relay_row"):
+            s["p2p_relay"] = self.p2p_relay_row.get_active()
+            self.ini["p2p_relay"] = "1" if s["p2p_relay"] else "0"
         if hasattr(self, "pool_row"):
             s["online_pool"] = self.online_pool()
         if hasattr(self, "thd_server_row"):

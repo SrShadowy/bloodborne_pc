@@ -533,7 +533,7 @@ def build_and_package(args):
     (staging_dir / "user").mkdir(exist_ok=True)
     (staging_dir / "user" / ".gitkeep").touch()
 
-    # Precompilation splash artwork (Monster Hunter Rise style UI)
+    # Precompilation splash artwork
     splash_src = ROOT_DIR / "packaging" / "splash_bloodborne.png"
     if not splash_src.is_file():
         splash_src = ROOT_DIR / "dist" / "user" / "data" / "splash_bloodborne.png"

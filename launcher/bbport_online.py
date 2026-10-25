@@ -129,6 +129,11 @@ class OnlineMixin:
                                       subtitle=tr("Выключите при Tailscale или другом VPN"),
                                       active=s["online_upnp"])
         connection.add(self.upnp_row)
+        self.p2p_relay_row = Adw.SwitchRow(
+            title=tr("Резервный P2P-реле (BBR1)"),
+            subtitle=tr("Отключите для принудительного прямого P2P по UDP и отладки"),
+            active=s.get("p2p_relay", True))
+        connection.add(self.p2p_relay_row)
         test = Adw.ActionRow(title=tr("Проверить соединение"))
         self.test_button = Gtk.Button(label=tr("Проверить"), valign=Gtk.Align.CENTER)
         self.test_button.connect("clicked", self.on_test_connection)

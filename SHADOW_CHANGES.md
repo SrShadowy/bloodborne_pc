@@ -357,8 +357,8 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 
 ---
 
-## 94. Tela de Splash de Pré-compilação estilo Monster Hunter Rise com Progresso em Tempo Real (Fase 7)
-- **Objetivo**: Proporcionar uma experiência idêntica à dos jogos modernos de PC (Monster Hunter Rise / Sunbreak), exibindo uma tela de abertura cinematográfica com barra de progresso dourada e texto "Compiling shaders..." antes de entrar no jogo sempre que o cache de shaders for novo ou frio.
+## 94. Tela de Splash Cinematográfica de Pré-compilação com Progresso em Tempo Real (Fase 7)
+- **Objetivo**: Proporcionar uma experiência de carregamento moderna e polida, exibindo uma tela de abertura cinematográfica com barra de progresso dourada e texto "Compiling shaders..." antes de entrar no jogo sempre que o cache de shaders for novo ou frio.
 - **Solução Arquitetural**:
   1. **Renderizador de Splash SDL3**: Implementado em `extra/ui/splash/bbport_shader_splash.{h,cpp}`. Janela 16:9 independente, carregamento automático de `packaging/splash_bloodborne.png`, barra de progresso no topo/centro em ouro radiante com moldura metálica, texto centralizado `"Compiling shaders..."` e contador em tempo real `[ X / 801 ] ( % )` com animação a 60 FPS e lerp suave.
   2. **Transmissão de Progresso por Pipeline**: Adicionado rastreamento atômico em `extra/core/shader_precompile/bbport_shader_discovery.{h,cpp}` e gancho mínimo de 1 linha em `gpu/render/pipeline_store.cpp` (`extra_shader_discovery_report_progress`) durante `WarmUp()`.
@@ -562,7 +562,7 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 ---
 
 ## 102. Resolução da Arte de Fundo da Tela de Splash no AppImage e Tarball
-- **Problema**: Ao disparar a pré-compilação no AppImage, a barra de progresso do estilo Monster Hunter Rise aparecia sobre fundo puramente preto, sem a arte de Bloodborne em segundo plano. Causas raiz:
+- **Problema**: Ao disparar a pré-compilação no AppImage, a barra de progresso da tela de splash aparecia sobre fundo puramente preto, sem a arte de Bloodborne em segundo plano. Causas raiz:
   1. `package.py`: A imagem `packaging/splash_bloodborne.png` (Full HD 1920x1080) não era copiada para a pasta `staging_dir` nem para o AppImage/tarball.
   2. `extra/ui/splash/bbport_shader_splash.cpp`: A função `LoadSplashTexture` buscava apenas caminhos relativos estáticos ao diretório de trabalho corrente, ignorando as variáveis de ambiente `$APPDIR`, `$BB_PORT_DIR` e `$BB_DATA_DIR`.
   3. Falta de apresentação lógica independente de resolução (`SDL_SetRenderLogicalPresentation`), causando potenciais distorções ou problemas de escala em telas de alta densidade (HiDPI / Steam Deck).
@@ -627,3 +627,68 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
   8. Despacho dos Pacotes BBSC 0x23 (Life/Dead Heartbeat) e 0x24 (Scale) na Sinalização e Redução de Ruído de Logs:
      - Em `np_signaling_helpers.cpp` (`bbnet`) e `signaling_handler.cpp` (`bbnet20`), adicionados despachantes para os pacotes `0x23` (`BbscLife`, batimento de vida/morte a cada 500 ms) e `0x24` (`BbscScale`, porcentagens de escala do host), direcionando-os a `Core::Bloodborne::OnBbscLifePacket` e `OnBbscScalePacket`. Isso elimina o warning repetitivo `ReceiveThread: unexpected SHAD packet type=35 size=14` e garante a sincronização de status dos parceiros.
      - Reduzidos os níveis de log de chamadas normais de polling assíncrono bem-sucedidas (`result = 0x0` em `sceNpWaitAsync`, `sceNpPollAsync`, `sceNpAuthWaitAsync`, `sceNpAuthPollAsync`) e `sceNetEpollControl` de `LOG_WARNING` para `LOG_DEBUG`.
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `gpu/bbnet/shadps4/core/bbsc_relay_client.cpp` | Cliente BBSC Relay POSIX Linux // [extra] | `gpu/bbnet/include/core/bbsc_relay_client.h` | Comunicação TCP/UDP com servidor de relay em Linux | 2026-10-25 |
+| `gpu/bbnet20/bbsc/core/bbsc_relay_client.cpp` | Cliente BBSC Relay POSIX Linux // [extra] | `gpu/bbnet20/include/core/bbsc_relay_client.h` | Suporte a relay para o backend bbnet20 | 2026-10-25 |
+| `gpu/bbnet/shadps4/core/libraries/np/np_matching2/np_matching2_mm.cpp` | Fallback BBR1 `169.254.x.x` // [extra] | `gpu/bbnet20/vendor/shadps4/core/net/p2p_relay.cpp` | Roteamento automático quando broker shadNet não tem IP público | 2026-10-25 |
+| `gpu/bbnet/shadps4/core/libraries/np/np_signaling/np_signaling_state.cpp` | Fila de retry de ativação assíncrona // [extra] | `gpu/bbnet/shadps4/core/libraries/np/np_signaling/np_signaling_state.cpp` | Elimina timeout de 30s ("peer endpoint unresolved") | 2026-10-25 |
+| `gpu/bbnet/shadps4/core/libraries/np/np_signaling/np_signaling_helpers.cpp` | Despacho de pacotes 0x23 e 0x24 // [extra] | `gpu/bbnet/shadps4/core/bloodborne_re.cpp` | Sincronização de vida/morte e escala sem warnings | 2026-10-25 |
+
+---
+
+## 104. FPS HUD Modular (CPU/GPU/RAM/VRAM), Presets e Resolução Dinâmica Auto (Versão 0.6.6-5)
+- **Problema**:
+  1. O overlay in-game não fornecia métricas detalhadas de consumo de recursos de hardware em tempo real (CPU, GPU, RAM, VRAM), dificultando a análise de gargalos de desempenho em diferentes distros Linux e configurações de hardware.
+  2. A resolução dinâmica (`live_resolution`) vinha desligada (`0`) por padrão, exigindo intervenção manual para aproveitar os benefícios de estabilidade em GPUs dedicadas.
+  3. Faltava feedback visual no HUD para distinguir a resolução de renderização nativa da resolução escalada via FSR.
+- **Implementação**:
+  1. `extra/management/hud/bbport_perf_metrics.{h,cpp}`: Leitor nativo de telemetria Linux com amostragem sem travamentos através de `/proc/stat` (CPU total e por thread), sysfs DRM/hwmon (AMD amdgpu, NVIDIA NVML/proc, Intel i915/xe), `/proc/meminfo` (RAM) e VRAM.
+  2. `extra/management/hud/bbport_fps_hud.cpp`: HUD modular redesenhado com toggles individuais (FPS, Frametime, CPU%, GPU%, RAM, VRAM, gráfico de frametime), seleção de presets (*Padrão*, *Compacto*, *Detalhado*), escala configurável (`ImGui::SetWindowFontScale`), opacidade de fundo e indicação de resolução de renderização interna versus saída (`%dx%d < %dx%d`).
+  3. `extra/management/sections/bbport_overlay_sections.{h,cpp}`: Aba interativa no overlay in-game (<kbd>Insert</kbd>) permitindo customização dinâmica em tempo real durante o jogo.
+  4. `gpu/shim/bbport_settings.{h,cpp}` e launcher (`bbport_config.py`, `bbport_game_runner.py`, `bbport_launcher.py`): Padrão de `live_resolution` ajustado para `-1` (`auto`), selecionando o modo ideal de acordo com os recursos detectados da GPU.
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `extra/management/hud/bbport_fps_hud.cpp` | HUD modular com métricas de hardware | `extra/management/hud/bbport_perf_metrics.cpp` | Exibição de CPU/GPU/RAM/VRAM/frametime graph e resolução | 2026-10-25 |
+| `extra/management/sections/bbport_overlay_sections.cpp` | Aba de configuração do FPS HUD // [extra] | `extra/management/hud/bbport_fps_hud.cpp` | Controles de presets, toggles e layout no overlay | 2026-10-25 |
+| `gpu/shim/bbport_settings.h` | `live_resolution{-1}` (auto) // [extra] | `gpu/shim/bbport_settings.cpp` | Resolução dinâmica auto baseada em capacidades da GPU | 2026-10-25 |
+| `launcher/bbport_config.py` | Padrão `live_resolution: "auto"` | `launcher/bbport_game_runner.py` | Sincronização do padrão inteligente no launcher | 2026-10-25 |
+
+---
+
+## 105. Filtragem de Níveis de Log e Refinamento de UX no Launcher (Versão 0.6.6-4 / 0.6.6-5)
+- **Problema**:
+  1. A execução do jogo gerava grande volume de mensagens no console e no arquivo de log, consumindo taxa de transferência de I/O em disco e polvilhando logs com avisos não críticos.
+  2. As opções de configuração no launcher Libadwaita careciam de descrições contextuais, dificultando a escolha das configurações ideais para novos jogadores.
+- **Implementação**:
+  1. `launcher/bbport_config.py`, `launcher/bbport_launcher.py`: Adicionado seletor de nível de log com 5 níveis (`minimal`, `error`, `warning`, `verbose`, `none`).
+  2. `launcher/bbport_game_runner.py`: Filtro ativo em tempo real de streams stdout/stderr do executável, suprimindo mensagens fora da faixa de severidade definida.
+  3. `launcher/bbport_ui_helpers.py`: Suporte a tooltips contextuais explicativos nas linhas de configuração `Adw.ComboRow`.
+  4. `tests/test_launcher_dev.py` e `tests/test_launcher_log.py`: Suíte de testes unitários automatizados validando o comportamento de filtragem de logs, configurações de HUD e integridade da UI.
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `launcher/bbport_log.py` | Estrutura de logging rotativo e filtragem | `launcher/bbport_game_runner.py` | Redução de ruído e I/O de disco | 2026-10-25 |
+| `launcher/bbport_ui_helpers.py` | Tooltips em `setup_combo_row` | `launcher/bbport_launcher.py` | Orientação contextual de opções gráficas e de sistema | 2026-10-25 |
+| `tests/test_launcher_dev.py` | Testes de HUD, logs e UI | `tests/test_launcher_dev.py` | Garantia de estabilidade da interface do launcher | 2026-10-25 |
+
+---
+
+## 106. Toggle de Fallback do Relay P2P (BBR1) no Launcher (Versão 0.6.6-5)
+- **Problema**: O fallback automático para o relay UDP (`BBR1`) e cliente BBSC masva falhas de *hole punching* e conectividade direta em ambientes de desenvolvimento e teste, dificultando a depuração de conexões P2P puras no Wireshark sem desativar manualmente variáveis de ambiente no terminal.
+- **Implementação**:
+  1. `launcher/bbport_online.py`: Adicionado switch row configurável *"Relay de fallback P2P (BBR1)"* na seção de conexão da aba de rede/online.
+  2. `launcher/bbport_config.py`: Persistência da chave `p2p_relay` (padrão: `True` / `"1"`) em `settings.json` e `bbport.ini`. Exportação automática de `SHADPS4_P2P_RELAY=0` e `BB_P2P_RELAY=0` quando desligado.
+  3. `run.sh`: Leitura de `p2p_relay` no `bbport.ini` com exportação de `SHADPS4_P2P_RELAY=0`, desativando o relay em execuções standalone sem o launcher.
+  4. `launcher/bbport_i18n.py`: Localização completa para Português, Inglês e Russo.
+  5. `tests/test_launcher_dev.py`: Teste unitário validando a persistência e geração correta de variáveis de ambiente do toggle.
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `launcher/bbport_online.py` | Switch `p2p_relay_row` na UI online | `launcher/bbport_online.py` | Controle visual para ligar/desligar fallback de relay | 2026-10-25 |
+| `launcher/bbport_config.py` | `p2p_relay` em defaults e env | `launcher/bbport_config.py` | Repasse de `SHADPS4_P2P_RELAY=0` para o processo | 2026-10-25 |
+| `run.sh` | Leitura de `p2p_relay` em `bbport.ini` | `run.sh` | Suporte a P2P puro em execuções standalone | 2026-10-25 |
+
+
