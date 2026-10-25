@@ -756,8 +756,7 @@ void RenderPerformanceSection(BbSettings::Values& s, int lang) {
                    "Não salvo. Em 30 FPS a cinemática de Laurence não trava, como pode ocorrer acima de 30.",
                    "Не сохраняется. На 30 FPS кинематика Лоуренса не зависает, как может выше 30."));
     }
-    ImGui::SeparatorText(S(SectionMisc));
-    Checkbox(S(ShowFpsCorner), s.show_fps);
+    BbOverlaySections::RenderFpsOverlaySection(s, lang, dirty); // [extra]
     BbOverlaySections::RenderLightGridCheckbox(s, lang, dirty);
     const char* pipe_modes[] = {
         S(DrawPipeModeOff),
@@ -874,6 +873,9 @@ void Menu() {
 
     // Render the separate Discord Rich Presence configuration window
     BbOverlaySections::RenderDiscordRpcWindow(s, lang, dirty);
+
+    // Render the separate FPS & Performance Overlay configuration window
+    BbOverlaySections::RenderFpsOverlayWindow(s, lang, dirty); // [extra]
 }
 
 void FpsCounter() {

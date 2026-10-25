@@ -116,6 +116,23 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+    std::atomic<bool> fps_hud_show_fps{true}; // [extra]
+    std::atomic<bool> fps_hud_show_frametime{true}; // [extra]
+    std::atomic<bool> fps_hud_show_cpu{false}; // [extra]
+    std::atomic<bool> fps_hud_show_gpu{false}; // [extra]
+    std::atomic<bool> fps_hud_show_ram{false}; // [extra]
+    std::atomic<bool> fps_hud_show_vram{false}; // [extra]
+    std::atomic<bool> fps_hud_show_graph{false}; // [extra]
+    std::atomic<int> fps_hud_position{0}; // [extra]
+    std::atomic<int> fps_hud_layout{0}; // [extra]
+    std::atomic<float> fps_hud_bg_opacity{0.5f}; // [extra]
+    std::atomic<bool> fps_hud_window_open{false}; // [extra]
+    std::atomic<float> fps_hud_scale{1.0f}; // [extra]
+    std::atomic<int> fps_hud_preset{0}; // [extra]
+    std::atomic<bool> fps_hud_show_shaders{true}; // [extra]
+    std::atomic<float> fps_hud_graph_thickness{1.5f}; // [extra]
+    std::atomic<float> fps_hud_graph_height{32.0f}; // [extra]
+    std::atomic<float> fps_hud_graph_width{220.0f}; // [extra]
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.

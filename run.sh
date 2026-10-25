@@ -32,7 +32,7 @@ data=${BB_DATA_DIR:-.}
 export BB_GPU_USER_DIR=${BB_GPU_USER_DIR:-${BB_USER_DIR:-$data/user}}
 user_dir="$BB_GPU_USER_DIR"
 cache_dir="$user_dir/cache/CUSA03173"
-if [[ ${1:-} == --precompile-shaders ]] || [[ ! -f "$cache_dir/pipeline_driver.cache" && ${BB_NO_PRECOMPILE:-0} != 1 ]]; then
+if [[ ${1:-} == --precompile-shaders ]] || [[ ! -f "$cache_dir/pipeline_driver.cache" && ${BB_NO_PRECOMPILE:-0} != 1 && -z "${BB_PROBE:-}" ]]; then
     is_manual_precompile=0
     if [[ ${1:-} == --precompile-shaders ]]; then
         shift

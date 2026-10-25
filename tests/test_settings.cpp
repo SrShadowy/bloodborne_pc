@@ -70,6 +70,20 @@ int main() {
     s.cam_height = 1.10f;
     s.light_grid_opt = false;
     s.hide_hud = true;
+    s.fps_hud_show_cpu = true; // [extra]
+    s.fps_hud_show_gpu = true; // [extra]
+    s.fps_hud_show_ram = true; // [extra]
+    s.fps_hud_show_vram = true; // [extra]
+    s.fps_hud_show_graph = true; // [extra]
+    s.fps_hud_show_shaders = true; // [extra]
+    s.fps_hud_position = 2; // [extra]
+    s.fps_hud_layout = 1; // [extra]
+    s.fps_hud_bg_opacity = 0.85f; // [extra]
+    s.fps_hud_scale = 1.25f; // [extra]
+    s.fps_hud_preset = 4; // [extra]
+    s.fps_hud_graph_thickness = 2.5f; // [extra]
+    s.fps_hud_graph_height = 45.0f; // [extra]
+    s.fps_hud_graph_width = 240.0f; // [extra]
     BbSettings::Save();
 
     s.raw_mouse_camera = true;
@@ -85,6 +99,11 @@ int main() {
     assert(s.bloom_scale == 1.35f && s.color_saturation == 1.15f);
     assert(s.ao_strength == 1.50f && s.shadow_distance == 2.00f && s.fog_opacity == 0.75f);
     assert(s.fov_scale == 1.20f && s.cam_distance == 1.40f && s.cam_height == 1.10f);
+    assert(s.fps_hud_show_cpu && s.fps_hud_show_gpu && s.fps_hud_show_ram && s.fps_hud_show_vram); // [extra]
+    assert(s.fps_hud_show_graph && s.fps_hud_show_shaders && s.fps_hud_position == 2 && s.fps_hud_layout == 1); // [extra]
+    assert(s.fps_hud_bg_opacity == 0.85f); // [extra]
+    assert(s.fps_hud_scale == 1.25f && s.fps_hud_preset == 4); // [extra]
+    assert(s.fps_hud_graph_thickness == 2.5f && s.fps_hud_graph_height == 45.0f && s.fps_hud_graph_width == 240.0f); // [extra]
     assert(saved.find("menu_language=") == std::string::npos); // only started with it (#134)
 
     // A language chosen in the menu is saved and wins over the launcher's from then on.

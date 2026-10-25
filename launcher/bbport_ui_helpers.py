@@ -7,7 +7,7 @@ from bbport_i18n import tr
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, Gtk, Pango  # noqa: E402
 
 
 def open_url(url):
@@ -80,11 +80,51 @@ def combo_row(title, subtitle, choices, current):
     model = Gtk.StringList.new([tr(choice[0]) for choice in choices])
     row = Adw.ComboRow(title=title, model=model)
     values = [choice[1] for choice in choices]
-    notes = [tr(choice[2]) if len(choice) > 2 else None for choice in choices]
+    notes = [tr(choice[2]) if len(choice) > 2 and choice[2] else None for choice in choices]
+    tooltips = [
+        f"{tr(choice[0])}\n\n{notes[i]}" if notes[i] else tr(choice[0])
+        for i, choice in enumerate(choices)
+    ]
 
     def show_note(*_):
-        lines = [line for line in (subtitle, notes[row.get_selected()]) if line]
+        idx = row.get_selected()
+        current_note = notes[idx] if 0 <= idx < len(notes) else None
+        lines = [line for line in (subtitle, current_note) if line]
         row.set_subtitle("\n".join(lines))
+        row_tip = tooltips[idx] if 0 <= idx < len(tooltips) else None
+        tip_parts = [p for p in (title, subtitle, row_tip) if p]
+        if tip_parts:
+            row.set_tooltip_text("\n\n".join(dict.fromkeys(tip_parts)))
+        else:
+            row.set_tooltip_text(None)
+
+    factory = row.get_factory()
+    if factory:
+        def on_bind(_factory, item):
+            obj = item.get_item()
+            pos = item.get_position()
+            tip = tooltips[pos] if 0 <= pos < len(tooltips) else (obj.get_string() if obj else None)
+            box = item.get_child()
+            if box:
+                in_popover = box.get_ancestor(Gtk.Popover) is not None
+                c = box.get_first_child()
+                while c:
+                    if isinstance(c, Gtk.Label):
+                        if in_popover:
+                            c.set_ellipsize(Pango.EllipsizeMode.NONE)
+                        if tip:
+                            c.set_tooltip_text(tip)
+                    elif isinstance(c, Gtk.Image):
+                        if tip:
+                            c.set_tooltip_text(tip)
+                    c = c.get_next_sibling()
+                if tip:
+                    box.set_tooltip_text(tip)
+                parent = box.get_parent()
+                if parent and hasattr(parent, "set_tooltip_text") and tip:
+                    parent.set_tooltip_text(tip)
+
+        factory.connect("bind", on_bind)
 
     row.set_selected(values.index(current) if current in values else 0)
     show_note()

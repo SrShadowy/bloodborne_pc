@@ -16,6 +16,9 @@ Level Threshold() {
     static const Level threshold = [] {
         const char* env = std::getenv("BB_GPU_LOG");
         if (env) {
+            if (std::strcmp(env, "off") == 0) {
+                return Level::off;
+            }
             for (int i = 0; i < 6; ++i) {
                 if (std::strcmp(env, LevelNames[i]) == 0) {
                     return Level(i);

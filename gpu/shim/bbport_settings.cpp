@@ -69,6 +69,38 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "fps_hud_show_fps") { // [extra]
+        v.fps_hud_show_fps = i != 0; // [extra]
+    } else if (key == "fps_hud_show_frametime") { // [extra]
+        v.fps_hud_show_frametime = i != 0; // [extra]
+    } else if (key == "fps_hud_show_cpu") { // [extra]
+        v.fps_hud_show_cpu = i != 0; // [extra]
+    } else if (key == "fps_hud_show_gpu") { // [extra]
+        v.fps_hud_show_gpu = i != 0; // [extra]
+    } else if (key == "fps_hud_show_ram") { // [extra]
+        v.fps_hud_show_ram = i != 0; // [extra]
+    } else if (key == "fps_hud_show_vram") { // [extra]
+        v.fps_hud_show_vram = i != 0; // [extra]
+    } else if (key == "fps_hud_show_graph") { // [extra]
+        v.fps_hud_show_graph = i != 0; // [extra]
+    } else if (key == "fps_hud_position") { // [extra]
+        v.fps_hud_position = std::clamp(i, 0, 3); // [extra]
+    } else if (key == "fps_hud_layout") { // [extra]
+        v.fps_hud_layout = std::clamp(i, 0, 1); // [extra]
+    } else if (key == "fps_hud_bg_opacity") { // [extra]
+        v.fps_hud_bg_opacity = Clamp(f, 0.0f, 1.0f); // [extra]
+    } else if (key == "fps_hud_scale") { // [extra]
+        v.fps_hud_scale = Clamp(f, 0.5f, 3.0f); // [extra]
+    } else if (key == "fps_hud_preset") { // [extra]
+        v.fps_hud_preset = std::clamp(i, 0, 4); // [extra]
+    } else if (key == "fps_hud_show_shaders") { // [extra]
+        v.fps_hud_show_shaders = i != 0; // [extra]
+    } else if (key == "fps_hud_graph_thickness") { // [extra]
+        v.fps_hud_graph_thickness = Clamp(f, 0.5f, 5.0f); // [extra]
+    } else if (key == "fps_hud_graph_height") { // [extra]
+        v.fps_hud_graph_height = Clamp(f, 16.0f, 120.0f); // [extra]
+    } else if (key == "fps_hud_graph_width") { // [extra]
+        v.fps_hud_graph_width = Clamp(f, 100.0f, 600.0f); // [extra]
     } else if (key == "show_info_hud") {
         v.show_info_hud = i != 0;
     } else if (key == "info_hud_pos") {
@@ -496,6 +528,22 @@ void Save() {
     put("reactive_max", fixed(v.reactive_max, 2));
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
+    put("fps_hud_show_fps", flag(v.fps_hud_show_fps)); // [extra]
+    put("fps_hud_show_frametime", flag(v.fps_hud_show_frametime)); // [extra]
+    put("fps_hud_show_cpu", flag(v.fps_hud_show_cpu)); // [extra]
+    put("fps_hud_show_gpu", flag(v.fps_hud_show_gpu)); // [extra]
+    put("fps_hud_show_ram", flag(v.fps_hud_show_ram)); // [extra]
+    put("fps_hud_show_vram", flag(v.fps_hud_show_vram)); // [extra]
+    put("fps_hud_show_graph", flag(v.fps_hud_show_graph)); // [extra]
+    put("fps_hud_position", std::to_string(v.fps_hud_position.load())); // [extra]
+    put("fps_hud_layout", std::to_string(v.fps_hud_layout.load())); // [extra]
+    put("fps_hud_bg_opacity", fixed(v.fps_hud_bg_opacity, 2)); // [extra]
+    put("fps_hud_scale", fixed(v.fps_hud_scale, 2)); // [extra]
+    put("fps_hud_preset", std::to_string(v.fps_hud_preset.load())); // [extra]
+    put("fps_hud_show_shaders", flag(v.fps_hud_show_shaders)); // [extra]
+    put("fps_hud_graph_thickness", fixed(v.fps_hud_graph_thickness, 2)); // [extra]
+    put("fps_hud_graph_height", fixed(v.fps_hud_graph_height, 1)); // [extra]
+    put("fps_hud_graph_width", fixed(v.fps_hud_graph_width, 1)); // [extra]
     put("show_info_hud", flag(v.show_info_hud));
     put("info_hud_pos", std::to_string(v.info_hud_pos.load()));
     put("info_hud_show_playtime", flag(v.info_hud_show_playtime));

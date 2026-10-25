@@ -19,6 +19,12 @@ void RenderLightGridCheckbox(BbSettings::Values& s, int lang, bool& dirty);
 // Renders the Raw 1:1 Mouse Camera and Hold Movement/Slope Auto-Rotation checkboxes.
 void RenderRawMouseCameraControls(BbSettings::Values& s, int lang, bool& dirty);
 
+// Renders the customizable FPS & Performance Metrics HUD section.
+void RenderFpsOverlaySection(BbSettings::Values& s, int lang, bool& dirty);
+
+// Renders the standalone FPS & Performance Metrics HUD configuration window.
+void RenderFpsOverlayWindow(BbSettings::Values& s, int lang, bool& dirty);
+
 // Renders the customizable Info HUD (OSD) section.
 void RenderInfoHudSection(BbSettings::Values& s, int lang, bool& dirty);
 

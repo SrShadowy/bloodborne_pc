@@ -60,6 +60,7 @@ class GameRunnerMixin:
             pass
 
         self.store()
+        self._startup_done = False
         if hasattr(self, "on_clear_log"):
             self.on_clear_log()
         else:
@@ -81,8 +82,6 @@ class GameRunnerMixin:
         if hasattr(self, "log_status_badge"):
             pid = self.process.get_identifier()
             self.log_status_badge.set_label(tr("Игра запущена (PID {})").format(pid))
-            self.log_status_badge.remove_css_class("badge-warning")
-            self.log_status_badge.add_css_class("badge-success")
         if hasattr(self, "log_status_icon"):
             self.log_status_icon.set_from_icon_name("media-playback-start-symbolic")
         if hasattr(self, "log_status_box"):
@@ -93,6 +92,58 @@ class GameRunnerMixin:
     def read_line(self):
         self.stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_line)
 
+    def _should_log_line(self, line: str) -> bool:
+        level = getattr(self, "settings", {}).get("log_level", "verbose")
+        if level == "verbose":
+            return True
+
+        lower = line.lower()
+        is_crash = any(w in lower for w in (
+            "crash", "panic", "sigsegv", "sigbus", "sigabrt", "assertion failed",
+            "fatal", "backtrace", "stack trace", "core dumped"
+        ))
+        if is_crash:
+            return True
+
+        if level == "none":
+            return False
+
+        # Ignore harmless stubbed / dummy calls in filtered modes
+        if "(stubbed)" in lower or "(dummy)" in lower:
+            return False
+
+        if level == "minimal":
+            # Suppress all internal C runtime thread/semaphore/memory/mount lines
+            if lower.startswith("runtime:") or lower.startswith("[runtime]"):
+                return False
+            if lower.startswith("guest hooks:") or lower.startswith("guest memory:"):
+                return False
+
+            if not getattr(self, "_startup_done", False):
+                if any(lower.startswith(p) for p in (
+                    "videoout:", "gpu: window and vulkan presenter ready"
+                )):
+                    self._startup_done = True
+                    return True
+
+                minimal_startup = (
+                    "bloodborne", "video backend:", "output:", "output ", "patches:",
+                    "memory model:", "co-op:", "settings:", "game profile:",
+                    "window:", "window ", "display", "gpu:", "upscaler:",
+                    "frame generation:", "online:"
+                )
+                return any(lower.startswith(p) for p in minimal_startup)
+
+            return "error" in lower or "critical" in lower
+
+        if level == "error":
+            return "error" in lower or "critical" in lower
+
+        if level == "warning":
+            return "warning" in lower or "warn" in lower or "error" in lower or "critical" in lower
+
+        return True
+
     def on_line(self, stream, result):
         try:
             line, _length = stream.read_line_finish_utf8(result)
@@ -100,7 +151,8 @@ class GameRunnerMixin:
             return
         if line is None:
             return
-        self.append_log(line + "\n")
+        if self._should_log_line(line):
+            self.append_log(line + "\n")
         self.read_line()
 
     def stop_game(self):
@@ -139,8 +191,6 @@ class GameRunnerMixin:
             self.update_cache_status()
         if hasattr(self, "log_status_badge"):
             self.log_status_badge.set_label(tr("Игра не запущена"))
-            self.log_status_badge.remove_css_class("badge-success")
-            self.log_status_badge.add_css_class("badge-warning")
         if hasattr(self, "log_status_icon"):
             self.log_status_icon.set_from_icon_name("media-playback-stop-symbolic")
         if hasattr(self, "log_status_box"):

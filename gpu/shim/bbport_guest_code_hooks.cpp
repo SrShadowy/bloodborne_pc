@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <map> // [extra]
 #include <memory>
 #include <mutex>
 #include <set>
@@ -34,7 +35,7 @@ constexpr std::size_t AreaSize = 4u << 20; // trampolines (~400 bytes each)
 constexpr std::int64_t JumpReach = 0x7000'0000; // inside a rel32 jump's 2 GiB
 
 std::mutex hook_mutex;
-std::set<std::uintptr_t> hooked_sites; // first bytes of installed hooks
+std::map<std::uintptr_t, std::uintptr_t> hooked_spans; // [extra] begin -> end of installed hooks
 
 /// An executable area within reach of its code, mapped on first use.
 struct Area {
@@ -157,11 +158,19 @@ bool InstallGuestCodeHook(void* address, std::span<const std::uint8_t> expected,
         return false;
     }
     const auto begin = reinterpret_cast<std::uintptr_t>(code);
-    const auto overlap = hooked_sites.lower_bound(begin > 16 ? begin - 16 : 0);
-    if (overlap != hooked_sites.end() && *overlap < begin + expected.size()) {
-        std::fprintf(stderr, "Guest code hook at %p overlaps another one\n", address);
-        return false;
-    }
+    const auto end = begin + expected.size(); // [extra]
+    const auto it = hooked_spans.lower_bound(begin); // [extra]
+    if (it != hooked_spans.end() && it->first < end) { // [extra]
+        std::fprintf(stderr, "Guest code hook at %p overlaps another one\n", address); // [extra]
+        return false; // [extra]
+    } // [extra]
+    if (it != hooked_spans.begin()) { // [extra]
+        const auto prev = std::prev(it); // [extra]
+        if (prev->second > begin) { // [extra]
+            std::fprintf(stderr, "Guest code hook at %p overlaps another one\n", address); // [extra]
+            return false; // [extra]
+        } // [extra]
+    } // [extra]
     Xbyak::CodeGenerator* t = AreaFor(begin);
     if (!t) {
         std::fprintf(stderr, "Guest code hook at %p: no trampoline memory in reach\n", address);
@@ -264,7 +273,7 @@ bool InstallGuestCodeHook(void* address, std::span<const std::uint8_t> expected,
     const std::int32_t rel32 = std::int32_t(rel);
     std::memcpy(patch.data() + 1, &rel32, 4);
     WriteCode(code, patch.data(), patch.size());
-    hooked_sites.insert(begin);
+    hooked_spans[begin] = end; // [extra]
     return true;
 }
 

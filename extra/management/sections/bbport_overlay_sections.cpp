@@ -157,6 +157,247 @@ void RenderRawMouseCameraControls(BbSettings::Values& s, int lang, bool& dirty) 
     ImGui::EndDisabled();
 }
 
+void RenderFpsOverlaySection(BbSettings::Values& s, int lang, bool& dirty) {
+    const char* sec_title = (lang == 1) ? "Overlay de FPS e Desempenho" :
+                            (lang == 2) ? "Оверлей FPS и производительности" :
+                                          "FPS & Performance Overlay";
+    ImGui::SeparatorText(sec_title);
+
+    const char* main_label = (lang == 1) ? "Exibir Overlay de FPS / Métricas" :
+                             (lang == 2) ? "Показывать оверлей FPS и метрик" :
+                                           "Show FPS & Metrics Overlay";
+    Checkbox(main_label, s.show_fps, dirty);
+    Hint((lang == 1) ? "Exibe taxa de quadros, tempo de quadro, compilação de shaders e métricas de processo opcionais." :
+         (lang == 2) ? "Показывает FPS, время кадра, компиляцию шейдеров и дополнительные метрики." :
+                       "Displays real-time FPS, frame time, shader compilation, and optional process metrics.");
+
+    const bool win_open = s.fps_hud_window_open.load(std::memory_order_relaxed);
+    const char* btn_text = (lang == 1) ? (win_open ? "Fechar Janela de Configuração do Overlay###btn_fps_win" : "Janela de Configuração do Overlay###btn_fps_win") :
+                           (lang == 2) ? (win_open ? "Закрыть настройки оверлея###btn_fps_win" : "Открыть настройки оверлея###btn_fps_win") :
+                                         (win_open ? "Close Overlay Configuration Window###btn_fps_win" : "Overlay Configuration Window###btn_fps_win");
+
+    ImGui::PushStyleColor(ImGuiCol_Button, win_open ? ImVec4(0.24f, 0.45f, 0.40f, 1.0f) : ImVec4(0.18f, 0.35f, 0.48f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, win_open ? ImVec4(0.30f, 0.55f, 0.48f, 1.0f) : ImVec4(0.24f, 0.45f, 0.58f, 1.0f));
+    if (ImGui::Button(btn_text, ImVec2(-1, 28.0f))) {
+        s.fps_hud_window_open.store(!win_open, std::memory_order_relaxed);
+        dirty = true;
+    }
+    ImGui::PopStyleColor(2);
+    Hint((lang == 1) ? "Abre a janela exclusiva com presets, modos Linha/Coluna, escala do HUD e prévia ao vivo." :
+         (lang == 2) ? "Открывает окно, содержащее пресеты, режимы «строки/столбцы», HUD и предварительный просмотр в реальном времени." :
+                       "Opens dedicated window, Row/Column modes, HUD scale and live preview.");
+}
+
+void RenderFpsOverlayWindow(BbSettings::Values& s, int lang, bool& dirty) {
+    if (!s.fps_hud_window_open.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    bool open = true;
+    const char* win_title = (lang == 1) ? "Configuração do Overlay de Desempenho (FPS & Métricas)###fps_overlay_window" :
+                            (lang == 2) ? "Настройки оверлея производительности (FPS и метрики)###fps_overlay_window" :
+                                          "Performance Overlay Settings (FPS & Metrics)###fps_overlay_window";
+
+    ImGui::SetNextWindowSize(ImVec2(540.0f, 620.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(win_title, &open, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        if (!open) {
+            s.fps_hud_window_open = false;
+            dirty = true;
+        }
+        return;
+    }
+    if (!open) {
+        s.fps_hud_window_open = false;
+        dirty = true;
+        ImGui::End();
+        return;
+    }
+
+    // Master Switch
+    Checkbox((lang == 1) ? "Ativar Overlay de Desempenho" :
+             (lang == 2) ? "Включить оверлей производительности" :
+                           "Enable Performance Overlay", s.show_fps, dirty);
+
+    const bool active = s.show_fps.load(std::memory_order_relaxed);
+    ImGui::BeginDisabled(!active);
+
+    ImGui::Spacing();
+    ImGui::SeparatorText((lang == 1) ? "Nível de Detalhe (Presets Estilo Steam)" :
+                         (lang == 2) ? "Уровень детализации (Пресеты Steam)" :
+                                       "Performance Level (Steam Presets)");
+
+    // Steam Deck Level 1, 2, 3, 4 preset buttons
+    const float btn_w = (ImGui::GetContentRegionAvail().x - 18.0f) * 0.25f;
+    if (ImGui::Button((lang == 1) ? "Nível 1\n(Mínimo)" : (lang == 2) ? "Уровень 1\n(Мин.)" : "Level 1\n(Minimal)", ImVec2(btn_w, 40.0f))) {
+        s.fps_hud_show_fps = true;
+        s.fps_hud_show_frametime = false;
+        s.fps_hud_show_cpu = false;
+        s.fps_hud_show_gpu = false;
+        s.fps_hud_show_ram = false;
+        s.fps_hud_show_vram = false;
+        s.fps_hud_show_graph = false;
+        s.fps_hud_layout = 0;
+        s.fps_hud_preset = 1;
+        dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button((lang == 1) ? "Nível 2\n(Linha)" : (lang == 2) ? "Уровень 2\n(Строка)" : "Level 2\n(Row)", ImVec2(btn_w, 40.0f))) {
+        s.fps_hud_show_fps = true;
+        s.fps_hud_show_frametime = true;
+        s.fps_hud_show_cpu = false;
+        s.fps_hud_show_gpu = false;
+        s.fps_hud_show_ram = false;
+        s.fps_hud_show_vram = false;
+        s.fps_hud_show_graph = false;
+        s.fps_hud_layout = 0;
+        s.fps_hud_preset = 2;
+        dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button((lang == 1) ? "Nível 3\n(Padrão)" : (lang == 2) ? "Уровень 3\n(Базовый)" : "Level 3\n(Standard)", ImVec2(btn_w, 40.0f))) {
+        s.fps_hud_show_fps = true;
+        s.fps_hud_show_frametime = true;
+        s.fps_hud_show_cpu = true;
+        s.fps_hud_show_gpu = true;
+        s.fps_hud_show_ram = false;
+        s.fps_hud_show_vram = false;
+        s.fps_hud_show_graph = false;
+        s.fps_hud_layout = 0;
+        s.fps_hud_preset = 3;
+        dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button((lang == 1) ? "Nível 4\n(Completo)" : (lang == 2) ? "Уровень 4\n(Полный)" : "Level 4\n(Full)", ImVec2(btn_w, 40.0f))) {
+        s.fps_hud_show_fps = true;
+        s.fps_hud_show_frametime = true;
+        s.fps_hud_show_cpu = true;
+        s.fps_hud_show_gpu = true;
+        s.fps_hud_show_ram = true;
+        s.fps_hud_show_vram = true;
+        s.fps_hud_show_graph = true;
+        s.fps_hud_layout = 1;
+        s.fps_hud_preset = 4;
+        dirty = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText((lang == 1) ? "Formato e Orientação" :
+                         (lang == 2) ? "Формат и ориентация" :
+                                       "Format & Orientation");
+
+    int cur_layout = s.fps_hud_layout.load(std::memory_order_relaxed);
+    if (ImGui::RadioButton((lang == 1) ? "Modo Linha (Horizontal Compacto)" :
+                           (lang == 2) ? "Режим Строка (Горизонтальный)" :
+                                         "Row Mode (Horizontal Compact)", cur_layout == 0)) {
+        s.fps_hud_layout.store(0, std::memory_order_relaxed);
+        dirty = true;
+    }
+    ImGui::SameLine(0.0f, 20.0f);
+    if (ImGui::RadioButton((lang == 1) ? "Modo Coluna (Vertical Detalhado)" :
+                           (lang == 2) ? "Режим Колонка (Вертикальный)" :
+                                         "Column Mode (Vertical Detailed)", cur_layout == 1)) {
+        s.fps_hud_layout.store(1, std::memory_order_relaxed);
+        dirty = true;
+    }
+
+    // Position
+    const char* pos_label = (lang == 1) ? "Posição na Tela" :
+                            (lang == 2) ? "Позиция на экране" :
+                                          "Screen Position";
+    const char* pos_options_pt[] = {
+        "Superior Direito (Padrão)",
+        "Superior Esquerdo",
+        "Inferior Direito",
+        "Inferior Esquerdo"
+    };
+    const char* pos_options_en[] = {
+        "Top-Right (Default)",
+        "Top-Left",
+        "Bottom-Right",
+        "Bottom-Left"
+    };
+    const char* pos_options_ru[] = {
+        "Сверху справа (По умолчанию)",
+        "Сверху слева",
+        "Снизу справа",
+        "Снизу слева"
+    };
+    const char** pos_options = (lang == 1) ? pos_options_pt : (lang == 2) ? pos_options_ru : pos_options_en;
+    int current_pos = std::clamp(s.fps_hud_position.load(std::memory_order_relaxed), 0, 3);
+    ImGui::SetNextItemWidth(260.0f);
+    if (ImGui::BeginCombo(pos_label, pos_options[current_pos])) {
+        for (int i = 0; i < 4; ++i) {
+            if (ImGui::Selectable(pos_options[i], i == current_pos)) {
+                s.fps_hud_position.store(i, std::memory_order_relaxed);
+                dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText((lang == 1) ? "Métricas Ativas" :
+                         (lang == 2) ? "Отображаемые показатели" :
+                                       "Active Metrics");
+
+    ImGui::Columns(2, "##fps_metrics_grid", false);
+    Checkbox((lang == 1) ? "Taxa de Quadros (FPS)" : (lang == 2) ? "Частота кадров (FPS)" : "Framerate (FPS)",
+             s.fps_hud_show_fps, dirty);
+    Checkbox((lang == 1) ? "Tempo de Quadro (ms)" : (lang == 2) ? "Время кадра (мс)" : "Frametime (ms)",
+             s.fps_hud_show_frametime, dirty);
+    Checkbox((lang == 1) ? "Uso de CPU do Processo (%)" : (lang == 2) ? "Нагрузка CPU процесса (%)" : "Process CPU (%)",
+             s.fps_hud_show_cpu, dirty);
+    Checkbox((lang == 1) ? "Gráfico de Frametime" : (lang == 2) ? "График времени кадра" : "Frametime Graph",
+             s.fps_hud_show_graph, dirty);
+
+    ImGui::NextColumn();
+    Checkbox((lang == 1) ? "Uso de GPU (%) [Dedicada / Ativa]" : (lang == 2) ? "Нагрузка GPU (%) [Дискретная]" : "GPU Load (%) [Dedicated]",
+             s.fps_hud_show_gpu, dirty);
+    Checkbox((lang == 1) ? "Memória RAM do Jogo (RSS)" : (lang == 2) ? "Оперативная память (RAM)" : "Process RAM (RSS)",
+             s.fps_hud_show_ram, dirty);
+    Checkbox((lang == 1) ? "Memória de Vídeo (VRAM)" : (lang == 2) ? "Видеопамять (VRAM)" : "Video Memory (VRAM)",
+             s.fps_hud_show_vram, dirty);
+    Checkbox((lang == 1) ? "Notificação de Shaders" : (lang == 2) ? "Компиляция шейдеров" : "Shader Compilation",
+             s.fps_hud_show_shaders, dirty);
+    ImGui::Columns(1);
+
+    ImGui::Spacing();
+    ImGui::SeparatorText((lang == 1) ? "Aparência Visual" :
+                         (lang == 2) ? "Внешний вид" :
+                                       "Visual Appearance");
+
+    Slider((lang == 1) ? "Escala do HUD" : (lang == 2) ? "Масштаб HUD" : "HUD Scale",
+           s.fps_hud_scale, 0.75f, 2.0f, dirty);
+
+    Slider((lang == 1) ? "Opacidade do Fundo" : (lang == 2) ? "Прозрачность фона" : "Background Opacity",
+           s.fps_hud_bg_opacity, 0.0f, 1.0f, dirty);
+
+    const bool graph_on = s.fps_hud_show_graph.load(std::memory_order_relaxed);
+    if (graph_on) {
+        ImGui::Spacing();
+        ImGui::SeparatorText((lang == 1) ? "Customização do Gráfico de Frametime" :
+                             (lang == 2) ? "Настройка графика времени кадра" :
+                                           "Frametime Graph Customization");
+        Slider((lang == 1) ? "Largura do Gráfico" : (lang == 2) ? "Ширина графика" : "Graph Width",
+               s.fps_hud_graph_width, 100.0f, 500.0f, dirty);
+        Slider((lang == 1) ? "Altura do Gráfico" : (lang == 2) ? "Высота графика" : "Graph Height",
+               s.fps_hud_graph_height, 20.0f, 100.0f, dirty);
+        Slider((lang == 1) ? "Espessura da Linha" : (lang == 2) ? "Толщина линии" : "Line Thickness",
+               s.fps_hud_graph_thickness, 1.0f, 5.0f, dirty);
+    }
+
+    ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    if (ImGui::Button((lang == 1) ? "Fechar Janela" : (lang == 2) ? "Закрыть окно" : "Close Window", ImVec2(120.0f, 0))) {
+        s.fps_hud_window_open = false;
+        dirty = true;
+    }
+    ImGui::End();
+}
+
 void RenderInfoHudSection(BbSettings::Values& s, int lang, bool& dirty) {
     const char* sec_title = (lang == 1) ? "HUD de Informações em Tela (Info OSD)" :
                             (lang == 2) ? "Информационный оверлей (Info OSD)" :

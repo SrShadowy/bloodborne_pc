@@ -139,7 +139,7 @@ from bbport_config import (
     ASPECTS, output_sizes, resolved_aspect, nearest_output, parse_size,
     NGX_PREFIX, DLSS_SDK_URL, binaries_dir, ngx_libraries, online_module, VIDEO_BACKENDS,
     load_settings, save_settings, load_ini, save_ini,
-    game_environment,
+    game_environment, LOG_LEVELS,
 )
 from bbport_devices import connected_gpus
 from bbport_fsr_builder import (
@@ -617,6 +617,7 @@ class LauncherWindow(
             ("controls", tr("Управление"), "input-gaming-symbolic", self.build_controls_page),
             ("online", tr("Онлайн"), "network-workgroup-symbolic", self.build_online_page),
             ("mods", tr("Моды и патчи"), "application-x-addon-symbolic", self.build_mods_page),
+            ("dev", tr("Разработка"), "applications-engineering-symbolic", self.build_dev_page),
             ("log", tr("Журнал"), "utilities-terminal-symbolic", self.build_log_page),
         ]
 
@@ -1031,6 +1032,22 @@ class LauncherWindow(
         vram.add(self.readbacks_row)
         page.add(vram)
 
+        return page
+
+    def build_dev_page(self):
+        page = Adw.PreferencesPage()
+
+        log_opt = Adw.PreferencesGroup(title=tr("Оптимизация журнала и ввода-вывода"))
+        self.log_level_row = combo_row(
+            tr("Уровень журнала"),
+            None,
+            LOG_LEVELS,
+            self.settings.get("log_level", "verbose"),
+        )
+        self.log_level_row.connect("notify::selected", lambda *_: self.store())
+        log_opt.add(self.log_level_row)
+        page.add(log_opt)
+
         dev = Adw.PreferencesGroup(title=tr("Для разработчика"))
         self.mangohud_row = Adw.SwitchRow(title="MangoHud", active=self.settings["mangohud"])
         dev.add(self.mangohud_row)
@@ -1278,6 +1295,8 @@ class LauncherWindow(
         s["gpu_profile"] = self.profile_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.extra_row.get_text().strip()
+        if hasattr(self, "log_level_row"):
+            s["log_level"] = combo_value(self.log_level_row)
         s["mods_enabled"] = self.mods_enabled_row.get_active()
         s["online"] = self.online_row.get_active()
         s["online_bbsc"] = self.bbsc_row.get_active() if hasattr(self, "bbsc_row") else s.get("online_bbsc", False)

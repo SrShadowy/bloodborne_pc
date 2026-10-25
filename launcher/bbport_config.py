@@ -207,8 +207,17 @@ PREUPLOAD = [("Обычная", "", "Без лишней видеопамяти"
 
 VK_RECORD_THREADS = [("Авто", "auto"), ("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5")]
 
+LOG_LEVELS = [
+    ("Минимальный (запуск и сбои)", "minimal"),
+    ("Только ошибки", "error"),
+    ("Предупреждения и ошибки", "warning"),
+    ("Подробный (все журналы)", "verbose"),
+    ("Без журнала (только сбои)", "none"),
+]
+
 DEFAULTS = {
     "ui_language": "",
+    "log_level": "verbose",
     "game_dir": "" if PACKAGED else str(PORT_DIR.parent / "CUSA03173"),
     "user_dir": "",
     "mods_dir": "",
@@ -503,6 +512,19 @@ def game_environment(s):
         env["BB_FRAME_STATS"] = "1"
     if s.get("save_log"):
         env["BB_SAVE_LOG"] = "1"
+    log_level = s.get("log_level", "verbose")
+    env["BB_LOG_LEVEL"] = log_level
+    if "BB_GPU_LOG" not in env:
+        if log_level == "verbose":
+            env["BB_GPU_LOG"] = "debug"
+        elif log_level == "warning":
+            env["BB_GPU_LOG"] = "warning"
+        elif log_level == "error":
+            env["BB_GPU_LOG"] = "error"
+        elif log_level == "minimal":
+            env["BB_GPU_LOG"] = "error"
+        elif log_level == "none":
+            env["BB_GPU_LOG"] = "off"
     model = s.get("memory_model", "auto")
     if model in ("new", "old"):
         env["BB_PC_MODEL"] = "1" if model == "new" else "0"

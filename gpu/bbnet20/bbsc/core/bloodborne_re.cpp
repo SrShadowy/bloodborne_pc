@@ -669,8 +669,8 @@ constexpr auto Sites = std::to_array<TraceSite>({
     {"Event.WarpNextStage",
      0x0132E010,
      TraceKind::StageWarp,
-     {0x55, 0x48, 0x89, 0xE5, 0xC1, 0xE6},
-     6},
+     {0x55, 0x48, 0x89, 0xE5, 0xC1, 0xE6, 0x18}, // [extra]
+     7}, // [extra]
     {"Event.WarpNextStage_Bonfire",
      0x0132E050,
      TraceKind::StageWarp,
@@ -701,8 +701,8 @@ constexpr auto Sites = std::to_array<TraceSite>({
     {"Warp.RespawnTransform.Resolve",
      0x0154AFC0,
      TraceKind::StageWarpTransformResolve,
-     {0x55, 0x53, 0x83, 0xF9, 0xFF, 0x0F, 0x84, 0x9D, 0x00, 0x00, 0x00},
-     11},
+     {0x55, 0x53, 0x83, 0xF9, 0xFF}, // [extra]
+     5}, // [extra]
     {"Warp.RespawnPlacement.Apply", 0x01939C80, TraceKind::StageWarpPlacement, StandardR14Prologue,
      6},
 
