@@ -224,6 +224,51 @@ class LauncherDevUITests(unittest.TestCase):
         self.assertIn("shadp2p / Windows BBSC (Gen 19)", target_label.get_tooltip_text())
         self.assertIn("Seamless Hunt compatibility", target_label.get_tooltip_text())
 
+    def test_dynamic_combo_row_setup(self):
+        from bbport_ui_helpers import setup_combo_row
+        from gi.repository import Pango
+        row = setup_combo_row(Adw.ComboRow(title="Placa de vídeo"))
+        choices = [
+            "Automático (AMD Radeon RX 9070 XT)",
+            "AMD Radeon RX 9070 XT",
+            "AMD Ryzen 9 7900 12-Core Processor (integrada)"
+        ]
+        row.set_model(Gtk.StringList.new(choices))
+        self.assertEqual(row.get_tooltip_text(), "Placa de vídeo\n\nAutomático (AMD Radeon RX 9070 XT)")
+
+        win = Adw.ApplicationWindow(default_width=600, default_height=400)
+        box = Gtk.ListBox()
+        box.append(row)
+        win.set_content(box)
+
+        def find_popover(w):
+            if isinstance(w, Gtk.Popover): return w
+            c = w.get_first_child()
+            while c:
+                p = find_popover(c)
+                if p: return p
+                c = c.get_next_sibling()
+            return None
+
+        pop = find_popover(row)
+        self.assertIsNotNone(pop)
+        pop.popup()
+
+        def find_labels(w):
+            res = []
+            if isinstance(w, Gtk.Label): res.append(w)
+            c = w.get_first_child()
+            while c:
+                res.extend(find_labels(c))
+                c = c.get_next_sibling()
+            return res
+
+        for choice_str in choices:
+            matching = [l for l in find_labels(pop) if l.get_text() == choice_str]
+            self.assertTrue(len(matching) >= 1)
+            self.assertEqual(matching[0].get_ellipsize(), Pango.EllipsizeMode.NONE)
+            self.assertEqual(matching[0].get_tooltip_text(), choice_str)
+
 
 
 if __name__ == "__main__":

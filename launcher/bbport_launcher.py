@@ -148,7 +148,7 @@ from bbport_fsr_builder import (
 
 if _HAS_GTK:
     from bbport_ui_helpers import (
-        flat_button, open_folder, combo_row, combo_value,
+        flat_button, open_folder, combo_row, combo_value, setup_combo_row,
     )
     from bbport_cache import CacheMixin
     from bbport_controls import ControlsMixin
@@ -163,6 +163,7 @@ else:
     open_folder = lambda *a, **kw: None
     combo_row = lambda *a, **kw: None
     combo_value = lambda *a, **kw: None
+    setup_combo_row = lambda r, *a, **kw: r
     class CacheMixin: pass
     class ControlsMixin: pass
     class ModsMixin: pass
@@ -775,7 +776,7 @@ class LauncherWindow(
                                           MEMORY_MODELS, self.settings.get("memory_model", "auto"))
         mode.add(self.memory_model_row)
         # The GPU the game runs on, as in shadPS4 (laptops with two GPUs).
-        self.gpu_row = Adw.ComboRow(title=tr("Видеокарта"))
+        self.gpu_row = setup_combo_row(Adw.ComboRow(title=tr("Видеокарта")))
         self.gpu_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
                                             lambda _button: self.fill_gpus()))
         self.fill_gpus()
@@ -816,11 +817,11 @@ class LauncherWindow(
 
         screen = Adw.PreferencesGroup(title=tr("Экран"))
         # The aspect ratio, then its resolutions (rebuilt when it changes, the height kept).
-        self.aspect_row = Adw.ComboRow(title=tr("Соотношение сторон"), subtitle=tr(
-            "Шире 16:9 — больше обзор по бокам, выше — сверху и снизу; интерфейс у краёв экрана"))
+        self.aspect_row = setup_combo_row(Adw.ComboRow(title=tr("Соотношение сторон"), subtitle=tr(
+            "Шире 16:9 — больше обзор по бокам, выше — сверху и снизу; интерфейс у краёв экрана")))
         self.aspect_row.values = ASPECTS
-        self.output_row = Adw.ComboRow(title=tr("Разрешение вывода"),
-                                       subtitle=tr("Апскейлер дорисовывает кадр; Steam Deck — 1280×800 (16:10)"))
+        self.output_row = setup_combo_row(Adw.ComboRow(title=tr("Разрешение вывода"),
+                                       subtitle=tr("Апскейлер дорисовывает кадр; Steam Deck — 1280×800 (16:10)")))
         self.output_row.values = []
         screen.add(self.aspect_row)
         screen.add(self.output_row)
@@ -831,7 +832,7 @@ class LauncherWindow(
                                   tr("Без перезапуска, но медленнее на Steam Deck и старых GPU"),
                                   LIVE_RESOLUTION, self.ini.get("live_resolution", "0"))
         screen.add(self.live_row)
-        self.display_row = Adw.ComboRow(title=tr("Монитор"))
+        self.display_row = setup_combo_row(Adw.ComboRow(title=tr("Монитор")))
         self.display_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
                                                 lambda _button: self.fill_displays()))
         screen.add(self.display_row)

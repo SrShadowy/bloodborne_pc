@@ -75,6 +75,75 @@ def open_folder(window, path):
         pass
 
 
+def setup_combo_row(row, tooltips=None):
+    """Configures an Adw.ComboRow with tooltips and non-ellipsized items in popover and row."""
+    if tooltips is not None:
+        row.tooltips = tooltips
+
+    def update_row_tooltip(*_):
+        title = row.get_title() or ""
+        sub = row.get_subtitle() or ""
+        idx = row.get_selected()
+        item_tip = None
+        if hasattr(row, "tooltips") and 0 <= idx < len(row.tooltips):
+            item_tip = row.tooltips[idx]
+        elif hasattr(row, "get_model") and row.get_model():
+            m = row.get_model()
+            if 0 <= idx < m.get_n_items():
+                item_obj = m.get_item(idx)
+                if hasattr(item_obj, "get_string"):
+                    item_tip = item_obj.get_string()
+        tip_parts = [p for p in (title, sub, item_tip) if p]
+        if tip_parts:
+            row.set_tooltip_text("\n\n".join(dict.fromkeys(tip_parts)))
+        else:
+            row.set_tooltip_text(None)
+
+    row.connect("notify::selected", update_row_tooltip)
+    row.connect("notify::subtitle", update_row_tooltip)
+    row.connect("notify::model", update_row_tooltip)
+
+    factory = row.get_factory()
+    if factory and not getattr(row, "_factory_bound", False):
+        row._factory_bound = True
+
+        def on_bind(_factory, item):
+            obj = item.get_item()
+            pos = item.get_position()
+            text = obj.get_string() if (obj and hasattr(obj, "get_string")) else ""
+            tip = None
+            if hasattr(row, "tooltips") and 0 <= pos < len(row.tooltips):
+                tip = row.tooltips[pos]
+            elif hasattr(row, "get_item_tooltip") and callable(row.get_item_tooltip):
+                tip = row.get_item_tooltip(pos, text)
+            else:
+                tip = text or None
+
+            box = item.get_child()
+            if box:
+                in_popover = box.get_ancestor(Gtk.Popover) is not None
+                c = box.get_first_child()
+                while c:
+                    if isinstance(c, Gtk.Label):
+                        if in_popover:
+                            c.set_ellipsize(Pango.EllipsizeMode.NONE)
+                        else:
+                            c.set_ellipsize(Pango.EllipsizeMode.END)
+                        if tip:
+                            c.set_tooltip_text(tip)
+                    elif isinstance(c, Gtk.Image):
+                        if tip:
+                            c.set_tooltip_text(tip)
+                    c = c.get_next_sibling()
+                if tip:
+                    box.set_tooltip_text(tip)
+
+        factory.connect("bind", on_bind)
+
+    update_row_tooltip()
+    return row
+
+
 def combo_row(title, subtitle, choices, current):
     """Creates an Adw.ComboRow initialized with choices and localized notes."""
     model = Gtk.StringList.new([tr(choice[0]) for choice in choices])
@@ -91,41 +160,8 @@ def combo_row(title, subtitle, choices, current):
         current_note = notes[idx] if 0 <= idx < len(notes) else None
         lines = [line for line in (subtitle, current_note) if line]
         row.set_subtitle("\n".join(lines))
-        row_tip = tooltips[idx] if 0 <= idx < len(tooltips) else None
-        tip_parts = [p for p in (title, subtitle, row_tip) if p]
-        if tip_parts:
-            row.set_tooltip_text("\n\n".join(dict.fromkeys(tip_parts)))
-        else:
-            row.set_tooltip_text(None)
 
-    factory = row.get_factory()
-    if factory:
-        def on_bind(_factory, item):
-            obj = item.get_item()
-            pos = item.get_position()
-            tip = tooltips[pos] if 0 <= pos < len(tooltips) else (obj.get_string() if obj else None)
-            box = item.get_child()
-            if box:
-                in_popover = box.get_ancestor(Gtk.Popover) is not None
-                c = box.get_first_child()
-                while c:
-                    if isinstance(c, Gtk.Label):
-                        if in_popover:
-                            c.set_ellipsize(Pango.EllipsizeMode.NONE)
-                        if tip:
-                            c.set_tooltip_text(tip)
-                    elif isinstance(c, Gtk.Image):
-                        if tip:
-                            c.set_tooltip_text(tip)
-                    c = c.get_next_sibling()
-                if tip:
-                    box.set_tooltip_text(tip)
-                parent = box.get_parent()
-                if parent and hasattr(parent, "set_tooltip_text") and tip:
-                    parent.set_tooltip_text(tip)
-
-        factory.connect("bind", on_bind)
-
+    setup_combo_row(row, tooltips=tooltips)
     row.set_selected(values.index(current) if current in values else 0)
     show_note()
     row.connect("notify::selected", show_note)

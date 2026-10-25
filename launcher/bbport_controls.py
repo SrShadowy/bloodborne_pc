@@ -4,7 +4,7 @@
 from bbport_config import PORT_DIR, PACKAGED, CONTROLS
 from bbport_devices import format_mouse_btn, connected_gamepads, connected_displays
 from bbport_i18n import tr
-from bbport_ui_helpers import flat_button
+from bbport_ui_helpers import flat_button, setup_combo_row
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -78,7 +78,7 @@ class ControlsMixin:
 
         # --- Gamepad ---------------------------------------------------------------------
         gamepad_group = Adw.PreferencesGroup(title=tr("Геймпад"))
-        self.gamepad_row = Adw.ComboRow(title=tr("Контроллер"))
+        self.gamepad_row = setup_combo_row(Adw.ComboRow(title=tr("Контроллер")))
         self.gamepad_row.connect("notify::selected", lambda *_: self.show_gamepad())
         self.gamepad_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
                                                 lambda _button: self.fill_gamepads()))
