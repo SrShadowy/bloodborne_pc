@@ -19,7 +19,7 @@ file(GLOB_RECURSE BBNET_SOURCES CONFIGURE_DEPENDS shadps4/core/libraries/network
 # BBSC, Bloodborne seamless co-op (GPL-2.0+): its game code and the
 # port's stand-ins for shadPS4's UI (bbsc_glue.cpp). Installed only for Bloodborne with BB_BBSC=1.
 list(APPEND BBNET_SOURCES shadps4/core/bloodborne_re.cpp shadps4/core/bbsc_persistence.cpp
-    shadps4/core/bbsc_memscan.cpp shadps4/core/bbsc_cinematic.cpp bbsc_glue.cpp)
+    shadps4/core/bbsc_memscan.cpp shadps4/core/bbsc_cinematic.cpp shadps4/core/bbsc_relay_client.cpp bbsc_glue.cpp)
 # Trophies and the system dialogs stay in the C runtime; their shadPS4 versions need the
 # emulator's UI layers.
 list(FILTER BBNET_SOURCES EXCLUDE REGEX

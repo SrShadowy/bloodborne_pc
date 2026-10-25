@@ -13,6 +13,7 @@
 #include "core/shader_precompile/bbport_shader_discovery.h"
 #include "core/shader_precompile/bbport_shader_pack.h"
 #include "core/shader_precompile/bbport_vk_pipeline_cache.h"
+#include "ui/scaleform/bbport_title_menu.h"
 
 #ifdef __cplusplus
 #include "vulkan/vk_common.h"

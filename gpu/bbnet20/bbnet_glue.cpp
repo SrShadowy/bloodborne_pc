@@ -68,6 +68,7 @@
 #include "common/singleton.h"
 #include "core/bbsc_cinematic.h"
 #include "core/bbsc_persistence.h"
+#include "core/bbsc_relay_client.h"
 #include "core/bloodborne_re.h"
 #include "core/cpu_patches.h"
 #include "core/file_format/psf.h"
@@ -555,6 +556,7 @@ BBNET_EXPORT void bbnet_image_ready(uint64_t base, uint64_t size) {
     Core::Bloodborne::InstallSeamlessCoopPatches();
     Core::Bbsc::InstallPersistentSessionPatches();
     Core::Bloodborne::InstallReverseEngineeringTrace();
+    Core::Bbsc::StartRelayClient(MemoryPatcher::g_game_serial);
 }
 
 namespace Libraries::Np::NpManager {

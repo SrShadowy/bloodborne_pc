@@ -34,6 +34,7 @@
 #include "core/emulator_settings.h"
 #include "core/bloodborne_re.h"
 #include "core/bbsc_cinematic.h"
+#include "core/bbsc_relay_client.h"
 #include "bbgpu.h"
 #include <SDL3/SDL_events.h>
 #include "core/cpu_patches.h"
@@ -549,6 +550,7 @@ extern "C" __attribute__((visibility("default"))) void bbnet_image_ready(std::ui
     Core::Bloodborne::InstallSeamlessCoopPatches();
     Core::Bbsc::InstallPersistentSessionPatches();
     Core::Bloodborne::InstallReverseEngineeringTrace();
+    Core::Bbsc::StartRelayClient(MemoryPatcher::g_game_serial);
 }
 
 extern "C" __attribute__((visibility("default"))) int bbnet_init(const BbNetHost* host) {

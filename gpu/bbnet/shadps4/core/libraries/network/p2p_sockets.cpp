@@ -26,6 +26,7 @@
 #include "common/singleton.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/network/net_upnp.h"
+#include "core/bloodborne_re.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/network/net_util.h"
 #include "net.h"
@@ -842,6 +843,9 @@ private:
                                 "older than 2026-10-12, or it is not running) - direct only; if "
                                 "direct does not work either, it cannot connect until it updates",
                                 IdText(peer.id));
+                    Core::Bloodborne::BbscTimelineEvent(
+                        "NET", fmt::format("'{}' is not on the relay (old emulator or not running)",
+                                           IdText(peer.id)));
                 }
             }
             return;

@@ -443,6 +443,7 @@ int runtime_file_host_path(const char *guest,char *out,size_t size) {
     return 0;
 }
 __attribute__((weak)) void bbgpu_notify_save_slot(int slot);
+__attribute__((weak)) int extra_title_menu_file(const char *guest, int host); // [extra]
 
 static int64_t do_open(const char *guest,int flags,int mode) {
     if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
@@ -470,6 +471,7 @@ static int64_t do_open(const char *guest,int flags,int mode) {
         }
     }
     if (host>=0 && !(flags&3) && game_path(guest)) host=menu_layout_file(guest,host);
+    if (host>=0 && !(flags&3) && game_path(guest) && extra_title_menu_file) host=extra_title_menu_file(guest,host); // [extra]
     if (save_trace() && save_path(guest))
         printf("Save trace: open(%s, flags 0x%x) -> host %d%s%s\n",guest,flags,host,temp ? ", copy " : "",temp ? temp : "");
     if (host<0) {

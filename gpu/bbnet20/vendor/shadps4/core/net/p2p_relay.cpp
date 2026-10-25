@@ -8,7 +8,10 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
+#include <fmt/format.h>
+
 #include "common/logging/log.h"
+#include "core/bloodborne_re.h"
 #include "core/net/p2p_relay.h"
 
 namespace Core::Net::P2P {
@@ -340,6 +343,9 @@ Relay::Received Relay::OnReceive(std::span<const u8> data, const Endpoint& from)
                             "is not running) - direct only; if direct does not work either, it "
                             "cannot connect until it updates",
                             IdText(peer.id));
+                Core::Bloodborne::BbscTimelineEvent(
+                    "NET", fmt::format("'{}' is not on the relay (old emulator or not running)",
+                                       IdText(peer.id)));
             }
         }
         return out;

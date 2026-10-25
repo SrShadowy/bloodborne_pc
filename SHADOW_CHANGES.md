@@ -253,6 +253,8 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 | `gpu/bbnet{,20}/bbnet_glue.cpp` | extra_bbsc_setup_save_dir // [extra: Teefpyre] | `extra/core/bbsc/bbport_bbsc_kit.cpp` | Detecção dinâmica de saves em múltiplos title IDs | 2026-10-20 |
 | `gpu/bbnet{,20}/.../http.cpp` | rotas de summon (/create, /get...) // [extra: Teefpyre] | (upstream inline) | Suporte a rotas encurtadas do BBSC e fix de stale summon | 2026-10-20 |
 | `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` | `extra_bbsc_save_root`, `extra_bbsc_find_in_memory`, `extra_safe_read` | (novo, em `extra/`) | Raiz de saves, varredura contínua e leitura de memória segura contra SIGSEGV/SIGBUS | 2026-10-20 |
+| `src/runtime_file.c` | `extra_title_menu_file(guest, host) // [extra]` | `extra/ui/scaleform/bbport_title_menu.cpp` | Interceptação em memória do menu inicial (title.gfx) para exibir a 6ª linha de Exit Game sem rolagem | 2026-10-25 |
+| `gpu/bbnet{,20}/...` | Sincronização BBSC 0.0.2 // [extra] | `core/bbsc_relay_client.cpp` | Suporte TCP relay POSIX Linux, P2P dual-send, alias map, cap message_area e signaling | 2026-10-25 |
 | `package.py` | `--appimage-extract-and-run` só se a ferramenta for AppImage | (ferramenta de empacotamento) | appimagetool estático falhava silenciosamente e o AppImage enchuto não era gerado | 2026-10-19 |
 
 ---
@@ -605,3 +607,17 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 
 
 
+
+## 80. Atualização BBSC 0.0.2 (Seamless Co-op) e Suporte Completo ao Relay P2P em Linux
+- **Problema**:
+  1. No BBSC 0.0.1, conexões P2P através de CGNAT ou roteadores restritivos falhavam após ~30 segundos (DEAD timeout), pois os pares eram indexados apenas por endpoint UDP direto (IP:porta). Quando o relay mapeava um endpoint alternativo, as rotas de sinalização não encontravam o par no relay e caíam em envio direto falho.
+  2. O upstream BBSC 0.0.2 adicionou um cliente TCP de relay (bbsc_relay_client.cpp, porta 20444) para sincronização de sessões, porém com implementação restrita ao Windows (#ifdef _WIN32 com Winsock e stub vazio em Linux).
+  3. Requisições /message_area sem limite causavam exaustão de buffers/pânico em mapas densos (Panic 265).
+  4. Falta de sincronização no relay de PvP (Duel Bell), flags de progresso de chefes (0x26) e estado de barra de chefe do host (0x27).
+- **Implementação**:
+  1. `gpu/bbnet20/bbsc/core/bbsc_relay_client.cpp` e `gpu/bbnet/shadps4/core/bbsc_relay_client.cpp`: Implementação completa com POSIX sockets para Linux (sem dependência de Winsock), suportando reconexão periódica ao servidor de relay em 127.0.0.1:20444.
+  2. P2P Dual-Send e Alias Mapping: Mapeamento de todos os endpoints conhecidos para o Online ID persistente (relay_alias), dual-send (RelayPath::Both: UDP 3478 + direto) no primeiro frame e pings keep-alive de 5s.
+  3. Truncamento inteligente em http.cpp via CapBbscAreaListRequest para chamadas /message_area, prevenindo estouros de payload.
+  4. Atualização da sinalização NP (SignalingBbscPvp tipo 0x25, progress 0x26, host boss 0x27, BbscTimelineEvent em conexões estabelecidas/perdidas).
+  5. Câmera de espectador para parceiros mortos em co-op (bbsc_cinematic.{h,cpp}) e flags de persistência atualizadas (bbsc_persistence.h).
+  6. Preservação integral de todas as customizações locais do fork (extra_bbsc_save_root, extra_bbsc_find_param_tables_direct, limites de memória, etc.).
