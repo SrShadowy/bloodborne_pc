@@ -4,8 +4,6 @@ The game window is SDL3 + Vulkan, so Steam sessions on Wayland compositors (Hypr
 choice the report can trace: auto (X11/XWayland under Steam), x11 or wayland, from the
 environment or a video_backend= line in bbport.ini.
 """
-from paths import ROOT
-import json
 import os
 from pathlib import Path
 import shutil
@@ -14,6 +12,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from paths import ROOT
+import json
 
 
 class VideoBackendTests(unittest.TestCase):

@@ -438,3 +438,22 @@ add_executable(srt-walker-fault-test EXCLUDE_FROM_ALL ../tests/test_srt_walker_f
 target_include_directories(srt-walker-fault-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_options(srt-walker-fault-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_link_libraries(srt-walker-fault-test PRIVATE bbgpu)
+
+add_executable(shader-discovery-test EXCLUDE_FROM_ALL ../tests/test_shader_discovery.cpp # [extra]
+    ../tests/test_gpu_runtime_stubs.cpp) # [extra]
+target_include_directories(shader-discovery-test PRIVATE .. . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
+target_compile_options(shader-discovery-test PRIVATE -UNDEBUG -fPIC) # [extra]
+target_link_libraries(shader-discovery-test PRIVATE bbgpu) # [extra]
+
+add_executable(pipeline-reconstruct-test EXCLUDE_FROM_ALL ../tests/test_pipeline_reconstruct.cpp # [extra]
+    ../tests/test_gpu_runtime_stubs.cpp) # [extra]
+target_include_directories(pipeline-reconstruct-test PRIVATE .. . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
+target_compile_options(pipeline-reconstruct-test PRIVATE -UNDEBUG -fPIC) # [extra]
+target_link_libraries(pipeline-reconstruct-test PRIVATE bbgpu) # [extra]
+
+add_executable(shader-pack-test EXCLUDE_FROM_ALL ../tests/test_shader_pack.cpp # [extra]
+    ../tests/test_gpu_runtime_stubs.cpp) # [extra]
+target_include_directories(shader-pack-test PRIVATE .. . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
+target_compile_options(shader-pack-test PRIVATE -UNDEBUG -fPIC) # [extra]
+target_link_libraries(shader-pack-test PRIVATE bbgpu) # [extra]
+

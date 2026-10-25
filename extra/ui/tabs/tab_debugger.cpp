@@ -7,6 +7,7 @@
 #include "mem_scanner.h"
 #include "view_memviewer.h"
 #include "ui_manager.h"
+#include "tab_shaders.h"
 
 #include <imgui.h>
 #include <SDL3/SDL.h>
@@ -40,6 +41,9 @@ void TabDebugger::Render() {
                        L("Debugger, Disassembler & Breakpoints",
                          "Depurador, Desassemblador & Breakpoints",
                          "Отладчик, дизассемблер и точки останова"));
+    ImGui::Separator();
+
+    TabShaders::RenderSummaryCard();
     ImGui::Separator();
 
     // 1. Memory Write Watchpoint

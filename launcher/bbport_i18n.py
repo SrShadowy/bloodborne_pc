@@ -561,6 +561,9 @@ EN = {
     "Версия сетевого модуля": "Network module version",
     "Сетевой модуль shadp2p, полностью совместимый с Windows Seamless Hunt (BBSC v0.0.1)": "The shadp2p network module, fully compatible with Windows Seamless Hunt (BBSC v0.0.1)",
     "Стек shadPS4 0.20": "shadPS4 0.20 stack",
+    "Бэкенд X11 (XWayland) применится к лаунчеру при следующем запуске": "X11 (XWayland) backend will apply to the launcher on next startup",
+    "Бэкенд Wayland применится к лаунчеру при следующем запуске": "Wayland backend will apply to the launcher on next startup",
+    "Авто-бэкенд применится к лаунчеру при следующем запуске": "Auto backend will apply to the launcher on next startup",
 }
 PT = {
     # Window, pages, buttons
@@ -987,6 +990,9 @@ PT = {
     "Версия сетевого модуля": "Versão do módulo de rede",
     "Сетевой модуль shadp2p, полностью совместимый с Windows Seamless Hunt (BBSC v0.0.1)": "O módulo de rede shadp2p, totalmente compatível com o Windows Seamless Hunt (BBSC v0.0.1)",
     "Стек shadPS4 0.20": "Stack shadPS4 0.20",
+    "Бэкенд X11 (XWayland) применится к лаунчеру при следующем запуске": "O backend X11 (XWayland) será aplicado ao launcher na próxima inicialização",
+    "Бэкенд Wayland применится к лаунчеру при следующем запуске": "O backend Wayland será aplicado ao launcher na próxima inicialização",
+    "Авто-бэкенд применится к лаунчеру при следующем запуске": "O backend automático será aplicado ao launcher na próxima inicialização",
 }
 
 PT_BR = {
@@ -1496,6 +1502,9 @@ PT_BR = {
     "Тачпад, левая половина (жесты)": "Touchpad, lado esquerdo (gestos)",
     "Тачпад, правая половина (личные вещи)": "Touchpad, lado direito (itens pessoais)",
     "Щелчок в окне игры захватывает мышь, F1 — отпускает": "Um clique na janela do jogo captura o mouse; F1 o solta",
+    "Бэкенд X11 (XWayland) применится к лаунчеру при следующем запуске": "O backend X11 (XWayland) será aplicado ao launcher na próxima inicialização",
+    "Бэкенд Wayland применится к лаунчеру при следующем запуске": "O backend Wayland será aplicado ao launcher na próxima inicialização",
+    "Авто-бэкенд применится к лаунчеру при следующем запуске": "O backend automático será aplicado ao launcher na próxima inicialização",
 }
 
 
@@ -1833,6 +1842,9 @@ ZH_CN = {
     "Кэш шейдеров успешно очищен: {} файлов ({:.1f} МБ)":
         "着色器缓存已成功清除：{} 个文件（{:.1f} MB）",
     "Кэш шейдеров уже пуст": "着色器缓存已经为空",
+    "Бэкенд X11 (XWayland) применится к лаунчеру при следующем запуске": "X11 (XWayland) 后端将在下次启动启动器时生效",
+    "Бэкенд Wayland применится к лаунчеру при следующем запуске": "Wayland 后端将在下次启动启动器时生效",
+    "Авто-бэкенд применится к лаунчеру при следующем запуске": "自动后端将在下次启动启动器时生效",
 }
 
 

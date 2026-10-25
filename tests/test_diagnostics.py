@@ -172,19 +172,62 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
 
     def test_wayland_fallback_to_x11(self):
         import subprocess
-        env = dict(os.environ)
-        env["GDK_BACKEND"] = "wayland"
-        env["WAYLAND_DISPLAY"] = "invalid_nonexistent_wayland_socket"
-        code = (
-            "import sys; sys.path.insert(0, 'launcher'); "
-            "from bbport_launcher import ensure_display, get_runtime_backend; "
-            "d = ensure_display(); print('backend:', get_runtime_backend(d))"
-        )
-        res = subprocess.run([sys.executable, "-c", code],
-                             cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=5)
-        self.assertEqual(res.returncode, 0)
-        self.assertIn("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", res.stderr)
-        self.assertIn("X11", res.stdout)
+        with tempfile.TemporaryDirectory() as tmp_xdg:
+            env = dict(os.environ)
+            env["XDG_CONFIG_HOME"] = tmp_xdg
+            env["BB_LAUNCHER_BACKEND"] = "wayland"
+            env["GDK_BACKEND"] = "wayland"
+            env["WAYLAND_DISPLAY"] = "invalid_nonexistent_wayland_socket"
+            code = (
+                "import sys; sys.path.insert(0, 'launcher'); "
+                "from bbport_launcher import ensure_display, get_runtime_backend; "
+                "d = ensure_display(); print('backend:', get_runtime_backend(d))"
+            )
+            res = subprocess.run([sys.executable, "-c", code],
+                                 cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", res.stderr)
+            self.assertIn("X11", res.stdout)
+
+    def test_settings_video_backend_persists_to_launcher(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp_xdg:
+            cfg_dir = Path(tmp_xdg) / "bbport-launcher"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "settings.json").write_text(json.dumps({"video_backend": "x11"}))
+            env = dict(os.environ)
+            env.pop("BB_LAUNCHER_BACKEND", None)
+            env.pop("GDK_BACKEND", None)
+            env["XDG_CONFIG_HOME"] = tmp_xdg
+            code = (
+                "import os, sys; sys.path.insert(0, 'launcher'); "
+                "import bbport_launcher; "
+                "print('backend_env:', os.environ.get('GDK_BACKEND'))"
+            )
+            res = subprocess.run([sys.executable, "-c", code],
+                                 cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("backend_env: x11", res.stdout)
+
+    def test_settings_video_backend_wayland_persists_to_launcher(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp_xdg:
+            cfg_dir = Path(tmp_xdg) / "bbport-launcher"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "settings.json").write_text(json.dumps({"video_backend": "wayland"}))
+            env = dict(os.environ)
+            env.pop("BB_LAUNCHER_BACKEND", None)
+            env.pop("GDK_BACKEND", None)
+            env["XDG_CONFIG_HOME"] = tmp_xdg
+            code = (
+                "import os, sys; sys.path.insert(0, 'launcher'); "
+                "import bbport_launcher; "
+                "print('backend_env:', os.environ.get('GDK_BACKEND'))"
+            )
+            res = subprocess.run([sys.executable, "-c", code],
+                                 cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("backend_env: wayland", res.stdout)
 
     def test_theme_mode_default(self):
         self.assertEqual(bbport_config.DEFAULTS.get("theme_mode"), "system")

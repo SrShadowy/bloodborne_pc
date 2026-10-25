@@ -13,6 +13,7 @@
 #include "shader/info.h"
 #include "shader/specialization.h"
 #include "vulkan/instance.h"
+#include "extra/hooks.h" // [extra]
 
 namespace Vulkan {
 
@@ -215,6 +216,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
         }
     }
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
+    extra_shader_discovery_record_compile(it_pgm.value()->info.pgm_hash, u32(it_pgm.value()->info.hw_stage), u32(it_pgm.value()->info.sw_stage), perm_idx, 0, spv.size(), 0, it_pgm.value()->info.has_fetch_shader, false); // [extra]
     sel.infos[stage] = &it_pgm.value()->info;
     sel.modules[stage] = module;
     return true;
@@ -244,6 +246,8 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     const auto [it, is_new] = compute_pipelines.try_emplace(compute_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
+    const size_t chash = compute_key.value; // [extra]
+    extra_shader_discovery_record_pipeline(compute_key.value, true, std::span<const size_t>{&chash, 1}, 0, 1, 0, false, true); // [extra]
     sel.infos.fill(nullptr);
     sel.modules.fill(nullptr);
     return true;
@@ -279,6 +283,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
+    extra_shader_discovery_record_pipeline(std::hash<GraphicsPipelineKey>{}(sel.graphics_key), false, sel.graphics_key.stage_hashes, sel.graphics_key.num_color_attachments, sel.graphics_key.num_samples, 0, false, true); // [extra]
     sel.infos.fill(nullptr);
     sel.modules.fill(nullptr);
     sel.fetch_shader.reset();
@@ -339,6 +344,9 @@ void PipelineCache::WarmUp() {
     // such a cache was only ignored and every later session compiled every shader again.
     std::vector<u8> header{};
     Store().Load(BbCache::BlobType::ShaderProfile, "profile", header);
+    if (header.empty() && extra_shader_pack_restore_master()) { // [extra]
+        Store().Load(BbCache::BlobType::ShaderProfile, "profile", header); // [extra]
+    } // [extra]
     if (header.empty()) {
         rebuild();
         return;
@@ -374,6 +382,7 @@ void PipelineCache::WarmUp() {
             reader.Read(is_compute);
             if (is_compute ? LoadComputePipeline(ar) : LoadGraphicsPipeline(ar)) {
                 ++num_pipelines;
+                extra_shader_discovery_report_progress(num_pipelines, num_total); // [extra]
             }
         } catch (const std::exception& e) {
             if (num_damaged++ == 0) {
@@ -400,6 +409,8 @@ void PipelineCache::WarmUp() {
 }
 
 void PipelineCache::Sync() {
+    extra_shader_discovery_dump_inventory(); // [extra]
+    BbVkPipelineCache::SaveDriverCache(instance.GetDevice(), pipeline_cache.get()); // [extra]
     Store().Close();
 }
 

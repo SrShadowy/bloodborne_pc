@@ -161,6 +161,9 @@ static int pool(void) {
 #endif
     void *view=mmap(NULL,POOL_SIZE+FLEX_SPAN,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_NORESERVE,pool_fd,0);
     if (view==MAP_FAILED) return -1;
+#if defined(__linux__) && defined(MADV_HUGEPAGE) // [extra]
+    madvise(view,POOL_SIZE+FLEX_SPAN,MADV_HUGEPAGE); // [extra]
+#endif // [extra]
     backing_base=view;
     chunk_fds=malloc((POOL_SIZE/CHUNK+1)*sizeof(int));
     if (!chunk_fds) return -1;

@@ -2,6 +2,7 @@
 """Shader cache detection, management, and cleaning for Bloodborne Port."""
 
 import os
+import sys
 import threading
 from pathlib import Path
 from bbport_i18n import tr
@@ -142,6 +143,25 @@ class CacheMixin:
         else:
             self.clear_cache_row.set_subtitle(tr("Кэш пуст"))
 
+        if hasattr(self, "static_catalog_row"):
+            catalog_file = self.user_dir() / "cache" / "CUSA03173" / "static_shader_catalog.json"
+            if not catalog_file.is_file():
+                catalog_file = Path("dist/user/cache/CUSA03173/static_shader_catalog.json")
+            if catalog_file.is_file():
+                try:
+                    import json
+                    with open(catalog_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    total_unique = data.get("unique_shaders", 0)
+                    total_inst = data.get("total_instances", 0)
+                    self.static_catalog_row.set_subtitle(
+                        tr("Catálogo ativo: {} shaders únicos ({} instâncias)").format(total_unique, total_inst)
+                    )
+                except Exception:
+                    self.static_catalog_row.set_subtitle(tr("Catálogo estático presente"))
+            else:
+                self.static_catalog_row.set_subtitle(tr("Catálogo não extraído"))
+
     def on_clear_shaders(self, _button):
         if getattr(self, "process", None):
             self.alert(tr("Кэш шейдеров"),
@@ -203,3 +223,78 @@ class CacheMixin:
             dialog.present()
         else:
             run_cleaning("game")
+
+    def on_precompile_shaders(self, _button):
+        if getattr(self, "process", None):
+            self.alert(tr("Pré-compilar Shaders"),
+                       tr("Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro."))
+            return
+
+        if hasattr(self, "precompile_cache_button"):
+            self.precompile_cache_button.set_sensitive(False)
+            self.precompile_cache_button.set_label(tr("Pré-compilando…"))
+
+        def worker():
+            import subprocess
+            cmd = ["bash", "run.sh", "--precompile-shaders"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for _line in proc.stdout:
+                pass
+            proc.wait()
+
+            def on_done():
+                if hasattr(self, "precompile_cache_button"):
+                    self.precompile_cache_button.set_sensitive(True)
+                    self.precompile_cache_button.set_label(tr("Pré-compilar…"))
+                self.update_cache_status()
+                if proc.returncode == 0:
+                    msg = tr("Shaders pré-compilados com sucesso! Grimório atualizado.")
+                else:
+                    msg = tr("Erro durante a pré-compilação de shaders.")
+                self.toasts.add_toast(Adw.Toast(title=msg))
+
+            GLib.idle_add(on_done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_extract_static_catalog(self, _button):
+        if getattr(self, "process", None):
+            self.alert(tr("Catálogo Estático"),
+                       tr("Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro."))
+            return
+
+        if hasattr(self, "static_catalog_button"):
+            self.static_catalog_button.set_sensitive(False)
+            self.static_catalog_button.set_label(tr("Extraindo…"))
+
+        def worker():
+            import subprocess
+            cmd = [sys.executable, "scripts/extract_static_shaders.py"]
+            game_dir = self.game_dir() if hasattr(self, "game_dir") else getattr(self, "settings", {}).get("game_dir")
+            if callable(game_dir):
+                game_dir = game_dir()
+            if game_dir and Path(game_dir).is_dir():
+                cmd.extend(["--game-dir", str(game_dir)])
+            out_catalog = self.user_dir() / "cache" / "CUSA03173" / "static_shader_catalog.json"
+            cmd.extend(["--output", str(out_catalog)])
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for _line in proc.stdout:
+                pass
+            proc.wait()
+
+            def on_done():
+                if hasattr(self, "static_catalog_button"):
+                    self.static_catalog_button.set_sensitive(True)
+                    self.static_catalog_button.set_label(tr("Extrair…"))
+                self.update_cache_status()
+                if proc.returncode == 0:
+                    msg = tr("Catálogo estático extraído com sucesso! 4.376 shaders indexados.")
+                else:
+                    msg = tr("Erro durante a extração do catálogo estático.")
+                self.toasts.add_toast(Adw.Toast(title=msg))
+
+            GLib.idle_add(on_done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+

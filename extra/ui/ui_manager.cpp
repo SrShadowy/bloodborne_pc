@@ -6,6 +6,8 @@
 #include "tab_scanner.h"
 #include "tab_watchlist.h"
 #include "tab_debugger.h"
+#include "tab_shaders.h"
+#include "extra/core/shader_precompile/bbport_shader_discovery.h"
 #include "mem_editor.h"
 #include "mem_scanner.h"
 #include "breakpoint.h"
@@ -206,6 +208,14 @@ void UiManager::RenderMemoryWindow() {
         std::snprintf(debugger_title, sizeof(debugger_title), "%s###DebuggerTab", L("Debugger", "Depurador", "Отладчик"));
     }
 
+    char shaders_title[64];
+    const uint32_t new_shaders = BbShaderDiscovery::GetNewShaderCount();
+    if (new_shaders > 0) {
+        std::snprintf(shaders_title, sizeof(shaders_title), "%s (+%u)###ShadersTab", L("Shaders", "Shaders", "Шейдеры"), new_shaders);
+    } else {
+        std::snprintf(shaders_title, sizeof(shaders_title), "%s###ShadersTab", L("Shaders", "Shaders", "Шейдеры"));
+    }
+
     if (ImGui::BeginTabBar("MemoryTabBar", ImGuiTabBarFlags_None)) {
         ImGuiTabItemFlags f_scanner = (s_requested_tab == TabId::Scanner) ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem(scanner_title, nullptr, f_scanner)) {
@@ -222,6 +232,12 @@ void UiManager::RenderMemoryWindow() {
         ImGuiTabItemFlags f_dbg = (s_requested_tab == TabId::Debugger) ? ImGuiTabItemFlags_SetSelected : 0;
         if (ImGui::BeginTabItem(debugger_title, nullptr, f_dbg)) {
             TabDebugger::Render();
+            ImGui::EndTabItem();
+        }
+
+        ImGuiTabItemFlags f_shd = (s_requested_tab == TabId::Shaders) ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem(shaders_title, nullptr, f_shd)) {
+            TabShaders::Render();
             ImGui::EndTabItem();
         }
 

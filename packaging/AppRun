@@ -18,7 +18,26 @@ export SDL_JOYSTICK_HIDAPI_PS5=1
 export SDL_JOYSTICK_ENHANCED_REPORTS=1
 
 # Configure launcher backend: respect BB_LAUNCHER_BACKEND if set (x11 or wayland),
-# otherwise default to modern OpenGL renderer and let GTK negotiate native Wayland/X11 automatically.
+# otherwise inspect saved settings.json or CLI flags (--x11 / --wayland).
+if [[ -z "${BB_LAUNCHER_BACKEND:-}" ]]; then
+    _CFG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/bbport-launcher/settings.json"
+    if [[ -f "$_CFG_FILE" ]]; then
+        if grep -q '"video_backend"[[:space:]]*:[[:space:]]*"x11"' "$_CFG_FILE" 2>/dev/null; then
+            BB_LAUNCHER_BACKEND="x11"
+        elif grep -q '"video_backend"[[:space:]]*:[[:space:]]*"wayland"' "$_CFG_FILE" 2>/dev/null; then
+            BB_LAUNCHER_BACKEND="wayland"
+        fi
+    fi
+fi
+
+for _arg in "$@"; do
+    if [[ "$_arg" == "--x11" ]]; then
+        BB_LAUNCHER_BACKEND="x11"
+    elif [[ "$_arg" == "--wayland" ]]; then
+        BB_LAUNCHER_BACKEND="wayland"
+    fi
+done
+
 if [[ "${BB_LAUNCHER_BACKEND:-}" == "x11" ]]; then
     export GDK_BACKEND="x11"
     export GSK_RENDERER="${GSK_RENDERER:-gl}"

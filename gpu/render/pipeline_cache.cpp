@@ -20,6 +20,7 @@
 #include "bbport_sections.h"
 #include "bbport_shader_tracker.h"
 #include "bbport_toggles.h"
+#include "extra/hooks.h" // [extra]
 #include "buffers/buffer_cache.h"
 #include "common/hash.h"
 #include "common/io_file.h"
@@ -307,7 +308,12 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
       desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes},
       profile{MakeProfile(instance_, sparse_page_shift)} {
     sel.regs = &liverpool->regs;
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
+    const auto initial_driver_data = BbVkPipelineCache::LoadDriverCache(instance.GetPhysicalDevice()); // [extra]
+    const vk::PipelineCacheCreateInfo cache_ci{ // [extra]
+        .initialDataSize = initial_driver_data.size(), // [extra]
+        .pInitialData = initial_driver_data.empty() ? nullptr : initial_driver_data.data() // [extra]
+    }; // [extra]
+    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique(cache_ci); // [extra]
     ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
                vk::to_string(cache_result));
     pipeline_cache = std::move(cache);
@@ -678,6 +684,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     }
     if (const auto found = graphics_pipelines.find(sel.graphics_key);
         found != graphics_pipelines.end()) {
+        extra_shader_discovery_record_pipeline_hit(std::hash<GraphicsPipelineKey>{}(sel.graphics_key)); // [extra]
         return found->second.get();
     }
     const bool skippable = AsyncSkippable(sel, indirect);
@@ -715,6 +722,8 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
                                               sel.runtime_infos, sel.fetch_shader, sel.modules,
                                               sdata, false);
     PipelineStore::SaveGraphics(sel.graphics_key, pipeline_hash, sdata);
+    const auto pipe_ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - timer.start).count()); // [extra]
+    extra_shader_discovery_record_pipeline(pipeline_hash, false, sel.graphics_key.stage_hashes, sel.graphics_key.num_color_attachments, sel.graphics_key.num_samples, pipe_ns, false, false); // [extra]
     sel.fetch_shader.reset();
     return slot.get();
 }
@@ -754,7 +763,9 @@ const GraphicsPipeline* PipelineCache::CompileInBackground(const PipelineSelecti
 
 const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey& key,
                                                       PendingPipeline& job) {
-    PipelineStore::SaveGraphics(key, std::hash<GraphicsPipelineKey>{}(key), job.sdata);
+    const auto pipe_hash = std::hash<GraphicsPipelineKey>{}(key); // [extra]
+    PipelineStore::SaveGraphics(key, pipe_hash, job.sdata); // [extra]
+    extra_shader_discovery_record_pipeline(pipe_hash, false, key.stage_hashes, key.num_color_attachments, key.num_samples, 0, true, false); // [extra]
     auto& slot = graphics_pipelines[key];
     slot = std::move(job.pipeline);
     return slot.get();
@@ -823,6 +834,10 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
                                                        *pipeline_cache, compute_key, *sel.infos[0],
                                                        sel.modules[0], sdata, false);
         PipelineStore::SaveCompute(compute_key, sdata);
+        const size_t chash = compute_key.value; // [extra]
+        extra_shader_discovery_record_pipeline(compute_key.value, true, std::span<const size_t>{&chash, 1}, 0, 1, u64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - timer.start).count()), false, false); // [extra]
+    } else { // [extra]
+        extra_shader_discovery_record_pipeline_hit(compute_key.value); // [extra]
     }
     return it->second.get();
 }
@@ -1173,6 +1188,8 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
     DumpShader(spv, info.pgm_hash, info.hw_stage, perm_idx, "spv");
 
     const vk::ShaderModule module = CompileSPV(spv, instance.GetDevice());
+    const auto comp_ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - timer.start).count()); // [extra]
+    extra_shader_discovery_record_compile(info.pgm_hash, u32(info.hw_stage), u32(info.sw_stage), perm_idx, code.size_bytes(), spv.size(), comp_ns, info.has_fetch_shader, runtime_info.hw.vs.motion_vectors); // [extra]
     PipelineStore::SaveShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
     SetObjectName(instance.GetDevice(), module, GetShaderName(info.hw_stage, info.pgm_hash, perm_idx));
     return module;
@@ -1293,6 +1310,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         perm_idx = std::distance(modules.begin(), it);
         program.last_used = perm_idx;
         info.AddBindings(binding);
+        extra_shader_discovery_record_shader_hit(params.hash, perm_idx); // [extra]
     } else {
         perm_idx = modules.size();
         auto new_info = Shader::Info(hw_stage, sw_stage, params);

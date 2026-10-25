@@ -58,6 +58,47 @@ class LauncherGpuTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BB_GPU_ID": "1"}):
             self.assertEqual(launcher.game_environment(self.settings)["BB_GPU_ID"], "1")
 
+    def test_cache_static_extract_callable_game_dir(self):
+        import bbport_cache
+        from pathlib import Path
+
+        class FakeLauncher(bbport_cache.CacheMixin):
+            def __init__(self):
+                self.settings = {"game_dir": "/games/CUSA03173", "user_dir": "/tmp/test_user"}
+                self.static_catalog_button = mock.MagicMock()
+                self.toasts = mock.MagicMock()
+
+            def game_dir(self):
+                return Path(self.settings["game_dir"])
+
+            def user_dir(self):
+                return Path(self.settings["user_dir"])
+
+        fl = FakeLauncher()
+        with mock.patch("subprocess.Popen") as mock_popen, mock.patch("threading.Thread") as mock_thread:
+            # Capture the thread target worker and run it directly
+            def run_sync(target=None, **kwargs):
+                t = mock.MagicMock()
+                t.start = lambda: target()
+                return t
+            mock_thread.side_effect = run_sync
+
+            mock_proc = mock.MagicMock()
+            mock_proc.stdout = []
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
+
+            with mock.patch.object(Path, "is_dir", return_value=True):
+                fl.on_extract_static_catalog(None)
+
+            cmd = mock_popen.call_args[0][0]
+            self.assertIn("scripts/extract_static_shaders.py", cmd[1])
+            self.assertIn("--game-dir", cmd)
+            self.assertIn("/games/CUSA03173", cmd)
+            self.assertIn("--output", cmd)
+            self.assertIn("/tmp/test_user/cache/CUSA03173/static_shader_catalog.json", cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
+

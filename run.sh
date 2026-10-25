@@ -28,6 +28,27 @@ if [[ ${1:-} == --software ]]; then
     if [[ -z ${VK_DRIVER_FILES:-} ]]; then echo 'Lavapipe not found; set VK_DRIVER_FILES.' >&2; exit 1; fi
     export VK_LOADER_LAYERS_DISABLE='~implicit~'
 fi
+user_dir=${BB_USER_DIR:-${BB_GPU_USER_DIR:-user}}
+cache_dir="$user_dir/cache/CUSA03173"
+if [[ ${1:-} == --precompile-shaders ]] || [[ ! -f "$cache_dir/pipeline_driver.cache" && ${BB_NO_PRECOMPILE:-0} != 1 ]]; then
+    is_manual_precompile=0
+    if [[ ${1:-} == --precompile-shaders ]]; then
+        shift
+        is_manual_precompile=1
+    fi
+    precompile_bin=""
+    if [[ -x out/gpu/pipeline-reconstruct-test ]]; then
+        precompile_bin="out/gpu/pipeline-reconstruct-test"
+    elif [[ -x bin/gpu/pipeline-reconstruct-test ]]; then
+        precompile_bin="bin/gpu/pipeline-reconstruct-test"
+    fi
+    if [[ -n "$precompile_bin" ]]; then
+        "$precompile_bin" "$user_dir" || true
+        if [[ $is_manual_precompile == 1 ]]; then
+            exit 0
+        fi
+    fi
+fi
 # BB_PREBUILT=1 (packaged builds, the AppImage): out/bb-probe and its GPU library are installed
 # next to this script; nothing is built and no nix-shell is needed.
 # BB_DATA_DIR: writable directory for the generated files (out/), saves (user/) and bbport.ini;

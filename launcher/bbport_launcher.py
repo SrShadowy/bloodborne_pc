@@ -57,7 +57,11 @@ def _launcher_log(line):
 
 
 # Detect or configure launcher window backend (X11 vs Wayland).
-# Respect CLI flags (--x11, --wayland) or BB_LAUNCHER_BACKEND env var. Default to modern OpenGL renderer.
+# Priority:
+# 1. CLI flags (--x11, --wayland)
+# 2. Environment variable BB_LAUNCHER_BACKEND
+# 3. Persistent user preference saved in settings.json ("video_backend": "x11" | "wayland")
+# 4. Default: Let GTK negotiate dynamically (native Wayland or X11)
 if "--x11" in sys.argv:
     os.environ["GDK_BACKEND"] = "x11"
     os.environ.setdefault("GSK_RENDERER", "gl")
@@ -66,6 +70,19 @@ elif "--wayland" in sys.argv:
     os.environ.setdefault("GSK_RENDERER", "gl")
 else:
     _launcher_backend = os.environ.get("BB_LAUNCHER_BACKEND", "").lower()
+    if not _launcher_backend:
+        try:
+            _cfg_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
+            _cfg_file = _cfg_dir / "settings.json"
+            if _cfg_file.is_file():
+                import json
+                _saved_cfg = json.loads(_cfg_file.read_text(encoding="utf-8"))
+                _saved_backend = _saved_cfg.get("video_backend", "").lower()
+                if _saved_backend in ("x11", "wayland"):
+                    _launcher_backend = _saved_backend
+        except Exception:
+            pass
+
     if _launcher_backend == "x11":
         os.environ["GDK_BACKEND"] = "x11"
         os.environ.setdefault("GSK_RENDERER", "gl")
@@ -236,6 +253,7 @@ class LauncherWindow(
         self.best_detected_dll = None
         self.gamepad_nav = None
         self.build()
+        self._initialized = True
         LOG.info("startup.audio: server='%s'", detect_audio_server())
         LOG.info("startup.sdl.begin")
         try:
@@ -820,6 +838,21 @@ class LauncherWindow(
                                            self.settings.get("video_backend", "auto"))
         screen.add(self.video_backend_row)
 
+        def _on_video_backend_changed(*_):
+            if getattr(self, "_initialized", False):
+                self.store()
+                if hasattr(self, "toasts"):
+                    backend_val = combo_value(self.video_backend_row)
+                    if backend_val == "x11":
+                        msg = tr("Бэкенд X11 (XWayland) применится к лаунчеру при следующем запуске")
+                    elif backend_val == "wayland":
+                        msg = tr("Бэкенд Wayland применится к лаунчеру при следующем запуске")
+                    else:
+                        msg = tr("Авто-бэкенд применится к лаунчеру при следующем запуске")
+                    self.toasts.add_toast(Adw.Toast(title=msg))
+
+        self.video_backend_row.connect("notify::selected", _on_video_backend_changed)
+
         self.fill_displays()
         self.fill_aspects(self.ini.get("aspect", "auto"))
         self.fill_outputs(keep=self.ini.get("output_res"))
@@ -933,6 +966,24 @@ class LauncherWindow(
         self.clear_cache_button.connect("clicked", self.on_clear_shaders)
         self.clear_cache_row.add_suffix(self.clear_cache_button)
         cache_group.add(self.clear_cache_row)
+
+        self.precompile_cache_row = Adw.ActionRow(
+            title=tr("Pré-compilar Shaders (Grimório)"),
+            subtitle=tr("Reconstrói pipelines e empacota o Grimório de 3 arquivos para eliminar engasgos"))
+        self.precompile_cache_button = Gtk.Button(valign=Gtk.Align.CENTER, label=tr("Pré-compilar…"))
+        self.precompile_cache_button.add_css_class("suggested-action")
+        self.precompile_cache_button.connect("clicked", self.on_precompile_shaders)
+        self.precompile_cache_row.add_suffix(self.precompile_cache_button)
+        cache_group.add(self.precompile_cache_row)
+
+        self.static_catalog_row = Adw.ActionRow(
+            title=tr("Catálogo Estático de Shaders (Fase 1)"),
+            subtitle=tr("Indexa os 4.376 shaders diretamente dos pacotes do jogo (dvdroot_ps4)"))
+        self.static_catalog_button = Gtk.Button(valign=Gtk.Align.CENTER, label=tr("Extrair…"))
+        self.static_catalog_button.connect("clicked", self.on_extract_static_catalog)
+        self.static_catalog_row.add_suffix(self.static_catalog_button)
+        cache_group.add(self.static_catalog_row)
+
         page.add(cache_group)
         self.update_cache_status()
 
@@ -1396,7 +1447,7 @@ def build_fsr411(arguments):
 
 
 def ensure_display():
-    """Verifies display availability with graceful Wayland-to-X11 fallback.
+    """Verifies display availability with graceful Wayland-to-X11 and X11-to-Wayland fallback.
 
     Returns the active Gdk.Display or None if no display could be opened.
     """
@@ -1414,6 +1465,14 @@ def ensure_display():
         else:
             return None
 
+    if os.environ.get("GDK_BACKEND") == "x11" and not os.environ.get("DISPLAY"):
+        if os.environ.get("WAYLAND_DISPLAY"):
+            LOG.warning("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.")
+            print("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "wayland"
+        else:
+            return None
+
     try:
         Gtk.init_check()
     except Exception as e:
@@ -1421,7 +1480,7 @@ def ensure_display():
 
     disp = Gdk.Display.get_default()
     if disp is None:
-        if os.environ.get("DISPLAY"):
+        if os.environ.get("GDK_BACKEND") == "wayland" and os.environ.get("DISPLAY"):
             LOG.warning("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.")
             print("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", file=sys.stderr)
             os.environ["GDK_BACKEND"] = "x11"
@@ -1432,6 +1491,39 @@ def ensure_display():
                     disp = disp_x11
             except Exception as e:
                 LOG.error("Failed to open X11 fallback display: %s", e)
+        elif os.environ.get("GDK_BACKEND") == "x11" and os.environ.get("WAYLAND_DISPLAY"):
+            LOG.warning("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.")
+            print("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "wayland"
+            try:
+                disp_wl = Gdk.Display.open(os.environ["WAYLAND_DISPLAY"])
+                if disp_wl:
+                    Gdk.DisplayManager.get().set_default_display(disp_wl)
+                    disp = disp_wl
+            except Exception as e:
+                LOG.error("Failed to open Wayland fallback display: %s", e)
+        elif os.environ.get("DISPLAY"):
+            LOG.warning("WARNING: Sessão padrão falhou. Usando X11.")
+            print("WARNING: Sessão padrão falhou. Usando X11.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "x11"
+            try:
+                disp_x11 = Gdk.Display.open(os.environ["DISPLAY"])
+                if disp_x11:
+                    Gdk.DisplayManager.get().set_default_display(disp_x11)
+                    disp = disp_x11
+            except Exception as e:
+                LOG.error("Failed to open fallback X11 display: %s", e)
+        elif os.environ.get("WAYLAND_DISPLAY"):
+            LOG.warning("WARNING: Sessão padrão falhou. Usando Wayland.")
+            print("WARNING: Sessão padrão falhou. Usando Wayland.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "wayland"
+            try:
+                disp_wl = Gdk.Display.open(os.environ["WAYLAND_DISPLAY"])
+                if disp_wl:
+                    Gdk.DisplayManager.get().set_default_display(disp_wl)
+                    disp = disp_wl
+            except Exception as e:
+                LOG.error("Failed to open fallback Wayland display: %s", e)
 
     return Gdk.Display.get_default()
 

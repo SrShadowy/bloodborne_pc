@@ -9,7 +9,8 @@ enum class TabId {
     None = -1,
     Scanner = 0,
     Watchlist = 1,
-    Debugger = 2
+    Debugger = 2,
+    Shaders = 3
 };
 
 class UiManager {

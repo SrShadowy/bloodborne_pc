@@ -17,6 +17,7 @@
 #ifndef _WIN32
 #include <asm/prctl.h>
 #endif
+#include "extra/core/threading/bbport_cpu_affinity.h" // [extra]
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define ATTR_MAGIC UINT32_C(0x41545452)
 #define STACK_MARGIN (256*1024)
@@ -261,6 +262,8 @@ static void *host_start(void *p) {
     GuestThread *t=p;
     attach(t);
     set_host_name(t->name);
+    extra_cpu_apply_affinity(pthread_self(), t->attr.affinity, true); // [extra]
+    extra_cpu_apply_priority(pthread_self(), t->attr.prio, t->name, true); // [extra]
 #ifdef _WIN32
     /* winpthreads ignores a given stack: the guest runs on its low one, fully committed (the
      * game's frames skip Windows' guard pages). */
@@ -337,7 +340,11 @@ static ABI __attribute__((noreturn)) void thread_exit(void *value) {
 }
 /* pthread_exit for the online module's threads (gpu/bbnet20). */
 __attribute__((noreturn)) void runtime_thread_exit(void *value) { thread_exit(value); }
-static ABI int32_t thread_yield(void) { sched_yield(); return 0; }
+static ABI int32_t thread_yield(void) {
+    extra_cpu_yield_pause(); // [extra]
+    sched_yield();
+    return 0;
+}
 static ABI int32_t thread_get_prio(GuestThread *t,int *prio) {
     if (!find_thread(t)) return ERR(3);
     if (!prio) return ERR(22);
@@ -345,11 +352,15 @@ static ABI int32_t thread_get_prio(GuestThread *t,int *prio) {
 }
 static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
     if (!find_thread(t)) return ERR(3);
-    t->attr.prio=prio; return 0;
+    t->attr.prio=prio;
+    extra_cpu_apply_priority(t->host, prio, t->name, t == current); // [extra]
+    return 0;
 }
 static ABI int32_t thread_set_affinity(GuestThread *t,uint64_t mask) {
     if (!find_thread(t)) return ERR(3);
-    t->attr.affinity=mask; return 0;
+    t->attr.affinity=mask;
+    extra_cpu_apply_affinity(t->host, mask, t == current); // [extra]
+    return 0;
 }
 static ABI int32_t thread_get_affinity(GuestThread *t,uint64_t *mask) {
     if (!find_thread(t)) return ERR(3);
