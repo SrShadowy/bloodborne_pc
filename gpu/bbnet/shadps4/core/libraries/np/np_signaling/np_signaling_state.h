@@ -63,6 +63,10 @@ enum class SignalingPacketType : u8 {
     // the host's world state (bosses, doors, shortcuts) instead of whatever its own flags say.
     // 0x21 is taken (Matching2 frames, see P2PTransport::ClassifyInternal).
     BbscWorldFlags = 0x22,
+    // BBSC: player life / death heartbeat (twice a second).
+    BbscLife = 0x23,
+    // BBSC: host scaling settings (enemy/boss HP, damage, stagger).
+    BbscScale = 0x24,
     // BBSC: Duel Bell PvP state. The host broadcasts its state and a guest requests a toggle.
     BbscPvp = 0x25,
 };

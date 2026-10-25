@@ -183,6 +183,24 @@ void ProcessSignalingPacket(const void* data, u32 len, u32 from_addr, u16 from_p
         return;
     }
 
+    if (type == static_cast<u8>(NpSignaling::SignalingPacketType::BbscLife) && nbytes >= 14) {
+        Core::Bbsc::NoteSignalingBbscPacket();
+        u32 player = 0;
+        u32 sequence = 0;
+        std::memcpy(&player, buf + 5, 4);
+        std::memcpy(&sequence, buf + 10, 4);
+        Core::Bloodborne::OnBbscLifePacket(player, buf[9], sequence);
+        return;
+    }
+
+    if (type == static_cast<u8>(NpSignaling::SignalingPacketType::BbscScale) && nbytes >= 15) {
+        Core::Bbsc::NoteSignalingBbscPacket();
+        std::uint16_t percent[5]{};
+        std::memcpy(percent, buf + 5, sizeof(percent));
+        Core::Bloodborne::OnBbscScalePacket(percent);
+        return;
+    }
+
     // BBSC (2026-10-19): the host's progress ("SHAD" 0x26 + u8 count + count x u32 flags it has
     // on) and the boss on its boss bar ("SHAD" 0x27 + s32). The mod's relay took them all along;
     // this receive dropped them as unexpected, so a guest on the emulator build never got the

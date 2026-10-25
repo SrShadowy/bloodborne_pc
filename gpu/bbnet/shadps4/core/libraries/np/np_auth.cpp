@@ -319,8 +319,8 @@ s32 PS4_SYSV_ABI sceNpAuthWaitAsync(s32 req_id, s32* result) {
     // Since we're not actually performing any sort of network request here,
     // we can just set result based on the request and return.
     *result = g_auth_requests[req_index].result;
-    LOG_WARNING(Lib_NpAuth, "called req_id = {:#x}, returning result = {:#x}", req_id,
-                static_cast<u32>(*result));
+    LOG_DEBUG(Lib_NpAuth, "called req_id = {:#x}, returning result = {:#x}", req_id,
+              static_cast<u32>(*result));
     return ORBIS_OK;
 }
 
@@ -345,8 +345,8 @@ s32 PS4_SYSV_ABI sceNpAuthPollAsync(s32 req_id, s32* result) {
     // Since we're not actually performing any sort of network request here,
     // we can just set result based on the request and return.
     *result = g_auth_requests[req_index].result;
-    LOG_WARNING(Lib_NpAuth, "called req_id = {:#x}, returning result = {:#x}", req_id,
-                static_cast<u32>(*result));
+    LOG_DEBUG(Lib_NpAuth, "called req_id = {:#x}, returning result = {:#x}", req_id,
+              static_cast<u32>(*result));
     return ORBIS_OK;
 }
 
