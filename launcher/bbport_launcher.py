@@ -1538,6 +1538,12 @@ def main():
         LOG.debug("Verbose debug logging enabled via CLI flag")
     if "--play" in sys.argv[1:]:
         return play()
+    if "--precompile-shaders" in sys.argv[1:]:
+        run_sh = PORT_DIR / "run.sh"
+        cmd = ["bash", str(run_sh), "--precompile-shaders"]
+        settings = load_settings()
+        env = game_environment(settings)
+        return subprocess.call(cmd, cwd=str(PORT_DIR), env=env)
     if "--build-fsr411" in sys.argv[1:]:
         return build_fsr411(sys.argv[sys.argv.index("--build-fsr411") + 1:])
     if "--diagnostics" in sys.argv[1:]:
@@ -1551,14 +1557,15 @@ def main():
         print("\nUso:")
         print("  bbport-launcher [opções]\n")
         print("Opções:")
-        print("  --play             Inicia o jogo diretamente com as configurações salvas (Steam Deck / Game Mode)")
-        print("  --diagnostics      Gera e exibe relatório de diagnóstico do sistema e encerra")
-        print("  --version, -v      Exibe a versão do launcher e encerra")
-        print("  --help, -h         Exibe esta mensagem de ajuda e encerra")
-        print("  --debug, --verbose Ativa modo de log detalhado (debug)")
-        print("  --x11              Força o uso do backend X11/XWayland")
-        print("  --wayland          Força o uso do backend Wayland nativo")
-        print("  --build-fsr411     Compila os shaders FSR 4.1.1 em segundo plano")
+        print("  --play               Inicia o jogo diretamente com as configurações salvas (Steam Deck / Game Mode)")
+        print("  --precompile-shaders Reconstrói pipelines e consolida o Grimório offline")
+        print("  --diagnostics        Gera e exibe relatório de diagnóstico do sistema e encerra")
+        print("  --version, -v        Exibe a versão do launcher e encerra")
+        print("  --help, -h           Exibe esta mensagem de ajuda e encerra")
+        print("  --debug, --verbose   Ativa modo de log detalhado (debug)")
+        print("  --x11                Força o uso do backend X11/XWayland")
+        print("  --wayland            Força o uso do backend Wayland nativo")
+        print("  --build-fsr411       Compila os shaders FSR 4.1.1 em segundo plano")
         return 0
 
     LOG.info("startup.preflight.begin")

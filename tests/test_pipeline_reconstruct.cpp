@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
     const char* user_dir = "user";
     bool headless = false;
     bool force_cold = false;
+    bool export_report = (std::getenv("BB_SHADER_REPORT") != nullptr);
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -39,6 +40,10 @@ int main(int argc, char** argv) {
             force_cold = true;
         } else if (arg == "--warm") {
             force_cold = false;
+        } else if (arg == "--report" || arg == "--diag") {
+            export_report = true;
+        } else if (arg == "--prune") {
+            setenv("BB_PRUNE_STALE_CACHE", "1", 1);
         } else if (argv[i][0] != '-') {
             user_dir = argv[i];
         }
@@ -164,11 +169,13 @@ int main(int argc, char** argv) {
             std::printf("Failed to pack portable Grimoire archive.\n");
         }
 
-        const auto diag_report = cache_dir / "shader_diagnostic_report.json";
-        if (BbStaticCatalog::ExportDiagnosticReport(diag_report)) {
-            std::printf("DIAGNOSTIC TELEMETRY REPORT:\n");
-            std::printf("  JSON Report:  %s (%zu bytes)\n",
-                        diag_report.string().c_str(), std::filesystem::file_size(diag_report));
+        if (export_report) {
+            const auto diag_report = cache_dir / "shader_diagnostic_report.json";
+            if (BbStaticCatalog::ExportDiagnosticReport(diag_report)) {
+                std::printf("DIAGNOSTIC TELEMETRY REPORT:\n");
+                std::printf("  JSON Report:  %s (%zu bytes)\n",
+                            diag_report.string().c_str(), std::filesystem::file_size(diag_report));
+            }
         }
         std::printf("================================================================================\n");
 

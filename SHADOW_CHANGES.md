@@ -529,3 +529,79 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 | `extra/core/debugger/bbport_arsenal_harvester.{h,cpp}` | Excluído | Módulo stub sem injeção de inventário, superado pelo acervo mestre de pipelines | 2026-10-24 |
 | `tests/test_shader_discovery.cpp` | Limpeza de testes | Remoção de testes sintéticos sobre os stubs excluídos | 2026-10-24 |
 
+---
+
+## 101. Empacotamento e Execução do Reconstrutor de Shaders (Grimório) em AppImage e Tarball
+- **Problema**: Nos pacotes distribuídos (`.AppImage` e `.tar.gz`), a opção "Pré-compilar Shaders (Grimório)" do launcher falhava com toast "Erro durante a pré-compilação de shaders.". Causas raiz:
+  1. O binário `pipeline-reconstruct-test` não era compilado por padrão no `build.sh` nem empacotado no `bin/gpu/` pelo `package.py`.
+  2. Os artefatos mestres do Grimório (`caryll_runes.pack`, `hunter_insight.idx` e `blood_echoes.meta`) não eram copiados para `user/cache/CUSA03173` durante o empacotamento.
+  3. `RestoreMasterCacheIfEmpty` só buscava caminhos estáticos em `dist/user/cache/CUSA03173` e ignorava `$BB_PORT_DIR` e `$APPDIR` do AppImage, além de não filtrar extensões `.pack` e `.idx`.
+  4. Em `run.sh`, `user_dir` ignorava `BB_DATA_DIR` e, na ausência do binário de pré-compilação, caía na execução normal do jogo sem parâmetros, retornando erro.
+  5. Em `launcher/bbport_cache.py`, o subprocesso era disparado com caminho relativo `"run.sh"` sem especificar `cwd=PORT_DIR` nem repassar o ambiente com `game_environment()`.
+- **Implementação**:
+  1. `build.sh`: Adicionado target `pipeline-reconstruct-test` na invocação padrão do ninja.
+  2. `gpu/CMakeLists.txt`: Definidos `BUILD_RPATH` e `INSTALL_RPATH` (`$ORIGIN;$ORIGIN/../lib;$ORIGIN/../../lib`) em `pipeline-reconstruct-test`.
+  3. `package.py`: Verificação e cópia de `pipeline-reconstruct-test` para `pkg_bin_gpu/`, stripping de símbolos, inclusão na fila de dependências e cópia automática dos ativos do Grimório (`user/cache/CUSA03173`) para a staging do pacote.
+  4. `extra/core/shader_precompile/bbport_shader_pack.cpp`: Suporte a `$BB_PORT_DIR` e `$APPDIR` em `RestoreMasterCacheIfEmpty` e suporte completo a `.pack` e `.idx`.
+  5. `run.sh`: Inicialização antecipada de `data=${BB_DATA_DIR:-.}` e `user_dir`, ampliação dos caminhos de busca de `precompile_bin`, e retorno com código de saída explícito em invocação manual.
+  6. `launcher/bbport_cache.py`: Chamada de `run.sh` e `extract_static_shaders.py` através de `PORT_DIR`, `cwd=str(PORT_DIR)` e variáveis de ambiente completas.
+  7. `launcher/bbport_launcher.py`: Adicionada flag CLI `--precompile-shaders`.
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `build.sh` | Alvo `pipeline-reconstruct-test` adicionado ao ninja | `tests/test_pipeline_reconstruct.cpp` | Garante a compilação do reconstrutor junto da bbgpu | 2026-10-25 |
+| `gpu/CMakeLists.txt` | `set_target_properties` com RPATH # [extra] | `tests/test_pipeline_reconstruct.cpp` | RPATH relativo para localização de bbgpu e lib/ | 2026-10-25 |
+| `package.py` | Cópia de `pipeline-reconstruct-test` e cache mestre | `tests/test_pipeline_reconstruct.cpp` | Distribuição do executável e dos 921+ pipelines do Grimório | 2026-10-25 |
+| `extra/core/shader_precompile/bbport_shader_pack.cpp` | `RestoreMasterCacheIfEmpty` com `$APPDIR` e `.pack`/`.idx` | `extra/core/shader_precompile/bbport_shader_pack.cpp` | Restauração confiável dos arquivos do Grimório no host | 2026-10-25 |
+| `run.sh` | Tratamento de caminhos, `$BB_DATA_DIR` e exit code | `run.sh` | Execução isolada de pré-compilação sem falso positivo | 2026-10-25 |
+| `launcher/bbport_cache.py` | Execução via `PORT_DIR`, `cwd` e `game_environment` | `launcher/bbport_cache.py` | Disparo estável da pré-compilação pela UI | 2026-10-25 |
+| `launcher/bbport_launcher.py` | Flag CLI `--precompile-shaders` | `launcher/bbport_launcher.py` | Acesso direto via CLI sem carregar interface gráfica | 2026-10-25 |
+
+---
+
+## 102. Resolução da Arte de Fundo da Tela de Splash no AppImage e Tarball
+- **Problema**: Ao disparar a pré-compilação no AppImage, a barra de progresso do estilo Monster Hunter Rise aparecia sobre fundo puramente preto, sem a arte de Bloodborne em segundo plano. Causas raiz:
+  1. `package.py`: A imagem `packaging/splash_bloodborne.png` (Full HD 1920x1080) não era copiada para a pasta `staging_dir` nem para o AppImage/tarball.
+  2. `extra/ui/splash/bbport_shader_splash.cpp`: A função `LoadSplashTexture` buscava apenas caminhos relativos estáticos ao diretório de trabalho corrente, ignorando as variáveis de ambiente `$APPDIR`, `$BB_PORT_DIR` e `$BB_DATA_DIR`.
+  3. Falta de apresentação lógica independente de resolução (`SDL_SetRenderLogicalPresentation`), causando potenciais distorções ou problemas de escala em telas de alta densidade (HiDPI / Steam Deck).
+- **Implementação**:
+  1. `package.py`: Adicionado empacotamento da arte `splash_bloodborne.png` exclusivamente na pasta `staging_dir/packaging/splash_bloodborne.png`, evitando duplicações ou inflação desnecessária no pacote final.
+  2. `extra/ui/splash/bbport_shader_splash.cpp`:
+     - Inclusão explícita de `<filesystem>` e `<vector>`.
+     - `LoadSplashTexture` simplificado para resolver a localização canônica `packaging/splash_bloodborne.png` via `$APPDIR`, `$BB_PORT_DIR` ou caminho relativo.
+     - Chamada `SDL_SetRenderLogicalPresentation(renderer, WIN_WIDTH, WIN_HEIGHT, SDL_LOGICAL_PRESENTATION_LETTERBOX)` para renderização proporcional e nítida em qualquer resolução.
+  3. Reconstrução com `build.sh` e reempacotamento do AppImage nativo (`dist/Bloodborne-bbport-native-x86_64.AppImage`, 44.65 MB, com economia de ~8.6 MB no filesystem descompactado), validando carregamento imediato da arte Full HD (`1920x1080`).
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `package.py` | Cópia única de `splash_bloodborne.png` para `packaging/` | `packaging/splash_bloodborne.png` | Garante presença da imagem no AppImage e tarball sem duplicatas | 2026-10-25 |
+| `extra/ui/splash/bbport_shader_splash.cpp` | `LoadSplashTexture` com `$APPDIR`/`$BB_PORT_DIR` | `extra/ui/splash/bbport_shader_splash.cpp` | Localização e carregamento da arte de splash em pacotes | 2026-10-25 |
+| `extra/ui/splash/bbport_shader_splash.cpp` | `SDL_SetRenderLogicalPresentation` | `extra/ui/splash/bbport_shader_splash.cpp` | Apresentação em letterbox 16:9 independente de DPI/resolução | 2026-10-25 |
+
+---
+
+## 103. Saneamento do Cache para o Cliente e Auto-Purga de Chaves Stale
+- **Problema**:
+  1. Arquivos de diagnóstico e telemetria de desenvolvedor (`shader_inventory.json`, `static_shader_catalog.json`, `shader_diagnostic_report.json`) estavam sendo exportados para os diretórios de cache do usuário e empacotados na distribuição, consumindo mais de 2.5 MB de I/O desnecessário.
+  2. O cache de pipelines continha centenas de chaves legadas e danificadas geradas em sessões de desenvolvimento com conflitos de índices de permutação (`conflicts with index X, skipping preload`), gerando mais de 350 warnings no console a cada inicialização e reduzindo a taxa de preload para 59%.
+  3. `RestoreMasterCacheIfEmpty` continha `dist/user/cache` na lista de candidatos a mesclagem, reinserindo chaves defasadas caso existisse um diretório `dist/user` no host.
+- **Implementação**:
+  1. `gpu/render/blob_store.h` e `gpu/render/blob_store.cpp`: Implementado `ForEachBlobPath` com purga automática (`std::filesystem::remove`) de chaves rejeitadas/danificadas a menos que `BB_PRUNE_STALE_CACHE=0` seja explicitamente definido.
+  2. `extra/core/shader_precompile/bbport_shader_inventory_json.cpp`: `DumpInventory()` protegido para não gerar `shader_inventory.json` automaticamente no encerramento a menos que `BB_SHADER_DISCOVERY_DUMP=1` ou `BB_SHADER_INVENTORY=1` seja requisitado.
+  3. `tests/test_pipeline_reconstruct.cpp`: Relatório de diagnóstico estruturado `shader_diagnostic_report.json` condicionado à flag CLI `--report`/`--diag` ou `BB_SHADER_REPORT=1`.
+  4. `package.py`: Remoção de `.json` das extensões do cache empacotado e exclusão de caminhos `dist/user` obsoletos.
+  5. `extra/core/shader_precompile/bbport_shader_pack.cpp`: Remoção dos candidatos `dist/user/cache` em `RestoreMasterCacheIfEmpty`.
+  6. Purga completa de 385 chaves obsoletas do cache mestre (`user/cache/CUSA03173`), consolidando o Grimório do Caçador em 623 pipelines 100% verificadas, 0 warnings e latência média de 66.6 µs por pipeline.
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `gpu/render/blob_store.h` | Declaração de `ForEachBlobPath` // [extra] | `gpu/render/blob_store.cpp` | Itera caminhos dos arquivos de blob no cache | 2026-10-25 |
+| `gpu/render/blob_store.cpp` | `ForEachBlobPath` com auto-prune padrão // [extra] | `gpu/render/blob_store.cpp` | Remove chaves rejeitadas/danificadas automaticamente | 2026-10-25 |
+| `gpu/render/pipeline_store.cpp` | `WarmUp` adaptado para `ForEachBlobPath` // [extra] | `gpu/render/blob_store.cpp` | Previne re-execução de chaves com conflito de permutação | 2026-10-25 |
+| `extra/core/shader_precompile/bbport_shader_inventory_json.cpp` | Guard de ambiente em `DumpInventory` | `extra/core/shader_precompile/bbport_shader_discovery.cpp` | Impede poluição do cache do jogador com JSON de inventário | 2026-10-25 |
+| `tests/test_pipeline_reconstruct.cpp` | Flag `--report` / `export_report` | `tests/test_pipeline_reconstruct.cpp` | Evita criação de `shader_diagnostic_report.json` sem solicitação | 2026-10-25 |
+| `package.py` | Exclusão de `.json` e de diretórios `dist/` | `package.py` | Garante pacotes limpos contendo apenas bytecodes binários | 2026-10-25 |
+| `extra/core/shader_precompile/bbport_shader_pack.cpp` | Remoção de `dist/user` de `candidates` | `extra/core/shader_precompile/bbport_shader_pack.cpp` | Previne reinserção acidental de chaves antigas de `dist/` | 2026-10-25 |
+
+
+

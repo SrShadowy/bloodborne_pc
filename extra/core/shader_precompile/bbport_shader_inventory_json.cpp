@@ -129,6 +129,9 @@ void SerializePipelines(std::stringstream& ss, const std::vector<DiscoveredPipel
 } // namespace
 
 void DumpInventory(const std::string& custom_dir) {
+    if (custom_dir.empty() && !std::getenv("BB_SHADER_DISCOVERY_DUMP") && !std::getenv("BB_SHADER_INVENTORY")) {
+        return;
+    }
     const auto stats = GetStats();
     if (stats.unique_shaders == 0 && stats.unique_pipelines == 0) {
         return;

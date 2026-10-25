@@ -28,7 +28,9 @@ if [[ ${1:-} == --software ]]; then
     if [[ -z ${VK_DRIVER_FILES:-} ]]; then echo 'Lavapipe not found; set VK_DRIVER_FILES.' >&2; exit 1; fi
     export VK_LOADER_LAYERS_DISABLE='~implicit~'
 fi
-user_dir=${BB_USER_DIR:-${BB_GPU_USER_DIR:-user}}
+data=${BB_DATA_DIR:-.}
+export BB_GPU_USER_DIR=${BB_GPU_USER_DIR:-${BB_USER_DIR:-$data/user}}
+user_dir="$BB_GPU_USER_DIR"
 cache_dir="$user_dir/cache/CUSA03173"
 if [[ ${1:-} == --precompile-shaders ]] || [[ ! -f "$cache_dir/pipeline_driver.cache" && ${BB_NO_PRECOMPILE:-0} != 1 ]]; then
     is_manual_precompile=0
@@ -41,12 +43,29 @@ if [[ ${1:-} == --precompile-shaders ]] || [[ ! -f "$cache_dir/pipeline_driver.c
         precompile_bin="out/gpu/pipeline-reconstruct-test"
     elif [[ -x bin/gpu/pipeline-reconstruct-test ]]; then
         precompile_bin="bin/gpu/pipeline-reconstruct-test"
+    elif [[ -x "$PWD/bin/gpu/pipeline-reconstruct-test" ]]; then
+        precompile_bin="$PWD/bin/gpu/pipeline-reconstruct-test"
+    elif [[ -n "${BB_PORT_DIR:-}" && -x "$BB_PORT_DIR/bin/gpu/pipeline-reconstruct-test" ]]; then
+        precompile_bin="$BB_PORT_DIR/bin/gpu/pipeline-reconstruct-test"
+    fi
+    if [[ -d lib ]]; then
+        export LD_LIBRARY_PATH="$PWD/lib:$PWD/bin/gpu:$PWD/out/gpu:${LD_LIBRARY_PATH:-}"
+    elif [[ -n "${BB_PORT_DIR:-}" && -d "$BB_PORT_DIR/lib" ]]; then
+        export LD_LIBRARY_PATH="$BB_PORT_DIR/lib:$BB_PORT_DIR/bin/gpu:${LD_LIBRARY_PATH:-}"
+    else
+        export LD_LIBRARY_PATH="$PWD/out/gpu:$PWD/bin/gpu:${LD_LIBRARY_PATH:-}"
+    fi
+    if [[ $is_manual_precompile == 1 ]]; then
+        if [[ -n "$precompile_bin" ]]; then
+            "$precompile_bin" "$user_dir"
+            exit $?
+        else
+            echo "Error: pipeline-reconstruct-test binary not found." >&2
+            exit 1
+        fi
     fi
     if [[ -n "$precompile_bin" ]]; then
         "$precompile_bin" "$user_dir" || true
-        if [[ $is_manual_precompile == 1 ]]; then
-            exit 0
-        fi
     fi
 fi
 # BB_PREBUILT=1 (packaged builds, the AppImage): out/bb-probe and its GPU library are installed

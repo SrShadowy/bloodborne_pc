@@ -366,7 +366,7 @@ void PipelineCache::WarmUp() {
     }
 
     u32 num_pipelines = 0, num_total = 0, num_damaged = 0;
-    Store().ForEachBlob(BbCache::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
+    Store().ForEachBlobPath(BbCache::BlobType::PipelineKey, [&](const std::filesystem::path& /*path*/, std::vector<u8>&& data) -> bool { // [extra]
         ++num_total;
         // A damaged entry (cut short by a crash or a power loss, or rejected by the driver) used
         // to stop the game at every start until the cache was deleted by hand (issues #28, #38,
@@ -377,12 +377,13 @@ void PipelineCache::WarmUp() {
             u32 version{}, is_compute{};
             reader.Read(version);
             if (version != PipelineStore::PipelineKeyVersion) {
-                return;
+                return false; // [extra]
             }
             reader.Read(is_compute);
             if (is_compute ? LoadComputePipeline(ar) : LoadGraphicsPipeline(ar)) {
                 ++num_pipelines;
                 extra_shader_discovery_report_progress(num_pipelines, num_total); // [extra]
+                return true; // [extra]
             }
         } catch (const std::exception& e) {
             if (num_damaged++ == 0) {
@@ -392,7 +393,8 @@ void PipelineCache::WarmUp() {
             sel.modules.fill(nullptr);
             sel.fetch_shader.reset();
         }
-    });
+        return false; // [extra]
+    }); // [extra]
 
     if (num_damaged) {
         LOG_WARNING(Render, "Pipeline cache: {} damaged entries, rebuilding it", num_damaged);

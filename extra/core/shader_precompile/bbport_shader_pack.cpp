@@ -219,26 +219,33 @@ bool PackDirectory(const std::filesystem::path& cache_dir, const std::string& ti
 }
 
 bool RestoreMasterCacheIfEmpty(const std::filesystem::path& cache_dir_param) {
+    const auto serial = Common::ElfInfo::Instance().GameSerial();
+    const std::string s = serial.empty() ? "CUSA03173" : std::string(serial);
     std::filesystem::path cache_dir = cache_dir_param;
     if (cache_dir.empty()) {
-        const auto serial = Common::ElfInfo::Instance().GameSerial();
-        const std::string s = serial.empty() ? "CUSA03173" : std::string(serial);
         cache_dir = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / s;
     }
     std::error_code ec;
     std::filesystem::create_directories(cache_dir, ec);
 
-    const std::filesystem::path candidates[] = {
-        "dist/user/cache/CUSA03173",
-        "../dist/user/cache/CUSA03173",
-    };
+    std::vector<std::filesystem::path> candidates;
+    if (const char* port_dir = std::getenv("BB_PORT_DIR")) {
+        candidates.push_back(std::filesystem::path(port_dir) / "user/cache" / s);
+    }
+    if (const char* app_dir = std::getenv("APPDIR")) {
+        candidates.push_back(std::filesystem::path(app_dir) / "user/cache" / s);
+    }
+    candidates.push_back(std::filesystem::path("user/cache") / s);
+    candidates.push_back(std::filesystem::path("../user/cache") / s);
+
     size_t merged = 0;
     for (const auto& cand : candidates) {
         if (std::filesystem::exists(cand, ec) &&
             std::filesystem::weakly_canonical(cand, ec) != std::filesystem::weakly_canonical(cache_dir, ec)) {
             for (const auto& entry : std::filesystem::directory_iterator(cand, ec)) {
                 const auto ext = entry.path().extension();
-                if (ext == ".key" || ext == ".meta" || ext == ".spv" || ext == ".bin") {
+                if (ext == ".pack" || ext == ".idx" || ext == ".meta" || ext == ".key" ||
+                    ext == ".spv" || ext == ".bin") {
                     if (std::filesystem::copy_file(entry.path(), cache_dir / entry.path().filename(),
                                                    std::filesystem::copy_options::skip_existing, ec)) {
                         merged++;

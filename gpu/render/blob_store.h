@@ -46,6 +46,7 @@ public:
     void Load(BlobType type, const std::string& name, std::vector<u8>& data);
     void Load(BlobType type, const std::string& name, std::vector<u32>& data);
     void ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func);
+    void ForEachBlobPath(BlobType type, const std::function<bool(const std::filesystem::path&, std::vector<u8>&&)>& func); // [extra]
 
 private:
     struct Write {

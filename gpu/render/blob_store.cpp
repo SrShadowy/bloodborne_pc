@@ -159,6 +159,29 @@ void BlobStore::ForEachBlob(BlobType type,
     }
 }
 
+void BlobStore::ForEachBlobPath(BlobType type, // [extra]
+                                const std::function<bool(const std::filesystem::path&, std::vector<u8>&&)>& func) { // [extra]
+    const std::string ext = Extension(type); // [extra]
+    std::error_code ec; // [extra]
+    for (const auto& entry : std::filesystem::directory_iterator{dir, ec}) { // [extra]
+        if (entry.path().extension() != ext) { // [extra]
+            continue; // [extra]
+        } // [extra]
+        using namespace Common::FS; // [extra]
+        const IOFile file{entry.path(), FileAccessMode::Read}; // [extra]
+        if (file.IsOpen()) { // [extra]
+            std::vector<u8> data(file.GetSize()); // [extra]
+            file.Read(data); // [extra]
+            if (!func(entry.path(), std::move(data))) { // [extra]
+                const char* prune_env = std::getenv("BB_PRUNE_STALE_CACHE"); // [extra]
+                if (!prune_env || std::string_view(prune_env) != "0") { // [extra]
+                    std::filesystem::remove(entry.path(), ec); // [extra]
+                } // [extra]
+            } // [extra]
+        } // [extra]
+    } // [extra]
+} // [extra]
+
 void BlobStore::Clear() {
     if (!opened) {
         return;

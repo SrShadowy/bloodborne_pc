@@ -11,7 +11,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <thread>
+#include <vector>
 
 namespace BbShaderSplash {
 
@@ -24,22 +26,41 @@ constexpr float BAR_HEIGHT = 22.0f;
 constexpr float BAR_Y = 65.0f;
 
 SDL_Texture* LoadSplashTexture(SDL_Renderer* renderer, const std::string& preferred_path) {
-    const std::string paths[] = {
-        preferred_path,
-        "packaging/splash_bloodborne.png",
-        "dist/user/data/splash_bloodborne.png",
-        "../packaging/splash_bloodborne.png",
-        "../dist/user/data/splash_bloodborne.png",
-    };
-    for (const auto& p : paths) {
-        if (p.empty() || !std::filesystem::exists(p)) continue;
-        SDL_Surface* surf = SDL_LoadPNG(p.c_str());
+    std::vector<std::filesystem::path> candidates;
+    if (!preferred_path.empty()) {
+        candidates.emplace_back(preferred_path);
+    }
+
+    const char* app_dir = std::getenv("APPDIR");
+    const char* port_dir = std::getenv("BB_PORT_DIR");
+
+    if (app_dir && *app_dir) {
+        candidates.push_back(std::filesystem::path{app_dir} / "packaging" / "splash_bloodborne.png");
+    }
+    if (port_dir && *port_dir) {
+        candidates.push_back(std::filesystem::path{port_dir} / "packaging" / "splash_bloodborne.png");
+    }
+
+    candidates.emplace_back("packaging/splash_bloodborne.png");
+    candidates.emplace_back("../packaging/splash_bloodborne.png");
+
+    std::error_code ec;
+    for (const auto& p : candidates) {
+        if (p.empty() || !std::filesystem::exists(p, ec)) continue;
+        SDL_Surface* surf = SDL_LoadPNG(p.string().c_str());
         if (surf) {
             SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+            const int w = surf->w;
+            const int h = surf->h;
             SDL_DestroySurface(surf);
-            if (tex) return tex;
+            if (tex) {
+                std::printf("BbShaderSplash: Loaded splash artwork from %s (%dx%d)\n",
+                            p.string().c_str(), w, h);
+                return tex;
+            }
         }
     }
+    std::printf("BbShaderSplash: Warning: No splash background image found.\n");
     return nullptr;
 }
 
@@ -119,6 +140,8 @@ bool Run(const SplashOptions& options, std::function<bool()> compile_task) {
         SDL_DestroyWindow(window);
         return compile_task ? compile_task() : false;
     }
+
+    SDL_SetRenderLogicalPresentation(renderer, WIN_WIDTH, WIN_HEIGHT, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
     SDL_Texture* bg_tex = LoadSplashTexture(renderer, options.splash_image_path);
 

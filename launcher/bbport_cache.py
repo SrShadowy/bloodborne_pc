@@ -236,10 +236,14 @@ class CacheMixin:
 
         def worker():
             import subprocess
-            cmd = ["bash", "run.sh", "--precompile-shaders"]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            for _line in proc.stdout:
-                pass
+            from bbport_config import PORT_DIR, game_environment
+            run_sh = PORT_DIR / "run.sh"
+            cmd = ["bash", str(run_sh), "--precompile-shaders"]
+            settings = getattr(self, "settings", {})
+            env = game_environment(settings) if settings else os.environ.copy()
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(PORT_DIR), env=env)
+            for line in proc.stdout:
+                sys.stdout.write(line)
             proc.wait()
 
             def on_done():
@@ -269,7 +273,9 @@ class CacheMixin:
 
         def worker():
             import subprocess
-            cmd = [sys.executable, "scripts/extract_static_shaders.py"]
+            from bbport_config import PORT_DIR
+            script = PORT_DIR / "scripts" / "extract_static_shaders.py"
+            cmd = [sys.executable, str(script)]
             game_dir = self.game_dir() if hasattr(self, "game_dir") else getattr(self, "settings", {}).get("game_dir")
             if callable(game_dir):
                 game_dir = game_dir()
@@ -277,9 +283,9 @@ class CacheMixin:
                 cmd.extend(["--game-dir", str(game_dir)])
             out_catalog = self.user_dir() / "cache" / "CUSA03173" / "static_shader_catalog.json"
             cmd.extend(["--output", str(out_catalog)])
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            for _line in proc.stdout:
-                pass
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(PORT_DIR))
+            for line in proc.stdout:
+                sys.stdout.write(line)
             proc.wait()
 
             def on_done():

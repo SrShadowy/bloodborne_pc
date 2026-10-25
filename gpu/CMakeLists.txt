@@ -450,6 +450,9 @@ add_executable(pipeline-reconstruct-test EXCLUDE_FROM_ALL ../tests/test_pipeline
 target_include_directories(pipeline-reconstruct-test PRIVATE .. . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
 target_compile_options(pipeline-reconstruct-test PRIVATE -UNDEBUG -fPIC) # [extra]
 target_link_libraries(pipeline-reconstruct-test PRIVATE bbgpu) # [extra]
+set_target_properties(pipeline-reconstruct-test PROPERTIES # [extra]
+    BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib" # [extra]
+    INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib") # [extra]
 
 add_executable(shader-pack-test EXCLUDE_FROM_ALL ../tests/test_shader_pack.cpp # [extra]
     ../tests/test_gpu_runtime_stubs.cpp) # [extra]

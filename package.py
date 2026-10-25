@@ -346,9 +346,13 @@ def build_and_package(args):
     lib_gpu = ROOT_DIR / "out" / "gpu" / "libbbgpu.so"
     lib_net = ROOT_DIR / "out" / "gpu" / "libbbnet.so"
     lib_net20 = ROOT_DIR / "out" / "gpu" / "libbbnet20.so"
+    bin_reconstruct = ROOT_DIR / "out" / "gpu" / "pipeline-reconstruct-test"
     has_online = lib_net.exists() and lib_net.stat().st_size > 0
     has_online20 = lib_net20.exists() and lib_net20.stat().st_size > 0
+    has_reconstruct = bin_reconstruct.exists() and bin_reconstruct.stat().st_size > 0
 
+    if has_reconstruct:
+        print(f"[+] Shader precompiler detected: {bin_reconstruct}")
     if has_online20:
         print(f"[+] Online module (v0.20) detected: {lib_net20}")
     if has_online:
@@ -387,6 +391,11 @@ def build_and_package(args):
     shutil.copy2(lib_gpu, pkg_bin_gpu / "libbbgpu.so")
     (pkg_bin_gpu / "libbbgpu.so").chmod(0o755)
 
+    if has_reconstruct:
+        shutil.copy2(bin_reconstruct, pkg_bin_gpu / "pipeline-reconstruct-test")
+        (pkg_bin_gpu / "pipeline-reconstruct-test").chmod(0o755)
+        print(f"[✓] Deployed shader precompiler: {pkg_bin_gpu / 'pipeline-reconstruct-test'}")
+
     if has_online:
         shutil.copy2(lib_net, pkg_bin_gpu / "libbbnet.so")
         (pkg_bin_gpu / "libbbnet.so").chmod(0o755)
@@ -402,6 +411,8 @@ def build_and_package(args):
         try:
             subprocess.run(["strip", "--strip-debug", str(pkg_bin_gpu / "libbbgpu.so")], check=True)
             subprocess.run(["strip", "--strip-debug", str(pkg_bin / "bb-gpu-capabilities")], check=True)
+            if has_reconstruct:
+                subprocess.run(["strip", "--strip-debug", str(pkg_bin_gpu / "pipeline-reconstruct-test")], check=True)
             if has_online:
                 subprocess.run(["strip", "--strip-debug", str(pkg_bin_gpu / "libbbnet.so")], check=True)
             if has_online20:
@@ -417,6 +428,8 @@ def build_and_package(args):
 
         found_deps = {}
         queue = [bin_probe, bin_caps, lib_gpu]
+        if has_reconstruct:
+            queue.append(bin_reconstruct)
         if has_online:
             queue.append(lib_net)
         if has_online20:
@@ -519,6 +532,34 @@ def build_and_package(args):
     (staging_dir / "mods" / ".gitkeep").touch()
     (staging_dir / "user").mkdir(exist_ok=True)
     (staging_dir / "user" / ".gitkeep").touch()
+
+    # Precompilation splash artwork (Monster Hunter Rise style UI)
+    splash_src = ROOT_DIR / "packaging" / "splash_bloodborne.png"
+    if not splash_src.is_file():
+        splash_src = ROOT_DIR / "dist" / "user" / "data" / "splash_bloodborne.png"
+    if splash_src.is_file():
+        (staging_dir / "packaging").mkdir(exist_ok=True)
+        shutil.copy2(splash_src, staging_dir / "packaging" / "splash_bloodborne.png")
+        print(f"[✓] Bundled shader precompilation splash artwork: {splash_src.name}")
+
+    # Master shader cache / Hunter's Grimoire bundling
+    pkg_cache_dir = staging_dir / "user" / "cache" / "CUSA03173"
+    pkg_cache_dir.mkdir(parents=True, exist_ok=True)
+    master_cache_candidates = [
+        ROOT_DIR / "user" / "cache" / "CUSA03173",
+    ]
+    bundled_shaders = 0
+    for cand in master_cache_candidates:
+        if cand.is_dir():
+            for f in cand.iterdir():
+                if f.is_file() and f.suffix in (".pack", ".idx", ".meta", ".key", ".spv", ".bin"):
+                    dest = pkg_cache_dir / f.name
+                    if not dest.exists():
+                        shutil.copy2(f, dest)
+                        bundled_shaders += 1
+            if bundled_shaders > 0:
+                print(f"[*] Bundled {bundled_shaders} master Hunter's Grimoire cache assets from {cand}")
+                break
 
     # 4. Create compressed tarball
     out_dist_dir = Path(args.output_dir).resolve()
