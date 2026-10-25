@@ -8,7 +8,7 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 - **Build & Shaders**: Compilação nativa no Linux (x86_64, Vulkan/Mesa, AMD/NVIDIA), suporte a FSR 3.1 / FSR 4.1.1 e pipeline caches.
 - **Gráficos & Glitches**: Eliminação de reflexos invertidos no céu, vertex explosions no FaceGen/Havok e borrões de motion blur no céu.
 - **Pacing & Modo Foto**: Desacoplamento do ritmo no Presenter, suspensão nativa via `FD4TaskManager` (+0x54b2e30) e guarda anti-crash no Havok (`PushBackSafe`).
-- **Arquitetura `extra/` & Governança**: Modularização completa em `extra/` com ganchos mínimos `// [extra]` conforme `MyGUIDELINES.md`.
+- **Arquitetura `extra/` & Governança**: Modularização completa em `extra/` com ganchos mínimos `// [extra]`.
 - **Ferramentas In-Game**: Scanner de memória com watchlist, desassemblador x86-64 com símbolos e NOP patching, HUD customizável e Discord RPC.
 - **Online & Localização**: Suporte a pools BBSC e The Hunter's Dream (bbhost/Discord), e localização trilíngue (PT-BR, EN, RU).
 
@@ -86,7 +86,7 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 - **Recursos**: Interpolação de quadros Vulkan em tempo real utilizando vetores de movimento e buffers de profundidade, dobrando a fluidez visual para telas de 60/120/144 Hz.
 
 ## 20. Code Architecture Modernization & Modular Decomposition (CODE_GUIDELINES.md)
-- Estabelecimento do isolamento estrito entre upstream e código customizado, antecedendo a formalização do `MyGUIDELINES.md`.
+- Estabelecimento do isolamento estrito entre upstream e código customizado, antecedendo a formalização.
 
 ## 21. Watchdog Timeout & FSR 3.1 Frame Generation Stabilization
 - **Problema**: Travamentos do compositor Vulkan por esgotamento de recursos quando a taxa de quadros oscilava.
@@ -228,7 +228,7 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 ## 72. Correção de Frame Pacing Simétrico (50/50) no Frame Generation e Desacoplamento de Ritmo
 - Correção de cálculo de intervalo real entre inícios de quadros da engine e implementação de sleep híbrido de alta precisão (coarse sleep + spin-wait com `pause`), eliminando o gráfico em dente de serra (8ms/25ms) e estabilizando a entrega simétrica dos quadros interpolados e reais.
 
-## 73. Upstream Touch Ledger (Registro de Modificações Fora de `extra/` Conforme `MyGUIDELINES.md`)
+## 73. Upstream Touch Ledger (Registro de Modificações Fora de `extra/`)
 
 | Upstream file | Hook / change | Extra module | Purpose | Added |
 |---|---|---|---|---|
@@ -301,7 +301,7 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 
 ## 91. Sincronização 1:1 de Brilho/Contraste (Display Pass 1D LUT) em Quadros Gerados (FSR 3.1)
 - **Problema**: Ao alterar o ajuste de brilho nas opções do jogo, o Frame Generation apresentava flicker constante (60/120 Hz) alternando entre o brilho padrão e o configurado. O Bloodborne aplica a calibração de brilho por meio de um shader de Display Pass (`0x38d65b32`) que amostra uma 1D LUT (`sampler1DArray`) de 3 camadas (R, G, B), porém o FSR 3.1 interpolava a imagem antes desse pass.
-- **Solução Arquitetural**: Conforme `MyGUIDELINES.md`, isolado integralmente em `extra/core/frame_gen/`. Adicionado compute pass `display_lut.comp` em `FrameGeneration::Interpolate` que aplica a 1D LUT diretamente no buffer interpolado `target->image` in-flight, sem alterar assinaturas do Presenter ou shaders nativos. O upstream recebe apenas um gancho de 1 linha em `raster_textures.cpp`.
+- **Solução Arquitetural**:  isolado integralmente em `extra/core/frame_gen/`. Adicionado compute pass `display_lut.comp` em `FrameGeneration::Interpolate` que aplica a 1D LUT diretamente no buffer interpolado `target->image` in-flight, sem alterar assinaturas do Presenter ou shaders nativos. O upstream recebe apenas um gancho de 1 linha em `raster_textures.cpp`.
 
 | Upstream file | Hook / change | Extra module | Purpose | Added |
 |---|---|---|---|---|
@@ -621,3 +621,6 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
   4. Atualização da sinalização NP (SignalingBbscPvp tipo 0x25, progress 0x26, host boss 0x27, BbscTimelineEvent em conexões estabelecidas/perdidas).
   5. Câmera de espectador para parceiros mortos em co-op (bbsc_cinematic.{h,cpp}) e flags de persistência atualizadas (bbsc_persistence.h).
   6. Preservação integral de todas as customizações locais do fork (extra_bbsc_save_root, extra_bbsc_find_param_tables_direct, limites de memória, etc.).
+  7. Fallback de Endpoints para Relay UDP (BBR1) e Fila de Retry de Ativação:
+     - Em `np_matching2_mm.cpp` (`bbnet` e `bbnet20`), quando o broker shadNet expira ou o par ainda não registrou IP público, aloca pseudo-endpoint de fallback (`169.254.x.x:3173`) roteado pelo relay BBR1 (`RelayLookupOrAllocatePeer` / `Relay::LookupOrAllocatePeer`).
+     - Em `np_signaling_state.cpp` (`bbnet`), ativações pendentes não resolvidas no primeiro tick são mantidas em fila de retry (`std::vector<PendingActivation> retry`) para repassagem assíncrona enquanto a conexão estiver ativa, sincronizando com o `bbnet20` e eliminando o timeout de 30s ("peer endpoint unresolved; connection timeout").

@@ -246,5 +246,6 @@ void P2PRelaySetServer(u32 addr_nbo);
 void P2PRelaySetLocalId(std::string_view online_id);
 void P2PRelaySetSelfEndpoint(u32 addr_nbo, u16 port_nbo); // our public endpoint (STUN echo)
 void P2PRelayRememberPeer(std::string_view online_id, u32 addr_nbo, u16 port_nbo);
+bool P2PRelayLookupOrAllocatePeer(std::string_view online_id, u32* out_addr, u16* out_port);
 
 } // namespace Libraries::Net

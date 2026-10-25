@@ -176,7 +176,7 @@ já funcionam no servidor do bbhost.**
 
 ---
 
-## 2.5 Conformidade com `MyGUIDELINES.md`
+## 2.5 Conformidade
 
 O plano segue os padrões do projeto. Implicações concretas:
 

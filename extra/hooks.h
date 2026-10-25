@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-// Central re-export of all extra hooks per MyGUIDELINES.md.
+// Central re-export of all extra hooks
 #if __has_include("hosts/hosts_hooks.h") && __has_include("core/libraries/np/np_types.h")
 #include "hosts/hosts_hooks.h"
 #endif

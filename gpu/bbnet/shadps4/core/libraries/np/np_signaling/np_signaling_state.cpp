@@ -976,6 +976,8 @@ void ProcessPendingActivations() {
         work.swap(g_pending_activations);
     }
 
+    std::vector<PendingActivation> retry;
+
     for (const PendingActivation& act : work) {
         bool already_established = false;
         {
@@ -992,8 +994,9 @@ void ProcessPendingActivations() {
                               peer_addr != 0 && peer_port != 0;
 
         if (!resolved) {
-            LOG_WARNING(Lib_NpSignaling, "peer '{}' endpoint unresolved; connection {} 30s timeout",
-                        act.peer_online_id, act.conn_id);
+            LOG_DEBUG(Lib_NpSignaling, "peer '{}' endpoint unresolved; queuing retry for connection {}",
+                      act.peer_online_id, act.conn_id);
+            retry.push_back(act);
             continue;
         }
 
@@ -1016,6 +1019,16 @@ void ProcessPendingActivations() {
             StartHandshakeInitiator(act.conn_id);
         } else if (already_established) {
             EstablishConnection(act.conn_id, false);
+        }
+    }
+
+    if (!retry.empty()) {
+        SignalingMutexGuard lock;
+        for (const auto& act : retry) {
+            const auto it = g_connections.find(act.conn_id);
+            if (it != g_connections.end() && it->second.state != ConnState::Inactive) {
+                g_pending_activations.push_back(act);
+            }
         }
     }
 }

@@ -60,7 +60,10 @@ class GameRunnerMixin:
             pass
 
         self.store()
-        self.log_view.get_buffer().set_text("")
+        if hasattr(self, "on_clear_log"):
+            self.on_clear_log()
+        else:
+            self.log_view.get_buffer().set_text("")
         launcher = Gio.SubprocessLauncher.new(
             Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
         launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
@@ -80,6 +83,11 @@ class GameRunnerMixin:
             self.log_status_badge.set_label(tr("Игра запущена (PID {})").format(pid))
             self.log_status_badge.remove_css_class("badge-warning")
             self.log_status_badge.add_css_class("badge-success")
+        if hasattr(self, "log_status_icon"):
+            self.log_status_icon.set_from_icon_name("media-playback-start-symbolic")
+        if hasattr(self, "log_status_box"):
+            self.log_status_box.remove_css_class("badge-warning")
+            self.log_status_box.add_css_class("badge-success")
         self.stack.set_visible_child_name("log")
 
     def read_line(self):
@@ -133,6 +141,11 @@ class GameRunnerMixin:
             self.log_status_badge.set_label(tr("Игра не запущена"))
             self.log_status_badge.remove_css_class("badge-success")
             self.log_status_badge.add_css_class("badge-warning")
+        if hasattr(self, "log_status_icon"):
+            self.log_status_icon.set_from_icon_name("media-playback-stop-symbolic")
+        if hasattr(self, "log_status_box"):
+            self.log_status_box.remove_css_class("badge-success")
+            self.log_status_box.add_css_class("badge-warning")
 
         from pathlib import Path
         from diagnostics import get_log_file, LOG

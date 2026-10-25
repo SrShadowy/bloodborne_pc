@@ -147,6 +147,34 @@ void Relay::RememberPeer(std::string_view online_id, u32 addr_nbo, u16 port_nbo)
     AddAliasLocked(id, addr_nbo, port_nbo, "signaling");
 }
 
+bool Relay::LookupOrAllocatePeer(std::string_view online_id, u32* out_addr, u16* out_port) {
+    if (online_id.empty() || !out_addr || !out_port) {
+        return false;
+    }
+    std::scoped_lock lock{mutex_};
+    if (server_addr_ == 0) {
+        return false;
+    }
+    const std::string id = PadId(online_id);
+    const auto it = peers_.find(id);
+    if (it != peers_.end() && it->second.addr != 0 && it->second.port != 0) {
+        *out_addr = it->second.addr;
+        *out_port = it->second.port;
+        return true;
+    }
+    Peer& peer = peers_[id];
+    peer.id = id;
+    peer.addr = htonl(0xA9FE0000u | (next_pseudo_++ & 0xFFFFu));
+    peer.port = htons(3173);
+    peer.relayed = true;
+    AddAliasLocked(id, peer.addr, peer.port, "relay fallback resolve");
+    *out_addr = peer.addr;
+    *out_port = peer.port;
+    LOG_INFO(Lib_Net, "P2P relay fallback: assigned pseudo endpoint {:#x}:{} for '{}'",
+             peer.addr, ntohs(peer.port), IdText(id));
+    return true;
+}
+
 void Relay::AddAliasLocked(const std::string& id, u32 addr_nbo, u16 port_nbo, const char* from) {
     if (addr_nbo == 0 || port_nbo == 0) {
         return;
