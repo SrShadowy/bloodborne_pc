@@ -91,6 +91,21 @@ void Render(const Stats& stats) {
         }
     }
 
+    std::string res_text;
+    if (!upscaler_label.empty()) {
+        const auto out = BbSettings::CurrentOutput();
+        const int rw = s.active_render_width.load(std::memory_order_relaxed);
+        const int rh = s.active_render_height.load(std::memory_order_relaxed);
+        const int final_w = out.width > 0 ? out.width : 1920;
+        const int final_h = out.height > 0 ? out.height : 1080;
+        const int render_w = rw > 0 ? rw : final_w;
+        const int render_h = rh > 0 ? rh : final_h;
+
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%dx%d < %dx%d", final_w, final_h, render_w, render_h);
+        res_text = buf;
+    }
+
     // Build metric entries
     std::vector<MetricEntry> entries;
     if (show_fps) {
@@ -207,6 +222,7 @@ void Render(const Stats& stats) {
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                      ImGuiWindowFlags_NoFocusOnAppearing);
 
+    ImGui::SetWindowFontScale(user_scale);
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
     auto DrawSpinner = [&](ImVec2 pos, float alpha) {
@@ -242,6 +258,14 @@ void Render(const Stats& stats) {
                         ImGui::PushStyleColor(ImGuiCol_Text, entries[i].tag_col);
                         ImGui::TextUnformatted(entries[i].value.c_str());
                         ImGui::PopStyleColor();
+                        if (!res_text.empty()) {
+                            ImGui::SameLine(0.0f, 4.0f * user_scale);
+                            ImGui::SetWindowFontScale(user_scale * 0.88f);
+                            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(185, 195, 205, 230));
+                            ImGui::Text("(%s)", res_text.c_str());
+                            ImGui::PopStyleColor();
+                            ImGui::SetWindowFontScale(user_scale);
+                        }
                     } else {
                         ImGui::TextUnformatted(entries[i].value.c_str());
                     }
@@ -290,6 +314,13 @@ void Render(const Stats& stats) {
 
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TextUnformatted(entry.value.c_str());
+                    if (std::string_view(entry.tag) == "UP" && !res_text.empty()) {
+                        ImGui::SetWindowFontScale(user_scale * 0.88f);
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(185, 195, 205, 230));
+                        ImGui::TextUnformatted(res_text.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::SetWindowFontScale(user_scale);
+                    }
                 }
 
                 // Shader Compilation row in Column Mode
@@ -436,6 +467,7 @@ void Render(const Stats& stats) {
                           UI::L("Total Frames", "Quadros Totais", "Всего кадров"),
                           total_fps);
     }
+    ImGui::SetWindowFontScale(1.0f);
     ImGui::End();
 }
 

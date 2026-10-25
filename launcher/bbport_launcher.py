@@ -830,7 +830,7 @@ class LauncherWindow(
         screen.add(self.fullscreen_row)
         self.live_row = combo_row(tr("Смена разрешения на лету"),
                                   tr("Без перезапуска, но медленнее на Steam Deck и старых GPU"),
-                                  LIVE_RESOLUTION, self.ini.get("live_resolution", "0"))
+                                  LIVE_RESOLUTION, self.ini.get("live_resolution", "auto"))
         screen.add(self.live_row)
         self.display_row = setup_combo_row(Adw.ComboRow(title=tr("Монитор")))
         self.display_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),

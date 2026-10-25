@@ -149,7 +149,7 @@ struct Values {
     std::atomic<std::uint32_t> output_res{PackSize(OutputDefault)};
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
-    std::atomic<int> live_resolution{0};
+    std::atomic<int> live_resolution{-1}; // [extra] -1 = auto by GPU capabilities
     /// FSR 3 frame generation (upscale/vk_frame_generation): a frame interpolated between each
     /// two of the game's, shown between them (needs the upscaler's scaled path). Live.
     std::atomic<bool> frame_generation{false};

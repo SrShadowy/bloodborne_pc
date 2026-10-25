@@ -286,7 +286,7 @@ INI_DEFAULTS = {
     "aspect": "auto",
     "output_res": "1920x1080",
     "model_lod": "0",
-    "live_resolution": "0",
+    "live_resolution": "auto",
     "mouse_look": "1",
     "mouse_sensitivity": "1.00",
     "mouse_invert_y": "0",
