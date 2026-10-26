@@ -46,7 +46,7 @@ class ControlsMixin:
 
         self.mouse_capture_row = Adw.SwitchRow(
             title=tr("Захват курсора в игре"),
-            subtitle=tr("Блокирует курсор в окне во время игры; Insert или F10 освобождают"),
+            subtitle=tr("Блокирует курсор в окне во время игры; F9 или Insert освобождают"),
             active=self.ini.get("mouse_capture", "1") != "0")
         self.mouse_capture_row.connect("notify::active", lambda *_: self.on_mouse_setting_changed())
         kbm_group.add(self.mouse_capture_row)

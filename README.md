@@ -130,7 +130,7 @@ Explore, reverse-engineer, and modify Bloodborne's runtime state live without ex
   - Unused textures are freed in both modes, so VRAM no longer grows unboundedly with every area visited.
 - **Unlocked frame rate.** Hooks in the game's code make the simulation use the real frame time (the community patches in `patches/Bloodborne.xml` remain for comparison, `BB_FRAME_HOOKS=0`); ~90 FPS at 4K with FSR 4 Balanced on an RX 7800 XT, ~150 FPS at 1440p with FSR 4 Quality. Also 30/60/90 FPS modes; **F3** toggles a 30 FPS limit on and off while playing (some cinematics, e.g. Laurence's, are safest at 30).
 - **Any aspect ratio, live.** 4:3, 16:10, 16:9, 21:9 and 32:9 with the HUD at the screen's edges, through hooks (the game's code is not patched); cinematics are wide too.
-- **Keyboard and mouse.** Mouse look turns the game's camera directly; a mouse pointer in the game's menus (F1 releases the mouse); a layout close to Dark Souls III (Space dodge, Left Shift run, Shift+Space jump); movement keys ramp up smoothly like a stick; button prompts show bound keys or connected gamepad buttons.
+- **Keyboard and mouse.** Mouse look turns the game's camera directly; a mouse pointer in the game's menus (F9 releases the mouse); a layout close to Dark Souls III (Space dodge, Left Shift run, Shift+Space jump); movement keys ramp up smoothly like a stick; button prompts show bound keys or connected gamepad buttons.
 - **Online play and seamless co-op.** Two pools on shadPS4 0.20's network stack (`gpu/bbnet20`): **Seamless Hunt** (default; bells, summons, messages, bloodstains and seamless co-op, BBSC, up to five hunters; account from seamlesshunt.com) and **The Hunter's Dream** (sign-in with Discord; no BBSC).
 - **Temporal upscaling built for this game.** Bloodborne has no velocity buffer, so bbport computes motion vectors itself: camera motion from depth and scene matrices, and object motion (characters, cloth, weapons) from vertex positions of the previous frame. The scene is jittered sub-pixel (Halton) and rendered at a reduced resolution; the upscaler reconstructs the output (720p for Steam Deck, 1080p, 1440p, 2160p) and UI draws natively at output resolution.
   - **FSR 3.1** (FireBurn/FSR-Vulkan).
@@ -263,7 +263,7 @@ BB_GAME_DIR="/path/to/CUSA03173" bash run.sh
 | **Memory Tools Suite**| Overlay (`Insert`) → *Memory Tools* | Open floating memory scanner, watchlist, hex editor & debugger |
 | **Character Name** | In-game dialog | Interactive virtual keyboard (controller & physical keyboard) |
 | **30 FPS Toggle** | `F3` | Toggle 30 FPS frame rate limit (useful for Laurence's cinematic) |
-| **Mouse Release** | `F1` | Release mouse cursor from game window |
+| **Mouse Release** | `F9` (or `F1`) | Release mouse cursor from game window |
 | **Launcher Navigation** | `D-Pad` / `Left Stick` | Move focus between launcher settings and categories |
 | **Launcher Values** | `D-Pad Left/Right` | Adjust sliders, cycle combo options, and toggle switches |
 | **Launcher Pages** | `LB` / `RB` (L1 / R1) | Switch launcher tabs |

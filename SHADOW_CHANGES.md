@@ -255,6 +255,8 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 | `extra/core/bbsc/bbport_bbsc_kit.{h,cpp}` | `extra_bbsc_save_root`, `extra_bbsc_find_in_memory`, `extra_safe_read` | (novo, em `extra/`) | Raiz de saves, varredura contínua e leitura de memória segura contra SIGSEGV/SIGBUS | 2026-10-20 |
 | `src/runtime_file.c` | `extra_title_menu_file(guest, host) // [extra]` | `extra/ui/scaleform/bbport_title_menu.cpp` | Interceptação em memória do menu inicial (title.gfx) para exibir a 6ª linha de Exit Game sem rolagem | 2026-10-25 |
 | `gpu/bbnet{,20}/...` | Sincronização BBSC 0.0.2 // [extra] | `core/bbsc_relay_client.cpp` | Suporte TCP relay POSIX Linux, P2P dual-send, alias map, cap message_area e signaling | 2026-10-25 |
+| `gpu/shim/window.cpp` | `if (event.key == SDLK_F9 || ...) // [extra]` | (shim local) | Atalho F9 para liberar/capturar o mouse da janela SDL com banner toast e cursor visível | 2026-10-25 |
+| `launcher/bbport_controls.py` | `subtitle=tr("... F9 ...")` | (launcher) | Atualização do subtítulo de captura de mouse indicando tecla F9 | 2026-10-25 |
 | `package.py` | `--appimage-extract-and-run` só se a ferramenta for AppImage | (ferramenta de empacotamento) | appimagetool estático falhava silenciosamente e o AppImage enchuto não era gerado | 2026-10-19 |
 
 ---
@@ -690,5 +692,25 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 | `launcher/bbport_online.py` | Switch `p2p_relay_row` na UI online | `launcher/bbport_online.py` | Controle visual para ligar/desligar fallback de relay | 2026-10-25 |
 | `launcher/bbport_config.py` | `p2p_relay` em defaults e env | `launcher/bbport_config.py` | Repasse de `SHADPS4_P2P_RELAY=0` para o processo | 2026-10-25 |
 | `run.sh` | Leitura de `p2p_relay` em `bbport.ini` | `run.sh` | Suporte a P2P puro em execuções standalone | 2026-10-25 |
+
+---
+
+## 107. Liberação e Captura do Mouse com Atalho F9 na Janela SDL e Atualização no Launcher
+- **Problema / Necessidade**: Permitir que o jogador libere o mouse confinado da janela SDL do jogo a qualquer momento através da tecla <kbd>F9</kbd>, facilitando o uso do mouse em outros monitores ou aplicativos secundários sem precisar pausar ou abrir o menu overlay, além de garantir que o cursor do sistema permaneça visível enquanto o mouse estiver liberado.
+- **Implementação**:
+  1. `gpu/shim/window.cpp`: Tratamento do evento `SDLK_F9` (mantendo `SDLK_F1` como atalho retrocompatível) para alternar `mouse_user_released`. Ao liberar o mouse, desativa a captura relativa/grab e dispara um banner toast de notificação (`BbOverlay::SetBanner("Mouse: Liberado (Released) [F9 / Clique para capturar]")`). Ao recapturar (seja clicando na janela ou pressionando F9 novamente), exibe `Mouse: Capturado (Captured)`.
+  2. `gpu/shim/window.cpp` (`UpdateCursor`): Atualizada a checagem de visibilidade do cursor do sistema para considerar `mouse_user_released`, impedindo que o cursor seja ocultado por inatividade ou modo tela cheia quando o usuário liberou o mouse explicitamente.
+  3. `gpu/shim/bbport_overlay.cpp`: Atualizado o texto de dica na seção de controles para indicar a tecla F9.
+  4. `launcher/bbport_controls.py`: Subtítulo da linha de alternância de captura do cursor atualizado para indicar a tecla F9.
+  5. `launcher/bbport_i18n.py`: Dicionários de tradução em Português (pt_BR), Inglês (en) e Chinês (zh_CN) atualizados com as novas strings informando F9.
+  6. `README.md` / `README.ru.md`: Documentação e tabela de atalhos de teclado atualizadas referenciando F9.
+
+| Upstream file | Hook / change | Extra module | Purpose | Added |
+|---|---|---|---|---|
+| `gpu/shim/window.cpp` | `SDLK_F9` mouse release / toast / `UpdateCursor` | (shim local) | Alternância de captura/liberação do mouse com feedback visual | 2026-10-25 |
+| `gpu/shim/bbport_overlay.cpp` | Hint de controle referenciando F9 | (shim local) | Orientação contextual dentro do menu overlay | 2026-10-25 |
+| `launcher/bbport_controls.py` | Subtítulo do switch `mouse_capture` | (launcher) | Orientação ao usuário na aba Controles sobre F9 | 2026-10-25 |
+| `launcher/bbport_i18n.py` | Localizações pt_BR, en e zh_CN | (launcher) | Suporte multilíngue para as novas mensagens e tooltips | 2026-10-25 |
+
 
 

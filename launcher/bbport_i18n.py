@@ -132,6 +132,8 @@ EN = {
     "Инвертировать по вертикали (Y)": "Invert vertical axis (Y)",
     "Инвертировать по горизонтали (X)": "Invert horizontal axis (X)",
     "Захват курсора в игре": "Capture cursor in game",
+    "Блокирует курсор в окне во время игры; F9 или Insert освобождают":
+        "Locks cursor inside window during gameplay; F9 or Insert releases",
     "Блокирует курсор в окне во время игры; Insert или F10 освобождают":
         "Locks cursor inside window during gameplay; Insert or F10 releases",
     "Назначение кнопок; применяется при запуске игры": "Button assignments; applied when the game starts",
@@ -444,6 +446,7 @@ EN = {
     "Не удалось скопировать библиотеку": "Could not copy the library",
     "DLSS {}: готово": "DLSS {}: ready",
     "Камера мышью": "Mouse look",
+    "Щелчок в окне игры захватывает мышь, F9 — отпускает": "A click in the game window takes the mouse, F9 releases it",
     "Щелчок в окне игры захватывает мышь, F1 — отпускает": "A click in the game window takes the mouse, F1 releases it",
     "Чувствительность мыши": "Mouse sensitivity",
     "Инвертировать мышь по вертикали": "Invert mouse Y axis",
@@ -667,6 +670,8 @@ PT = {
     "Инвертировать по вертикали (Y)": "Inverter eixo vertical (Y)",
     "Инвертировать по горизонтали (X)": "Inverter eixo horizontal (X)",
     "Захват курсора в игре": "Capturar cursor durante o jogo",
+    "Блокирует курсор в окне во время игры; F9 или Insert освобождают":
+        "Trava o cursor na janela durante o jogo; F9 ou Insert liberam",
     "Блокирует курсор в окне во время игры; Insert или F10 освобождают":
         "Trava o cursor na janela durante o jogo; Insert ou F10 liberam",
     "Назначение кнопок; применяется при запуске игры": "Mapeamento de botões; aplicado ao iniciar o jogo",
@@ -1540,6 +1545,7 @@ PT_BR = {
     "Клиент shadNet из shadPS4 0.20: колокола и призывы через сервер shadNet": "Cliente shadNet do shadPS4 0.20: sinos e invocações pelo servidor shadNet",
     "Тачпад, левая половина (жесты)": "Touchpad, lado esquerdo (gestos)",
     "Тачпад, правая половина (личные вещи)": "Touchpad, lado direito (itens pessoais)",
+    "Щелчок в окне игры захватывает мышь, F9 — отпускает": "Um clique na janela do jogo captura o mouse; F9 o solta",
     "Щелчок в окне игры захватывает мышь, F1 — отпускает": "Um clique na janela do jogo captura o mouse; F1 o solta",
     "Бэкенд X11 (XWayland) применится к лаунчеру при следующем запуске": "O backend X11 (XWayland) será aplicado ao launcher na próxima inicialização",
     "Бэкенд Wayland применится к лаунчеру при следующем запуске": "O backend Wayland será aplicado ao launcher na próxima inicialização",
@@ -1792,7 +1798,10 @@ ZH_CN = {
     "Не удалось скопировать библиотеку": "无法复制该库",
     "DLSS {}: готово": "DLSS {}：已就绪",
     "Клавиатура и мышь": "键盘和鼠标",
+    "Блокирует курсор в окне во время игры; F9 или Insert освобождают":
+        "游戏运行时锁定窗口内光标；按 F9 或 Insert 释放",
     "Камера мышью": "鼠标控制视角",
+    "Щелчок в окне игры захватывает мышь, F9 — отпускает": "在游戏窗口中单击以捕获鼠标，按 F9 释放",
     "Щелчок в окне игры захватывает мышь, F1 — отпускает": "在游戏窗口中单击以捕获鼠标，按 F1 释放",
     "Чувствительность мыши": "鼠标灵敏度",
     "Инвертировать мышь по вертикали": "反转鼠标纵轴",

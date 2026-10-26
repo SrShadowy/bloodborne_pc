@@ -785,9 +785,9 @@ void RenderControlsSection(BbSettings::Values& s, int lang) {
     Checkbox(UI::L("Disable Controller Gyro", "Desativar Giroscópio do Controle", "Отключить гироскоп"), s.disable_gyro);
 
     BbOverlaySections::RenderPromptLayoutSection(s, lang, dirty);
-    Hint(UI::L("Locks cursor inside the game window during gameplay. Press Insert or F10 to release.",
-               "Trava o cursor na janela do jogo durante a partida. Pressione Insert ou F10 para liberar.",
-               "Блокирует курсор в окне игры во время игры. Нажмите Insert или F10 для освобождения."));
+    Hint(UI::L("Locks cursor inside the game window during gameplay. Press F9 or Insert to release.",
+               "Trava o cursor na janela do jogo durante a partida. Pressione F9 ou Insert para liberar.",
+               "Блокирует курсор в окне игры во время игры. Нажмите F9 или Insert для освобождения."));
 }
 
 #undef S

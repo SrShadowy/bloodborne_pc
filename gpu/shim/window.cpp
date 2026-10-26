@@ -304,7 +304,7 @@ void WindowSDL::CaptureMouse(bool capture) {
     static bool told;
     if (capture && !told) {
         told = true;
-        std::printf("Mouse look: on (F1 releases the mouse, a click takes it again)\n");
+        std::printf("Mouse look: on (F9 releases the mouse, a click takes it again)\n");
     }
 }
 
@@ -333,8 +333,8 @@ void WindowSDL::UpdateTextTitle() {
 }
 
 // Mouse: the window holds the pointer (confined, and relative for looking) whenever it has focus, in
-// the game's menus and its pointer menus too (the mouse must not leave the window mid-game). F1 lets
-// it go (to use another window), a click or F1 again takes it back.
+// the game's menus and its pointer menus too (the mouse must not leave the window mid-game). F9 lets
+// it go (to use another window), a click or F9 again takes it back.
 static bool mouse_user_released = false;
 static bool mouse_grabbed = false;
 
@@ -419,10 +419,11 @@ bool WindowSDL::PollEvents() {
             BbMenuPointer::NotifyLeftClick(false);
         }
         // Mouse look: a click in the game takes the mouse (that click is not passed on as a
-        // button: runtime_pad.c reads the buttons only while it is held); F1 and leaving the
+        // button: runtime_pad.c reads the buttons only while it is held); F9 and leaving the
         // window let it go.
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && mouse_user_released) {
             mouse_user_released = false; // the click takes the window back (it is not a game button)
+            BbOverlay::SetBanner("Mouse: Capturado (Captured)", 1.5f); // [extra]
             continue;
         }
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !mouse_captured.load(std::memory_order_relaxed) &&
@@ -436,11 +437,15 @@ bool WindowSDL::PollEvents() {
             BbFrameRate::SetLimit(BbFrameRate::Limit() == 30 ? 0 : 30);
             continue;
         }
-        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F1 &&
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+            (event.key.key == SDLK_F9 || event.key.key == SDLK_F1) && // [extra: F9 mouse release]
             (mouse_captured.load(std::memory_order_relaxed) || mouse_grabbed || mouse_user_released)) {
             mouse_user_released = !mouse_user_released;
             if (mouse_user_released) {
                 CaptureMouse(false);
+                BbOverlay::SetBanner("Mouse: Liberado (Released) [F9 / Clique para capturar]", 2.0f); // [extra]
+            } else {
+                BbOverlay::SetBanner("Mouse: Capturado (Captured)", 1.5f); // [extra]
             }
             continue;
         }
@@ -543,7 +548,7 @@ bool WindowSDL::PollEvents() {
 // Issue #3: the OS cursor over the game. Hidden in fullscreen, and in a window after 3 s without
 // moving the mouse; always shown while the settings menu or a game's pointer menu is open.
 void WindowSDL::UpdateCursor() {
-    const bool in_menu = BbOverlay::CapturesInput() || text_active || BbMenuPointer::InMenu();
+    const bool in_menu = BbOverlay::CapturesInput() || text_active || BbMenuPointer::InMenu() || mouse_user_released;
     const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     // In a game menu (pointer_shown) it also goes after 1.5 s without moving, so that the tail of a
     // closing menu does not leave it hanging over the game; any motion brings it back.
