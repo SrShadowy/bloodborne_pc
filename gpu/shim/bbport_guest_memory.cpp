@@ -719,12 +719,15 @@ bool Usable(const Vulkan::Instance& instance) {
         }
         if (host_first) {
             std::printf("Guest memory: host memory import does not work here: %s\n", why);
-            if (force_host) {
-                return false;
-            }
         }
         mode = Mode::DmaBuf;
-        return DmaBufWorks(instance);
+        if (DmaBufWorks(instance)) {
+            if (force_host) {
+                std::printf("Guest memory: fell back to dma-buf\n");
+            }
+            return true;
+        }
+        return false;
     }();
     return usable;
 }

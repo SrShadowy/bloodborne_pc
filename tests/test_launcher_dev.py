@@ -24,11 +24,21 @@ from bbport_ui_helpers import combo_value  # noqa: E402
 class MockRunner(GameRunnerMixin):
     def __init__(self, log_level="verbose"):
         self.settings = {"log_level": log_level}
+        self.ini = {}
         self._startup_done = False
         self.logged = []
 
     def append_log(self, text):
         self.logged.append(text)
+
+    def on_graphics_preset_selected(self, *args, **kwargs):
+        pass
+
+    def _on_dev_dynamic_shadows_changed(self, *args, **kwargs):
+        pass
+
+    def _on_dev_preset_scale_changed(self, *args, **kwargs):
+        pass
 
 
 class LauncherDevTests(unittest.TestCase):

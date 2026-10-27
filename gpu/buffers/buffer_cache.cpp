@@ -1128,6 +1128,9 @@ void PrintBufferStats() {
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 size,
                                                         bool is_written, bool is_texel_buffer) {
+    if (size == 0) {
+        return {&stream_buffer, 0};
+    }
     BB_SECTION(ObtainBuffer);
     const bool stats = BufferStatsEnabled();
     if (stats) {
@@ -1195,6 +1198,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         const u64 first_block = device_addr >> block_shift;
         const u64 last_block = (device_addr + size - 1) >> block_shift;
         const auto* arena = GetArena(first_block, last_block);
+        if (!arena) {
+            return {&stream_buffer, 0};
+        }
         // GPU-written buffers: in place with write tracking (CPU reads of them stay coherent, as
         // before). Without it the GPU is a writer we hear of, like the loaders: VRAM wherever whole
         // blocks are known data, as a default heap. The CPU does not read what the GPU wrote there
@@ -1280,6 +1286,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     const u64 first_block = device_addr >> block_shift;
     const u64 last_block = (device_addr + size - 1) >> block_shift;
     const auto* arena = GetArena(first_block, last_block);
+    if (!arena) {
+        return {&stream_buffer, 0};
+    }
     EnsureResident(arena, first_block, last_block);
     BB_SECTION(ObtainVram);
     if (!is_written) {
@@ -1359,6 +1368,9 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
 }
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_addr, u32 size) {
+    if (size == 0) {
+        return {&stream_buffer, 0};
+    }
     // bbport BB_GUEST_IN_PLACE: texture data is read by the GPU from the game's memory itself:
     // through the arena where it is bound in place, else (BB_CHUNK_TEXTURES) from its guest
     // memory chunk.
@@ -1379,6 +1391,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
         }
         if (IsInPlace(device_addr, size)) {
             const auto* arena = GetArena(first_block, last_block);
+            if (!arena) {
+                return {&stream_buffer, 0};
+            }
             TraceBinding(device_addr, size, false, 5);
             return {arena, arena->Offset(device_addr)};
         }
@@ -1408,6 +1423,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
         }
         if (resident) {
             const auto* arena = GetArena(first_block, last_block);
+            if (!arena) {
+                return {&stream_buffer, 0};
+            }
             EnsureResident(arena, first_block, last_block);
             SynchronizeMemory(arena, device_addr, size, false, false);
             TraceBinding(device_addr, size, false, 8);
@@ -1496,10 +1514,20 @@ void BufferCache::SynchronizeDmaBuffers() {
 }
 
 const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
+    if (first_block > last_block) {
+        return nullptr;
+    }
     // Arenas cover whole 4 GiB pages of the address space; a binding lies in at most two pages.
     const u64 first_page = first_block >> blocks_per_arena_page_shift;
     const u64 last_page = last_block >> blocks_per_arena_page_shift;
-    ASSERT_MSG(last_page - first_page <= 1, "a binding over more than two arena pages");
+    if (first_page >= NUM_ARENA_PAGES || last_page >= NUM_ARENA_PAGES) {
+        LOG_ERROR(Render, "GetArena page out of bounds: first={} last={} (max={})", first_page, last_page, NUM_ARENA_PAGES);
+        return nullptr;
+    }
+    if (last_page - first_page > 1) {
+        LOG_ERROR(Render, "GetArena spanning more than two arena pages: first={} last={}", first_page, last_page);
+        return nullptr;
+    }
     const Buffer* first = address_space[first_page];
     const Buffer* last = address_space[last_page];
     if (first == last) {
@@ -1536,7 +1564,9 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
     });
     const auto assign = [&](u64 page, u64 bytes) {
         for (u64 i = 0; i < (bytes >> ARENA_PAGE_BITS); ++i) {
-            address_space[page + i] = merged;
+            if (page + i < NUM_ARENA_PAGES) {
+                address_space[page + i] = merged;
+            }
         }
     };
     assign(base >> ARENA_PAGE_BITS, first_size);
@@ -1546,6 +1576,9 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
 
 void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_block,
                                  bool in_place) {
+    if (!arena) {
+        return;
+    }
     BB_SECTION(EnsureResident);
     NoteUse(first_block << block_shift, (last_block - first_block + 1) << block_shift);
     if (maintained_epoch != packet_epoch) {
@@ -3851,6 +3884,9 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
         buffer_binds.reserve(binds->size());
         u64 ranges = 0;
         for (const auto& arena_binds : *binds) {
+            if (arena_binds.binds.empty()) {
+                continue;
+            }
             ranges += arena_binds.binds.size();
             buffer_binds.emplace_back(vk::SparseBufferMemoryBindInfo{
                 .buffer = arena_binds.arena->Handle(),
@@ -3869,7 +3905,7 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
             .waitSemaphoreCount = wait_tick ? 1u : 0u,
             .pWaitSemaphores = wait_tick ? &wait_sema : nullptr,
             .bufferBindCount = static_cast<u32>(buffer_binds.size()),
-            .pBufferBinds = buffer_binds.data(),
+            .pBufferBinds = buffer_binds.empty() ? nullptr : buffer_binds.data(),
             .signalSemaphoreCount = 1u,
             .pSignalSemaphores = &signal_sema,
         };

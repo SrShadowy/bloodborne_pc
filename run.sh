@@ -185,9 +185,8 @@ if [[ ${BB_MEMORY_PRESET} == "apu" ]]; then
     export BB_VRAM_LIMIT_MB=${BB_VRAM_LIMIT_MB:-2048}
     export BB_GC_BUDGET_MB=${BB_GC_BUDGET_MB:-2048}
     export BB_AUTO_MIP_CLAMP=${BB_AUTO_MIP_CLAMP:-1}
-    # Zero-Copy Direct Memory Import (VK_EXT_external_memory_host):
+    # Zero-Copy Direct Memory:
     export BB_GUEST_GPU_MEMORY=${BB_GUEST_GPU_MEMORY:-1}
-    export BB_GUEST_MEMORY=${BB_GUEST_MEMORY:-host}
     export BB_CHUNK_UPLOADS=${BB_CHUNK_UPLOADS:-1}
     export BB_CHUNK_TEXTURES=${BB_CHUNK_TEXTURES:-1}
     # Graphics optimizations for ~30 FPS on integrated APUs (Radeon 610M / 2 CUs):

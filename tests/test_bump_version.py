@@ -15,7 +15,7 @@ class TestBumpVersion(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
         (self.root / "VERSION").write_text("0.6.6-8\n", encoding="utf-8")
-        (self.root / ".build_date").write_text("2026-10-26\n", encoding="utf-8")
+        (self.root / ".build_date").write_text(f"{datetime.date.today().isoformat()}\n", encoding="utf-8")
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -28,15 +28,14 @@ class TestBumpVersion(unittest.TestCase):
         self.assertEqual(bump_version.parse_version("1.0.0-0"), ("1.0", 0, 0))
 
     def test_increment_same_day(self):
-        # Today is 2026-10-26, same as .build_date
-        today = datetime.date(2026, 10, 26)
+        today = datetime.date.today()
         next_ver, cur_ver = bump_version.bump(root_dir=self.root, target_date=today, verbose=False)
         self.assertEqual(cur_ver, "0.6.6-8")
         self.assertEqual(next_ver, "0.6.6-9")
 
         # Verify files were updated
         self.assertEqual((self.root / "VERSION").read_text(encoding="utf-8").strip(), "0.6.6-9")
-        self.assertEqual((self.root / ".build_date").read_text(encoding="utf-8").strip(), "2026-10-26")
+        self.assertEqual((self.root / ".build_date").read_text(encoding="utf-8").strip(), today.isoformat())
 
         # Run another build on the same day -> 0.6.6-10
         next_ver, _ = bump_version.bump(root_dir=self.root, target_date=today, verbose=False)
@@ -44,8 +43,7 @@ class TestBumpVersion(unittest.TestCase):
         self.assertEqual((self.root / "VERSION").read_text(encoding="utf-8").strip(), "0.6.6-10")
 
     def test_increment_next_day(self):
-        # Tomorrow is 2026-10-27
-        tomorrow = datetime.date(2026, 10, 27)
+        tomorrow = datetime.date.today() + datetime.timedelta(days=1)
         next_ver, cur_ver = bump_version.bump(root_dir=self.root, target_date=tomorrow, verbose=False)
         self.assertEqual(cur_ver, "0.6.6-8")
         # Day resets build counter to 0 and increments day from 6 to 7
@@ -53,7 +51,7 @@ class TestBumpVersion(unittest.TestCase):
 
         # Verify files
         self.assertEqual((self.root / "VERSION").read_text(encoding="utf-8").strip(), "0.6.7-0")
-        self.assertEqual((self.root / ".build_date").read_text(encoding="utf-8").strip(), "2026-10-27")
+        self.assertEqual((self.root / ".build_date").read_text(encoding="utf-8").strip(), tomorrow.isoformat())
 
         # Second build on the new day -> 0.6.7-1
         next_ver, _ = bump_version.bump(root_dir=self.root, target_date=tomorrow, verbose=False)
@@ -61,7 +59,7 @@ class TestBumpVersion(unittest.TestCase):
         self.assertEqual((self.root / "VERSION").read_text(encoding="utf-8").strip(), "0.6.7-1")
 
     def test_dry_run_does_not_modify_files(self):
-        today = datetime.date(2026, 10, 26)
+        today = datetime.date.today()
         next_ver, cur_ver = bump_version.bump(root_dir=self.root, dry_run=True, target_date=today, verbose=False)
         self.assertEqual(cur_ver, "0.6.6-8")
         self.assertEqual(next_ver, "0.6.6-9")
@@ -69,7 +67,7 @@ class TestBumpVersion(unittest.TestCase):
 
     def test_missing_build_date_fallback(self):
         (self.root / ".build_date").unlink()
-        today = datetime.date(2026, 10, 26)
+        today = datetime.date.today()
         # Should gracefully detect or default to today without throwing
         next_ver, _ = bump_version.bump(root_dir=self.root, target_date=today, verbose=False)
         self.assertTrue(next_ver.startswith("0.6."))
