@@ -133,6 +133,8 @@ struct Image {
     u8 prompt_icon = 0;       ///< one of the game's key guide icons (BbPrompts::IconOf + 1)
     u8 prompt_atlas = 0;      ///< one of the HUD's icon atlases (BbPrompts::AtlasOf + 1)
     u32 prompt_upload = 0;    ///< the upload that gave it its bytes (ButtonPrompts::Atlas)
+    bool is_player = false;   ///< [extra] belongs to player/hunter model or equipment
+    bool is_ui = false;       ///< [extra] belongs to UI / HUD / text
     /// Its memory may hold one of the key guide icons (32x32, one level, block-compressed): the
     /// bytes are checked at each bind until they are one (a copy the GPU made is never uploaded).
     bool MaybePromptIcon() const {

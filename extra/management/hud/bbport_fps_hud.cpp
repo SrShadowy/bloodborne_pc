@@ -151,12 +151,32 @@ void Render(const Stats& stats) {
 
         if (s.fps_hud_show_vram.load()) {
             char vram_buf[64] = {};
-            if (metrics.vram_bytes >= (1024ULL * 1024 * 1024)) {
+            const uint64_t proj_vram = metrics.vram_bytes;
+            const uint64_t sys_vram = metrics.vram_sys_bytes;
+
+            if (proj_vram >= (1024ULL * 1024 * 1024)) {
+                if (sys_vram > proj_vram) {
+                    std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB (Tot: %.2f)",
+                                  double(proj_vram) / (1024.0 * 1024.0 * 1024.0),
+                                  double(sys_vram) / (1024.0 * 1024.0 * 1024.0));
+                } else {
+                    std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB",
+                                  double(proj_vram) / (1024.0 * 1024.0 * 1024.0));
+                }
+            } else if (proj_vram > 0) {
+                if (sys_vram > proj_vram) {
+                    std::snprintf(vram_buf, sizeof(vram_buf), "%llu MB (Tot: %.2f GB)",
+                                  static_cast<unsigned long long>(proj_vram >> 20),
+                                  double(sys_vram) / (1024.0 * 1024.0 * 1024.0));
+                } else {
+                    std::snprintf(vram_buf, sizeof(vram_buf), "%llu MB",
+                                  static_cast<unsigned long long>(proj_vram >> 20));
+                }
+            } else if (sys_vram > 0) {
                 std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB",
-                              double(metrics.vram_bytes) / (1024.0 * 1024.0 * 1024.0));
+                              double(sys_vram) / (1024.0 * 1024.0 * 1024.0));
             } else {
-                std::snprintf(vram_buf, sizeof(vram_buf), "%llu MB",
-                              static_cast<unsigned long long>(metrics.vram_bytes >> 20));
+                std::snprintf(vram_buf, sizeof(vram_buf), "0 MB");
             }
             entries.push_back(MetricEntry{"VRAM", IM_COL32(230, 130, 255, 255), vram_buf, false});
         }

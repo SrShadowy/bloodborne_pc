@@ -173,6 +173,46 @@ fi
 if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
     unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
 fi
+# MemoryDev (extra/memoryDev): Memory & VRAM Preset (high, medium, low, apu).
+if [[ -z ${BB_MEMORY_PRESET:-} && -f ~/.config/bbport-launcher/settings.json ]]; then
+    saved_mem=$("$PYTHON" -c "import json; print(json.load(open('$HOME/.config/bbport-launcher/settings.json')).get('memory_preset', ''))" 2>/dev/null || true)
+    [[ -n $saved_mem ]] && BB_MEMORY_PRESET=$saved_mem
+fi
+export BB_MEMORY_PRESET=${BB_MEMORY_PRESET:-high}
+if [[ ${BB_MEMORY_PRESET} == "apu" ]]; then
+    export BB_GC_IDLE_SECONDS=${BB_GC_IDLE_SECONDS:-4}
+    export BB_GC_PRESSURE_IDLE_SECONDS=${BB_GC_PRESSURE_IDLE_SECONDS:-2}
+    export BB_VRAM_LIMIT_MB=${BB_VRAM_LIMIT_MB:-2048}
+    export BB_GC_BUDGET_MB=${BB_GC_BUDGET_MB:-2048}
+    export BB_AUTO_MIP_CLAMP=${BB_AUTO_MIP_CLAMP:-1}
+    # Graphics optimizations for ~30 FPS on integrated APUs (Radeon 610M / 2 CUs):
+    export BB_FRAME_GEN=${BB_FRAME_GEN:-0}
+    export BB_FPS=${BB_FPS:-30}
+    export BB_FPS_LIMIT=${BB_FPS_LIMIT:-30}
+    export BB_UPSCALE_PRESET=${BB_UPSCALE_PRESET:-3} # Performance (540p scene resolution)
+    export BB_MODEL_LOD=${BB_MODEL_LOD:-2}
+    export BB_SHADOW_DISTANCE=${BB_SHADOW_DISTANCE:-0.4}
+    export BB_LIGHT_GRID_OPT=${BB_LIGHT_GRID_OPT:-1}
+    export BB_EFFECT_SSR=${BB_EFFECT_SSR:-0}
+    export BB_EFFECT_SSAO=${BB_EFFECT_SSAO:-0}
+    export BB_EFFECT_DOF=${BB_EFFECT_DOF:-0}
+    export BB_EFFECT_MOTION_BLUR=${BB_EFFECT_MOTION_BLUR:-0}
+    export BB_EFFECT_BLOOM=${BB_EFFECT_BLOOM:-0}
+    echo "MemoryDev: APU 2GB Preset active (APU / Radeon 610M target: 2048 MB VRAM limit, Auto Mip-Clamp, 540p, 30 FPS target)"
+elif [[ ${BB_MEMORY_PRESET} == "low" ]]; then
+    export BB_GC_IDLE_SECONDS=${BB_GC_IDLE_SECONDS:-4}
+    export BB_GC_PRESSURE_IDLE_SECONDS=${BB_GC_PRESSURE_IDLE_SECONDS:-2}
+    export BB_GC_BUDGET_MB=${BB_GC_BUDGET_MB:-3200}
+    export BB_AUTO_MIP_CLAMP=${BB_AUTO_MIP_CLAMP:-1}
+    echo "MemoryDev: Low Preset active (4 GB VRAM target: aggressive RAM swap & GC)"
+elif [[ ${BB_MEMORY_PRESET} == "medium" ]]; then
+    export BB_GC_IDLE_SECONDS=${BB_GC_IDLE_SECONDS:-10}
+    export BB_GC_PRESSURE_IDLE_SECONDS=${BB_GC_PRESSURE_IDLE_SECONDS:-3}
+    export BB_GC_BUDGET_MB=${BB_GC_BUDGET_MB:-5000}
+    echo "MemoryDev: Medium Preset active (6 GB VRAM target: balanced RAM swap & GC)"
+else
+    echo "MemoryDev: High Preset active (8+ GB VRAM target: maximum quality)"
+fi
 # BB_RENDER_RES=WxH explicitly sets the game's render resolution (a patch at start).
 # Frame rate: BB_FPS=uncap (default; hooks in the game's code, gpu/shim/bbport_frame_rate.cpp:
 # each frame's real time; vblank 480 Hz, frames shown at once; BB_FRAME_HOOKS=0: the patches),

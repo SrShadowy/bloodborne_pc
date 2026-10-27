@@ -8,6 +8,7 @@
 #include "textures/image.h"
 #include "render/gcn_to_vk.h"
 #include "vulkan/instance.h"
+#include "bbport_memory_dev.h" // [extra]
 
 namespace VideoCore {
 
@@ -129,6 +130,29 @@ ImageView::ImageView(const Vulkan::Instance& instance, const ImageViewInfo& info
         LOG_ERROR(Render_Vulkan, "image view type {} does not fit image type {}", u64(info.type),
                   u64(image.info.type));
     }
+
+    u32 base_mip = info.range.base.level;
+    u32 level_count = info.range.extent.levels;
+
+    // [extra] Auto Mip-Clamp: skip mip 0 for heavy world textures, exempt UI and Player
+    const bool is_ui_tex = image.is_ui || image.prompt_icon != 0 || image.prompt_atlas != 0 ||
+                           !image.info.props.is_block || level_count <= 1 ||
+                           (image.info.size.width <= 128 && image.info.size.height <= 128);
+    const bool is_player_tex = image.is_player || BbMemoryDev::IsPlayerMemory(image.info.guest_address);
+    const bool is_target_tex = image.usage.render_target || image.usage.depth_target ||
+                               image.usage.vo_surface;
+
+    if (BbMemoryDev::ShouldClampTexture(level_count, image.info.props.is_block,
+                                        image.info.size.width, image.info.size.height,
+                                        is_ui_tex, is_player_tex, is_target_tex,
+                                        info.is_storage, image.info.props.is_depth)) {
+        if (base_mip == 0 && level_count > 1) {
+            base_mip = 1;
+            level_count -= 1;
+            BbMemoryDev::RecordClampedTexture();
+        }
+    }
+
     const vk::ImageViewCreateInfo create_info = {
         .pNext = &usage,
         .image = image.GetImage(),
@@ -137,8 +161,8 @@ ImageView::ImageView(const Vulkan::Instance& instance, const ImageViewInfo& info
         .components = info.mapping,
         .subresourceRange{
             .aspectMask = aspect,
-            .baseMipLevel = info.range.base.level,
-            .levelCount = info.range.extent.levels,
+            .baseMipLevel = base_mip,
+            .levelCount = level_count,
             .baseArrayLayer = info.range.base.layer,
             .layerCount = info.range.extent.layers,
         },

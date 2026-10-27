@@ -14,6 +14,7 @@
 #include "vulkan/instance.h"
 #include "render/runtime.h"
 #include "render/scheduler.h"
+#include "bbport_memory_dev.h" // [extra]
 
 namespace VideoCore {
 
@@ -48,6 +49,17 @@ void TextureCache::UpdateMemoryBudget() {
         return;
     }
     const s64 local = s64(instance.GetTotalMemoryBudget());
+    // [extra] memoryDev VRAM budget & swap to RAM:
+    const u64 dev_limit = BbMemoryDev::GetVramLimitBytes() != 0
+                              ? BbMemoryDev::GetVramLimitBytes()
+                              : (BbMemoryDev::IsLow() ? (2048ULL << 20) : 0);
+    if (dev_limit > 0 || instance.IsIntegrated()) {
+        const u64 budget = dev_limit > 0 ? dev_limit : u64(local);
+        trigger_gc_memory = budget / 2;             // ~1000 MB on 2GB limit (half of VRAM)
+        pressure_gc_memory = budget * 65 / 100;     // ~1300 MB on 2GB limit
+        critical_gc_memory = budget * 80 / 100;     // ~1600 MB on 2GB limit (critical clamp)
+        return;
+    }
     const s64 threshold = std::min<s64>(local, TargetThreshold);
     // Pressure: 60 % of the threshold free, but on cards under 16 GB 30 % of the budget (at least
     // 2 GB): 60 % of an 8 GB card's budget had the collector evicting hundreds of images every
@@ -155,14 +167,19 @@ void TextureCache::GarbageCollectImages() {
         total_used_memory = instance.GetDeviceMemoryUsage();
         // Integrated GPUs (Steam Deck): the usage covers system memory heaps holding much more
         // than images, over the startup budget: the marks follow the driver's current budget.
-        // BB_GC_BUDGET_MB=N: so on any GPU with a fixed budget (tests).
-        static const u64 forced_budget = EnvU64("BB_GC_BUDGET_MB", 0) << 20;
-        if (instance.IsIntegrated() || forced_budget) {
+        // BB_GC_BUDGET_MB=N or BbMemoryDev::GetGcBudgetBytes(): so on any GPU with a fixed budget (tests or low-end presets).
+        const u64 dev_limit = BbMemoryDev::GetVramLimitBytes();
+        const u64 forced_budget = dev_limit != 0
+                                      ? dev_limit
+                                      : (BbMemoryDev::GetGcBudgetBytes() != 0
+                                             ? BbMemoryDev::GetGcBudgetBytes()
+                                             : (EnvU64("BB_GC_BUDGET_MB", 0) << 20));
+        if (instance.IsIntegrated() || forced_budget || BbMemoryDev::IsLow()) {
             const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
             if (budget != 0) {
-                trigger_gc_memory = budget / 10 * 7;
-                pressure_gc_memory = budget / 100 * 85;
-                critical_gc_memory = budget / 100 * 95;
+                trigger_gc_memory = budget / 2;         // ~1000MB on 2GB limit (half of VRAM)
+                pressure_gc_memory = budget * 65 / 100; // ~1300MB
+                critical_gc_memory = budget * 80 / 100; // ~1600MB
             }
         }
     }
@@ -194,9 +211,9 @@ void TextureCache::GarbageCollectImages() {
     // the critical mark after 1 s, and only then by submissions (80/160 ticks): textures off
     // screen for a moment were evicted and uploaded again when the camera turned back, and the
     // frame rate fell the longer one played.
-    static const u64 idle_seconds = std::clamp<u64>(EnvU64("BB_GC_IDLE_SECONDS", 20), 1, 63);
+    static const u64 idle_seconds = std::clamp<u64>(BbMemoryDev::GetGcIdleSeconds(), 1, 63);
     static const u64 pressure_idle_seconds =
-        std::clamp<u64>(EnvU64("BB_GC_PRESSURE_IDLE_SECONDS", 5), 0, 63);
+        std::clamp<u64>(BbMemoryDev::GetGcPressureIdleSeconds(), 0, 63);
     const auto tick_seconds_ago = [&](u64 seconds) {
         return gc_tick_at_second[(second - seconds) % gc_tick_at_second.size()];
     };
@@ -246,6 +263,7 @@ void TextureCache::GarbageCollectImages() {
         ++gc_evictions;
         BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
         FreeImage(image_id);
+        BbMemoryDev::RecordEviction(image.info.guest_size);
         if (total_used_memory < critical_gc_memory) {
             if (aggressive) {
                 deletions >>= 2;

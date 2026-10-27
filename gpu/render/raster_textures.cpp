@@ -425,6 +425,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             barrier |= TransitSampled(image, desc, binding, is_storage);
             image.usage.storage |= is_storage;
             image.usage.texture |= !is_storage;
+            if (upscaler->InUiPhase()) {
+                image.is_ui = true; // [extra] Exempt UI textures from mip clamping
+            }
             if (FrameCapture::Active()) {
                 FrameCapture::Sampled(image.info, is_storage);
             }

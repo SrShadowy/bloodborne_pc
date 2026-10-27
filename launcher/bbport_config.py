@@ -207,6 +207,13 @@ PREUPLOAD = [("Обычная", "", "Без лишней видеопамяти"
 
 VK_RECORD_THREADS = [("Авто", "auto"), ("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5")]
 
+MEMORY_PRESETS = [
+    ("Высокая (8+ ГБ / Рекомендуемая)", "high", "Для видеокарт с 8 ГБ VRAM и выше: максимальное качество"),
+    ("Средняя (6 ГБ / Сбалансированная)", "medium", "Для видеокарт с 6 ГБ VRAM: умеренное освобождение VRAM в RAM (GC 10с)"),
+    ("Низкая (4 ГБ / Для слабых ПК)", "low", "Агрессивный сброс в RAM, GC 4с, для видеокарт с 4 ГБ VRAM"),
+    ("APU / 2 ГБ (Встроенная графика / 30 FPS)", "apu", "Лимит 2 ГБ, Auto Mip-Clamp, выгрузка в RAM, для APU (Radeon 610M)"),
+]
+
 LOG_LEVELS = [
     ("Минимальный (запуск и сбои)", "minimal"),
     ("Только ошибки", "error"),
@@ -242,6 +249,7 @@ DEFAULTS = {
     "save_log": False,
     "crash_diag": False,
     "memory_model": "auto",
+    "memory_preset": "high",
     "as_0_3": False,
     "gpu_profile": False,
     "vk_validation": False,
@@ -536,6 +544,27 @@ def game_environment(s):
     model = s.get("memory_model", "auto")
     if model in ("new", "old"):
         env["BB_PC_MODEL"] = "1" if model == "new" else "0"
+    mem_preset = s.get("memory_preset", "high")
+    if mem_preset in ("low", "medium", "high", "apu"):
+        env["BB_MEMORY_PRESET"] = mem_preset
+        if mem_preset == "apu":
+            env["BB_VRAM_LIMIT_MB"] = "2048"
+            env["BB_AUTO_MIP_CLAMP"] = "1"
+            env.setdefault("BB_FRAME_GEN", "0")
+            env.setdefault("BB_FPS_LIMIT", "30")
+            env.setdefault("BB_FPS", "30")
+            env.setdefault("BB_UPSCALE_PRESET", "3")
+            env.setdefault("BB_MODEL_LOD", "2")
+            env.setdefault("BB_SHADOW_DISTANCE", "0.4")
+            env.setdefault("BB_LIGHT_GRID_OPT", "1")
+            env.setdefault("BB_EFFECT_SSR", "0")
+            env.setdefault("BB_EFFECT_SSAO", "0")
+            env.setdefault("BB_EFFECT_DOF", "0")
+            env.setdefault("BB_EFFECT_MOTION_BLUR", "0")
+            env.setdefault("BB_EFFECT_BLOOM", "0")
+        elif mem_preset == "low":
+            if "BB_AUTO_MIP_CLAMP" not in env:
+                env["BB_AUTO_MIP_CLAMP"] = "1"
     # The GPU chosen by name: its index in Vulkan's order now (BB_GPU_ID). One not found (taken
     # out, renamed by a driver update) leaves the choice to the port. BB_GPU_ID from the shell
     # wins.
@@ -606,4 +635,9 @@ def game_environment(s):
         if "=" in item:
             key, value = item.split("=", 1)
             env[key] = value
+            k_lower = key.lower()
+            if k_lower in ("bb_vram_limit", "bb_vram_limited", "vram_limit", "vram_limited"):
+                env["BB_VRAM_LIMIT"] = value
+            elif k_lower in ("bb_auto_mip_clamp", "auto_mip_clamp"):
+                env["BB_AUTO_MIP_CLAMP"] = value
     return env

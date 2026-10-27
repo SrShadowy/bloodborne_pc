@@ -37,13 +37,14 @@ _Static_assert(sizeof(GuestStat)==120,"FreeBSD stat layout");
 typedef struct { char *names; size_t count, *offsets; unsigned char *types; } Listing;
 /* commit: a save file opened for writing is written to a temporary copy (temp), which replaces
  * the file (commit) in one rename when closed: a crash or a kill mid-save leaves the old file. */
-typedef struct { int used, host, dirty; Listing *dir; size_t position; char path[512]; char *commit, *temp; } File;
+typedef struct { int used, host, dirty, is_player; Listing *dir; size_t position; char path[512]; char *commit, *temp; } File;
 typedef struct { char guest[64]; char host[512]; } Mount;
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
 static size_t mount_count, opens, reads, writes, missing;
 static uint64_t bytes_read;
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+__attribute__((weak)) void extra_memory_dev_register_player(uintptr_t start, uint64_t size); // [extra]
 
 static int save_path(const char *p) { return p && !strncmp(p,"/savedata",9); }
 static int temp_name(const char *name) {
@@ -490,7 +491,8 @@ static int64_t do_open(const char *guest,int flags,int mode) {
         if (temp) unlink(temp);
         free(commit); free(temp); return -EMFILE;
     }
-    files[fd]=(File){.used=1,.host=host,.dir=dir,.commit=commit,.temp=temp};
+    int is_player_file = (strstr(guest, "chr/c0000") || strstr(guest, "parts/")) ? 1 : 0;
+    files[fd]=(File){.used=1,.host=host,.dir=dir,.commit=commit,.temp=temp,.is_player=is_player_file};
     snprintf(files[fd].path,sizeof(files[fd].path),"%s",guest);
     ++opens;
     pthread_mutex_unlock(&lock);
@@ -564,22 +566,30 @@ static ssize_t read_retrying(int h,void *buffer,uint64_t size,int64_t offset,int
 static int64_t do_read(int fd,void *buffer,uint64_t size) {
     int h=host_fd(fd);
     if (h<0) return -EBADF;
+    File *f=get(fd);
     runtime_memory_note_write((uintptr_t)buffer,size);
     touch_for_write(buffer,size);
     ssize_t n=read_retrying(h,buffer,size,0,0);
     if (n<0) { if (audio_trace()) printf("Audio trace: read(fd %d, %llu) failed, errno %d\n",fd,(unsigned long long)size,errno); return -errno; }
-    if (n>0) runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
+    if (n>0) {
+        runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
+        if (f && f->is_player && extra_memory_dev_register_player) extra_memory_dev_register_player((uintptr_t)buffer,(uint64_t)n);
+    }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }
 static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     int h=host_fd(fd);
     if (h<0) return -EBADF;
+    File *f=get(fd);
     runtime_memory_note_write((uintptr_t)buffer,size);
     touch_for_write(buffer,size);
     ssize_t n=read_retrying(h,buffer,size,offset,1);
     if (n<0) { if (audio_trace()) printf("Audio trace: pread(fd %d, %llu @%lld) failed, errno %d\n",fd,(unsigned long long)size,(long long)offset,errno); return -errno; }
-    if (n>0) runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
+    if (n>0) {
+        runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
+        if (f && f->is_player && extra_memory_dev_register_player) extra_memory_dev_register_player((uintptr_t)buffer,(uint64_t)n);
+    }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }

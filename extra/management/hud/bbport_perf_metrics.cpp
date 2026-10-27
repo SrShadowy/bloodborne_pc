@@ -4,10 +4,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
+#include <vector>
 
 #include "bbport_toggles.h"
 
@@ -54,10 +57,42 @@ void SampleMetrics() {
         s_cached_snapshot.ram_rss_bytes = uint64_t(usage.ru_maxrss) * 1024ULL;
     }
 
-    // 3. Process VRAM from internal Vulkan atomic memory trackers (0 ns, in-process memory)
-    const uint64_t alloc = BbStats::device_alloc_bytes.load(std::memory_order_relaxed);
-    const uint64_t freed = BbStats::device_free_bytes.load(std::memory_order_relaxed);
-    s_cached_snapshot.vram_bytes = (alloc > freed) ? (alloc - freed) : 0;
+    // 3. Process VRAM (project/game memory):
+    // On Linux, inspect /proc/self/fdinfo to read exact DRM client VRAM allocations.
+    uint64_t proc_vram_bytes = 0;
+#ifdef __linux__
+    if (DIR* dir = opendir("/proc/self/fdinfo")) {
+        std::vector<uint64_t> clients;
+        while (const dirent* entry = readdir(dir)) {
+            char path[64];
+            std::snprintf(path, sizeof(path), "/proc/self/fdinfo/%s", entry->d_name);
+            FILE* f = std::fopen(path, "r");
+            if (!f) continue;
+            char line[128];
+            bool drm = false;
+            unsigned long long client = 0, vram_kib = 0;
+            while (std::fgets(line, sizeof(line), f)) {
+                drm |= (std::strncmp(line, "drm-driver:", 11) == 0);
+                std::sscanf(line, "drm-client-id: %llu", &client);
+                if (std::sscanf(line, "drm-memory-vram: %llu", &vram_kib) == 1 && vram_kib > 0) {}
+                else if (std::sscanf(line, "drm-total-vram: %llu", &vram_kib) == 1 && vram_kib > 0) {}
+            }
+            std::fclose(f);
+            if (drm && vram_kib > 0 && std::find(clients.begin(), clients.end(), client) == clients.end()) {
+                clients.push_back(client);
+                proc_vram_bytes += (uint64_t(vram_kib) * 1024ULL);
+            }
+        }
+        closedir(dir);
+    }
+#endif
+    // Fallback: internal Vulkan atomic memory trackers (in-process allocated memory)
+    if (proc_vram_bytes == 0) {
+        const uint64_t alloc = BbStats::device_alloc_bytes.load(std::memory_order_relaxed);
+        const uint64_t freed = BbStats::device_free_bytes.load(std::memory_order_relaxed);
+        proc_vram_bytes = (alloc > freed) ? (alloc - freed) : 0;
+    }
+    s_cached_snapshot.vram_bytes = proc_vram_bytes;
 
     // 4. GPU Usage: probe all available DRM cards and track the active/dedicated GPU
     static int s_gpu_fds[4] = {-1, -1, -1, -1};
@@ -106,9 +141,6 @@ void SampleMetrics() {
 
     if (max_busy >= 0.0f) {
         s_cached_snapshot.gpu_percent = max_busy;
-        if (vram_used_sysfs > 0) {
-            s_cached_snapshot.vram_bytes = vram_used_sysfs;
-        }
     } else {
         // Fallback: estimate from Vulkan Presenter wait and thread state
         const uint64_t wait_ns = BbStats::present_wait_ns.load(std::memory_order_relaxed);
@@ -116,6 +148,7 @@ void SampleMetrics() {
             s_cached_snapshot.gpu_percent = std::clamp(float(wait_ns / 1000000ULL), 0.0f, 100.0f);
         }
     }
+    s_cached_snapshot.vram_sys_bytes = vram_used_sysfs;
 }
 
 } // namespace

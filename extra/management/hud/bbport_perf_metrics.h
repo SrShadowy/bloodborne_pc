@@ -10,7 +10,8 @@ struct MetricsSnapshot {
     float cpu_percent = 0.0f;     // Process CPU usage % (0-100%, normalized across cores)
     float gpu_percent = 0.0f;     // GPU load %
     uint64_t ram_rss_bytes = 0;   // Process resident RAM in bytes
-    uint64_t vram_bytes = 0;      // Process VRAM in bytes (from Vulkan device allocator)
+    uint64_t vram_bytes = 0;      // Process VRAM in bytes (game/project only)
+    uint64_t vram_sys_bytes = 0;  // System-wide GPU VRAM in bytes (whole device)
 };
 
 constexpr size_t kFrameHistoryCapacity = 240;

@@ -428,7 +428,11 @@ void Load() {
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
         {"BB_DRAW_PIPE", "draw_pipe"},              {"BB_FRAME_GEN", "frame_generation"},
-        {"BB_FPS_LIMIT", "fps_limit"},
+        {"BB_FPS_LIMIT", "fps_limit"},              {"BB_MODEL_LOD", "model_lod"},
+        {"BB_SHADOW_DISTANCE", "shadow_distance"},  {"BB_LIGHT_GRID_OPT", "light_grid_opt"},
+        {"BB_EFFECT_SSR", "effect_ssr"},            {"BB_EFFECT_SSAO", "effect_ssao"},
+        {"BB_EFFECT_DOF", "effect_dof"},            {"BB_EFFECT_MOTION_BLUR", "effect_motion_blur"},
+        {"BB_EFFECT_BLOOM", "effect_bloom"},        {"BB_EFFECT_DYNAMIC_SHADOWS", "effect_dynamic_shadows"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {

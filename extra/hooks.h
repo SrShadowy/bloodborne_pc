@@ -14,6 +14,7 @@
 #include "core/shader_precompile/bbport_shader_pack.h"
 #include "core/shader_precompile/bbport_vk_pipeline_cache.h"
 #include "ui/scaleform/bbport_title_menu.h"
+#include "memoryDev/bbport_memory_dev.h"
 
 #ifdef __cplusplus
 #include "vulkan/vk_common.h"

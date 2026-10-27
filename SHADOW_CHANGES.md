@@ -176,3 +176,64 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 
 ### 108. Automação de Versão Incremental (`x.x.d-b`) e Proteção de Versão do AppImage
 - **Formato Diário**: Script `scripts/bump_version.py` gerenciando versão Incremento coordenado em `build.sh` e `package.py` com prevenção de bump duplo via `BB_SKIP_VERSION_INC`.
+
+### 109. Gerenciamento Inteligente de VRAM e Módulo `extra/memoryDev`
+- **Módulo `extra/memoryDev`**: Criação de camada arquitetural isolada com suporte a predefinições de gerenciamento de memória e VRAM (Alta, Média, Baixa).
+- **Perfis de VRAM**:
+  - *Alta (Padrão)*: 100% fiel ao comportamento atual para placas com 12+ GB de VRAM.
+  - *Média (6–8 GB)*: Despejo moderado para RAM e ciclo de Garbage Collection de texturas balanceado (10s).
+  - *Baixa (4 GB / APU)*: Despejo agressivo de texturas inativas de volta para a RAM do sistema (GC em 5s), teto de VRAM em 3.2 GB e prioridade de retenção mínima para evitar crashes de out-of-device-memory.
+- **Integração no Launcher**: Seção dedicada na aba *Desenvolvimento* com persistência no `settings.json`, exportação de `BB_MEMORY_PRESET` e suporte trilíngue completo (PT-BR, EN, RU).
+- **Telemetria de VRAM do Jogo no HUD**: Correção da leitura de VRAM no overlay in-game para inspecionar `/proc/self/fdinfo` e os alocadores Vulkan nativos do processo. Exibição da VRAM exclusiva do jogo com o total da GPU entre parênteses (`VRAM: X.XX GB (Tot: Y.YY)`), eliminando confusão com a memória alocada por outros aplicativos do sistema operacional.
+
+### 110. Auto Mip-Clamp, VRAM Limit de 2GB e Otimizações de 30 FPS para APU
+- **Variável `bb_vram_limit`**: Suporte configurável via `bbport.ini` ou variáveis de ambiente `BB_VRAM_LIMIT` / `BB_VRAM_LIMIT_MB` com parsing flexível de sufixos (`2GB`, `2G`, `2048MB`, `2048`, `1536MB`).
+- **Ajuste Fino de Orçamento em `UpdateMemoryBudget()` e `GarbageCollectImages()`**:
+  - `trigger_gc_memory` travado em **~1000 MB** (`budget / 2` ou metade do limite definido), iniciando a reciclagem e descarte antecipado de texturas ociosas para a memória RAM.
+  - `pressure_gc_memory` em **~1300 MB** (`budget * 65 / 100`).
+  - `critical_gc_memory` travado em **~1600 MB** (`budget * 80 / 100`), impedindo estouros de memória em placas de 2 GB / 4 GB.
+- **Auto Mip-Clamp com Preservação de UI e Player**:
+  - Salto de Mip 0 (`baseMipLevel = 1`, `levelCount = levels - 1`) na criação da `ImageView` para texturas pesadas do mundo e cenário, reduzindo em ~75% o tráfego de leitura do barramento DDR5.
+  - **Preservação de UI**: Texturas de nível único (`levels <= 1`), ícones de botões (`prompt_icon`, `prompt_atlas`), formatos não-comprimidos (fontes, menus), render targets e chamadas durante a fase de UI (`InUiPhase()`) mantêm o Mip 0 nativo intacto.
+  - **Preservação do Player / Caçador**: Detecção em tempo de execução de arquivos `chr/c0000` (corpo do caçador) e `parts/` (armas, vestimentas) em `runtime_file.c`, bem como malhas vinculadas com buffers de ossos (`BufferRole::Skeleton`/`SmallSkeleton`). As texturas do caçador permanecem em resolução total.
+- **Perfil APU / 2GB no Launcher e run.sh**:
+  - Nova opção dedicada `"APU / 2 ГБ (Встроенная графика / 30 FPS)"` / `"APU / 2 GB (Gráficos Integrados / 30 FPS)"`.
+  - Configura automaticamente: `BB_VRAM_LIMIT_MB=2048`, `BB_AUTO_MIP_CLAMP=1`, reciclagem de GC em 4s/2s.
+
+### 111. Diagnóstico e Resolução do Gargalo de 11 FPS na APU Radeon 610M (2 CUs)
+- **Diagnóstico do Gargalo (Screenshot do Usuário)**:
+  - O uso de memória estava perfeito (**489 MB de VRAM** e **527 MB de RAM** com Auto Mip-Clamp ativo e Caçador/UI nítidos).
+  - A APU (AMD Radeon 610M / Raphael) possui apenas **2 Compute Units** (128 ALUs / shaders).
+  - O framerate caiu para 11 FPS porque os shaders estavam 100% sobrecarregados por:
+    1. **FSR 3.1 Frame Generation ativo (`frame_generation=1`)**: A interpolação e cálculo de optical flow gastavam mais de 20 ms de computação por quadro em apenas 2 CUs, cortando o framerate base pela metade.
+    2. **Screen-Space Reflections ativo (`effect_ssr=1` e patch no `Bloodborne.xml`)**: O raymarching de poças e superfícies molhadas em Yharnam não existia no jogo original de PS4 e destruía o desempenho da APU.
+    3. **Resolução de Renderização Interna em 720p (preset 1 - Quality)**: Shading de 921.600 pixels por quadro era excessivo para 2 CUs.
+    4. **Efeitos Pesados de Pós-Processamento**: SSAO, Depth of Field, Motion Blur, Bloom (escala 1.40), distância de sombras em 1.09 e LOD de modelos em 0 (nível máximo de polígonos distantes).
+- **Ações e Correções Implementadas**:
+  - **Desativação Total de Frame Generation na APU**: `frame_generation=0` (interpolação requer base alta e não deve rodar em iGPUs de 2 CUs).
+  - **Desativação de SSR e SSAO**: `effect_ssr=0` no ini, patch de SSR desativado em `Bloodborne.xml` e `effect_ssao=0`.
+  - **Preset FSR Performance (preset 3 - 540p interno)**: Redução de 44% no número de pixels renderizados (518.400 pixels), liberando os 128 shaders para alcançar 30 FPS estáveis com upscaling para 1080p.
+  - **Otimizações Geométricas e de Iluminação**: `model_lod=2` (menor malha distante), `shadow_distance=0.40` e `light_grid_opt=1` (redução de draw calls de grid de luz).
+  - **Trava de 30 FPS**: `fps_limit=30` e `BB_FPS=30` para consistência de frametime e ritmo de quadros.
+  - **Automação no Launcher e run.sh**: Quando `memory_preset=apu` é selecionado, `run.sh` e `bbport_config.py` exportam automaticamente essas configurações otimizadas.
+
+### 112. Predefinição Gráfica Interativa no Launcher (Estilo Jogos de PC)
+- **Grupo de Predefinição Gráfica e de Memória na Aba Gráficos**: Novo grupo de controle no topo da aba Gráficos do Launcher (sincronizado bidirecionalmente com a aba Desenvolvimento).
+- **Ajuste Visual dos Controles em Tempo Real**: Selecionar uma predefinição altera instantaneamente todas as opções visíveis na interface do Launcher:
+  - *Alta (8+ GB / Recomendada)*: FSR Quality (1), LOD Normal (0), SSAO/DoF/Blur/Bloom ativos, FPS sem limite (uncap / 0), Preupload padrão (sem sobrecarga de 3 GB extra para caber perfeitamente em 8 GB).
+  - *Média (6 GB / Equilibrada)*: FSR Balanced (2), LOD Normal (0), SSAO/DoF/Blur/Bloom ativos, trava em 60 FPS, Preupload padrão, liberação balanceada de VRAM (GC a 5000 MB).
+  - *Baixa*: FSR Performance (3), LOD Lower (1), efeitos pesados desligados, trava em 60 FPS, Preupload desligado (0).
+  - *APU / 2 GB*: FSR Performance 540p (3), Frame Generation desligado, LOD Mínimo (2), SSAO/DoF/Blur/Bloom/SSR desligados, trava em 30 FPS, Preupload 0 e render pipeline híbrido.
+- **Persistência Imediata**: Gravação sincronizada em `settings.json` e `bbport.ini` com banner toast de confirmação da predefinição aplicada.
+
+### 113. Controles de Ajustes de Desempenho para APU e GPUs Fracas na Aba Desenvolvimento
+- **Novo Grupo na Aba Desenvolvimento**: `"Ajustes de Desempenho para APU e GPUs de Entrada"` (`apu_tuning`).
+- **Controles Adicionados**:
+  1. **Sombras de Luzes Dinâmicas (`effect_dynamic_shadows`)**: Permite desligar passes pesados de sombra projetados por tochas e lanternas, economizando dezenas de draw calls (sincronizado com a aba Gráficos e com o patch em `Bloodborne.xml`).
+  2. **Distância das Sombras (`shadow_distance`)**: SpinRow com alcance de 0.25 a 3.00 (padrão 0.25 no perfil APU), reduzindo a área de cálculo de sombras ao redor do jogador.
+  3. **Opacidade da Névoa Volumétrica (`fog_opacity`)**: SpinRow com alcance de 0.00 a 2.00 (padrão 0.30 no perfil APU), diminuindo intensamente o custo do raymarching da névoa no ar.
+  4. **Otimização da Grade de Luzes (`light_grid_opt`)**: SwitchRow para particionamento eficiente do grid de iluminação.
+  5. **Escala de Resolução Interna Rápida (`preset`)**: Seletor rápido direto na aba Desenvolvimento permitindo alternar facilmente para Ultra Desempenho (360p / x3.0), Performance (540p / x2.0), Balanced, Quality e Native (sincronizado com o seletor da aba Gráficos).
+- **Traduções Globais**: Chaves adicionadas aos dicionários do `bbport_i18n.py` (PT-BR, PT, EN, ZH-CN).
+
+

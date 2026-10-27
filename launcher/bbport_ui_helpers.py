@@ -179,6 +179,12 @@ def combo_value(row):
     return row.values[0] if row.values else ""
 
 
+def set_combo_value(row, value):
+    """Sets the selected item in an Adw.ComboRow created with combo_row by value."""
+    if hasattr(row, "values") and value in row.values:
+        row.set_selected(row.values.index(value))
+
+
 class FolderList:
     """A preferences group with a folder row and dynamic switch rows below it."""
 

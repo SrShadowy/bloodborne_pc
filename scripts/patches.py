@@ -164,11 +164,13 @@ def effect_patches(settings, env=os.environ):
     names=[]
     hot=env.get('BB_HOT_EFFECTS','1')!='0'
     for key,(off,on) in EFFECTS.items():
-        if key not in settings: continue
+        val = env.get('BB_' + key.upper(), settings.get(key))
+        if val is None: continue
         if hot and key in HOT_EFFECTS: continue
-        name=on if settings[key]=='1' else off
+        name=on if val=='1' else off
         if name: names.append(name)
-    lod=MODEL_LOD.get(settings.get('model_lod','0'))
+    lod_val = env.get('BB_MODEL_LOD', settings.get('model_lod','0'))
+    lod=MODEL_LOD.get(lod_val)
     if lod: names.append(lod)
     return names
 SCENE_WIDTH=0x02196A6B-EBOOT_BASE
@@ -390,8 +392,13 @@ def main():
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
         return
+    settings=read_settings(a.settings)
+    if 'BB_UPSCALER' in os.environ:
+        settings['upscaler']='fsr3' if os.environ['BB_UPSCALER']=='fsr3' else 'off'
+    if 'BB_UPSCALE_PRESET' in os.environ:
+        settings['preset']=os.environ['BB_UPSCALE_PRESET']
     names=fps_patches(a.fps)+[n.strip() for n in a.extra.split(';') if n.strip()]
-    names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
+    names+=[n for n in effect_patches(settings) if n not in names]
     if intel_tonemap_fix() and INTEL_TONEMAP not in names:
         names.append(INTEL_TONEMAP)
     if skip_network_choice() and SKIP_NETWORK_CHOICE not in names:
@@ -403,7 +410,7 @@ def main():
     names=validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)
-    size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
+    size=render_size(settings,a.render_res) if a.render_res else None
     # The UI keeps the game's 1920x1080 coordinates even for a larger output: the port draws
     # it into the output-size image with a viewport scaled by output / 1920
     # (UiComposition::NativeViewport), so it is rasterized at the output resolution.

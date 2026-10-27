@@ -13,6 +13,7 @@
 #include "render/gcn_to_vk.h"
 #include "sdl_window.h"
 #include "upscale/vk_dlss.h"
+#include "bbport_memory_dev.h" // [extra]
 
 namespace Vulkan {
 
@@ -22,6 +23,10 @@ namespace {
 /// while the game runs, so the texture collector and VRAM copies behave as on a smaller card
 /// (a 6 GB GTX 1660 Ti reports ~5600). Allocations themselves are not limited.
 u64 VramLimit() {
+    const u64 dev_limit = BbMemoryDev::GetVramLimitBytes(); // [extra]
+    if (dev_limit > 0) {
+        return dev_limit;
+    }
     static const u64 limit = [] {
         const char* env = std::getenv("BB_VRAM_LIMIT_MB");
         const u64 mib = env && *env ? std::strtoull(env, nullptr, 10) : 0;

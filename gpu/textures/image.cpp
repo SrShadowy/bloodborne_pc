@@ -16,6 +16,7 @@
 #include "render/gcn_to_vk.h"
 #include "vulkan/instance.h"
 #include "render/runtime.h"
+#include "bbport_memory_dev.h" // [extra]
 
 namespace VideoCore {
 
@@ -172,6 +173,7 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     }
     image_uid = next_uid.Next();
     mip_hashes.resize(info.resources.levels);
+    is_player = BbMemoryDev::IsPlayerMemory(info.guest_address); // [extra]
 
     vk::ImageCreateFlags create_flags =
         vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage;

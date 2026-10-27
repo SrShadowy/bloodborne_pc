@@ -135,7 +135,7 @@ from bbport_config import (
     PC_MODEL_SUBTITLE, PACKAGE_ONLY_ENV,
     UI_LANGUAGES, UPSCALERS, PRESETS, OUTPUT_RES, EFFECTS, MODEL_LOD,
     FPS_MODES, PRESENT_MODES, DRAW_PIPE, LANGUAGES, LIVE_RESOLUTION,
-    READBACKS, PREUPLOAD, VK_RECORD_THREADS, MEMORY_MODELS,
+    READBACKS, PREUPLOAD, VK_RECORD_THREADS, MEMORY_MODELS, MEMORY_PRESETS,
     ASPECTS, output_sizes, resolved_aspect, nearest_output, parse_size,
     NGX_PREFIX, DLSS_SDK_URL, binaries_dir, ngx_libraries, online_module, VIDEO_BACKENDS,
     load_settings, save_settings, load_ini, save_ini,
@@ -148,7 +148,7 @@ from bbport_fsr_builder import (
 
 if _HAS_GTK:
     from bbport_ui_helpers import (
-        flat_button, open_folder, combo_row, combo_value, setup_combo_row,
+        flat_button, open_folder, combo_row, combo_value, set_combo_value, setup_combo_row,
     )
     from bbport_cache import CacheMixin
     from bbport_controls import ControlsMixin
@@ -812,8 +812,207 @@ class LauncherWindow(
 
     # --- Graphics page -------------------------------------------------------------------
 
+    def on_graphics_preset_selected(self, row, *_):
+        if not getattr(self, "_initialized", False) or getattr(self, "_applying_preset", False):
+            return
+        val = combo_value(row)
+        if val:
+            self.apply_graphics_preset(val)
+
+    def apply_graphics_preset(self, preset_key):
+        if getattr(self, "_applying_preset", False):
+            return
+        self._applying_preset = True
+        try:
+            # Sync preset rows across tabs if both exist
+            if hasattr(self, "graphics_preset_row") and combo_value(self.graphics_preset_row) != preset_key:
+                set_combo_value(self.graphics_preset_row, preset_key)
+            if hasattr(self, "memory_preset_row") and combo_value(self.memory_preset_row) != preset_key:
+                set_combo_value(self.memory_preset_row, preset_key)
+
+            if preset_key == "high":
+                # High Preset: 12+ GB VRAM / Powerful GPU
+                if hasattr(self, "preset_row"):
+                    set_combo_value(self.preset_row, 1)  # Quality (1)
+                if hasattr(self, "frame_gen_row"):
+                    self.frame_gen_row.set_active(False)
+                if hasattr(self, "motion_row"):
+                    self.motion_row.set_active(False)
+                if hasattr(self, "lod_row"):
+                    set_combo_value(self.lod_row, "0")
+                if hasattr(self, "effect_rows"):
+                    for k in ("effect_ssao", "effect_dof", "effect_motion_blur", "effect_bloom", "effect_game_aa", "effect_dynamic_shadows"):
+                        if k in self.effect_rows:
+                            self.effect_rows[k].set_active(True)
+                    if "effect_ssr" in self.effect_rows:
+                        self.effect_rows["effect_ssr"].set_active(False)
+                if hasattr(self, "fps_row"):
+                    set_combo_value(self.fps_row, "uncap")
+                if hasattr(self, "limit_row"):
+                    self.limit_row.set_value(0)
+                if hasattr(self, "preupload_row"):
+                    set_combo_value(self.preupload_row, "")
+                self.ini["shadow_distance"] = "1.09"
+                self.ini["fog_opacity"] = "1.00"
+                self.ini["light_grid_opt"] = "0"
+                self.ini["effect_dynamic_shadows"] = "1"
+                if hasattr(self, "dev_shadow_distance_row"):
+                    self.dev_shadow_distance_row.set_value(1.09)
+                if hasattr(self, "dev_fog_opacity_row"):
+                    self.dev_fog_opacity_row.set_value(1.00)
+                if hasattr(self, "dev_light_grid_row"):
+                    self.dev_light_grid_row.set_active(False)
+                if hasattr(self, "dev_dynamic_shadows_row"):
+                    self.dev_dynamic_shadows_row.set_active(True)
+                if hasattr(self, "dev_preset_scale_row"):
+                    set_combo_value(self.dev_preset_scale_row, 1)
+
+            elif preset_key == "medium":
+                # Medium Preset: 6 GB VRAM / Mid-range GPU
+                if hasattr(self, "preset_row"):
+                    set_combo_value(self.preset_row, 2)  # Balanced (2)
+                if hasattr(self, "frame_gen_row"):
+                    self.frame_gen_row.set_active(False)
+                if hasattr(self, "motion_row"):
+                    self.motion_row.set_active(False)
+                if hasattr(self, "lod_row"):
+                    set_combo_value(self.lod_row, "0")
+                if hasattr(self, "effect_rows"):
+                    for k in ("effect_ssao", "effect_dof", "effect_motion_blur", "effect_bloom", "effect_game_aa", "effect_dynamic_shadows"):
+                        if k in self.effect_rows:
+                            self.effect_rows[k].set_active(True)
+                    if "effect_ssr" in self.effect_rows:
+                        self.effect_rows["effect_ssr"].set_active(False)
+                if hasattr(self, "fps_row"):
+                    set_combo_value(self.fps_row, "60")
+                if hasattr(self, "limit_row"):
+                    self.limit_row.set_value(60)
+                if hasattr(self, "preupload_row"):
+                    set_combo_value(self.preupload_row, "")
+                self.ini["shadow_distance"] = "0.80"
+                self.ini["fog_opacity"] = "1.00"
+                self.ini["light_grid_opt"] = "0"
+                self.ini["effect_dynamic_shadows"] = "1"
+                if hasattr(self, "dev_shadow_distance_row"):
+                    self.dev_shadow_distance_row.set_value(0.80)
+                if hasattr(self, "dev_fog_opacity_row"):
+                    self.dev_fog_opacity_row.set_value(1.00)
+                if hasattr(self, "dev_light_grid_row"):
+                    self.dev_light_grid_row.set_active(False)
+                if hasattr(self, "dev_dynamic_shadows_row"):
+                    self.dev_dynamic_shadows_row.set_active(True)
+                if hasattr(self, "dev_preset_scale_row"):
+                    set_combo_value(self.dev_preset_scale_row, 2)
+
+            elif preset_key == "low":
+                # Low Preset: 4 GB VRAM / Entry discrete GPU
+                if hasattr(self, "preset_row"):
+                    set_combo_value(self.preset_row, 3)  # Performance (3)
+                if hasattr(self, "frame_gen_row"):
+                    self.frame_gen_row.set_active(False)
+                if hasattr(self, "motion_row"):
+                    self.motion_row.set_active(False)
+                if hasattr(self, "lod_row"):
+                    set_combo_value(self.lod_row, "1")  # Lower (1)
+                if hasattr(self, "effect_rows"):
+                    for k in ("effect_ssao", "effect_dof", "effect_motion_blur", "effect_bloom", "effect_dynamic_shadows", "effect_ssr"):
+                        if k in self.effect_rows:
+                            self.effect_rows[k].set_active(False)
+                    if "effect_game_aa" in self.effect_rows:
+                        self.effect_rows["effect_game_aa"].set_active(True)
+                if hasattr(self, "fps_row"):
+                    set_combo_value(self.fps_row, "60")
+                if hasattr(self, "limit_row"):
+                    self.limit_row.set_value(60)
+                if hasattr(self, "preupload_row"):
+                    set_combo_value(self.preupload_row, "0")
+                self.ini["shadow_distance"] = "0.50"
+                self.ini["fog_opacity"] = "0.50"
+                self.ini["light_grid_opt"] = "1"
+                self.ini["effect_dynamic_shadows"] = "0"
+                if hasattr(self, "dev_shadow_distance_row"):
+                    self.dev_shadow_distance_row.set_value(0.50)
+                if hasattr(self, "dev_fog_opacity_row"):
+                    self.dev_fog_opacity_row.set_value(0.50)
+                if hasattr(self, "dev_light_grid_row"):
+                    self.dev_light_grid_row.set_active(True)
+                if hasattr(self, "dev_dynamic_shadows_row"):
+                    self.dev_dynamic_shadows_row.set_active(False)
+                if hasattr(self, "dev_preset_scale_row"):
+                    set_combo_value(self.dev_preset_scale_row, 3)
+
+            elif preset_key == "apu":
+                # APU Preset: 2 GB / Integrated GPU (Radeon 610M / Steam Deck / 30 FPS target)
+                if hasattr(self, "preset_row"):
+                    set_combo_value(self.preset_row, 3)  # Performance (3 - 540p)
+                if hasattr(self, "frame_gen_row"):
+                    self.frame_gen_row.set_active(False)
+                if hasattr(self, "motion_row"):
+                    self.motion_row.set_active(False)
+                if hasattr(self, "sharpen_row"):
+                    self.sharpen_row.set_active(False)
+                if hasattr(self, "lod_row"):
+                    set_combo_value(self.lod_row, "2")  # Lowest (2)
+                if hasattr(self, "effect_rows"):
+                    for k in ("effect_ssao", "effect_dof", "effect_motion_blur", "effect_bloom", "effect_dynamic_shadows", "effect_ssr", "puddle_reflections", "effect_chromatic_aberration"):
+                        if k in self.effect_rows:
+                            self.effect_rows[k].set_active(False)
+                    if "effect_game_aa" in self.effect_rows:
+                        self.effect_rows["effect_game_aa"].set_active(False)
+                if hasattr(self, "fps_row"):
+                    set_combo_value(self.fps_row, "30")
+                if hasattr(self, "limit_row"):
+                    self.limit_row.set_value(30)
+                if hasattr(self, "preupload_row"):
+                    set_combo_value(self.preupload_row, "0")
+                if hasattr(self, "pipe_row"):
+                    set_combo_value(self.pipe_row, "2")
+                self.ini["shadow_distance"] = "0.25"
+                self.ini["fog_opacity"] = "0.30"
+                self.ini["light_grid_opt"] = "1"
+                self.ini["effect_dynamic_shadows"] = "0"
+                self.ini["sharpen"] = "0"
+                self.ini["effect_chromatic_aberration"] = "0"
+                self.ini["effect_game_aa"] = "0"
+                if hasattr(self, "dev_shadow_distance_row"):
+                    self.dev_shadow_distance_row.set_value(0.25)
+                if hasattr(self, "dev_fog_opacity_row"):
+                    self.dev_fog_opacity_row.set_value(0.30)
+                if hasattr(self, "dev_light_grid_row"):
+                    self.dev_light_grid_row.set_active(True)
+                if hasattr(self, "dev_dynamic_shadows_row"):
+                    self.dev_dynamic_shadows_row.set_active(False)
+                if hasattr(self, "dev_preset_scale_row"):
+                    set_combo_value(self.dev_preset_scale_row, 3)
+
+            self.settings["memory_preset"] = preset_key
+            self.store()
+
+            if hasattr(self, "toasts"):
+                names = {"high": tr("Высокая (8+ ГБ / Рекомендуемая)"),
+                         "medium": tr("Средняя (6 ГБ / Сбалансированная)"),
+                         "low": tr("Низкая (Для слабых ПК / 4 ГБ)"),
+                         "apu": tr("APU / 2 ГБ (Встроенная графика / 30 FPS)")}
+                self.toasts.add_toast(Adw.Toast(title=tr("Применена предустановка: {}").format(names.get(preset_key, preset_key))))
+        finally:
+            self._applying_preset = False
+
     def build_graphics_page(self):
         page = Adw.PreferencesPage()
+
+        preset_group = Adw.PreferencesGroup(
+            title=tr("Предустановка графики и памяти"),
+            description=tr("Быстрая настройка качества, апскейлера, эффектов и памяти (как в ПК-играх)")
+        )
+        self.graphics_preset_row = combo_row(
+            tr("Предустановка графики"),
+            tr("Автоматически настраивает апскейлер, эффекты, детализацию и память"),
+            MEMORY_PRESETS,
+            self.settings.get("memory_preset", "high"),
+        )
+        self.graphics_preset_row.connect("notify::selected", self.on_graphics_preset_selected)
+        preset_group.add(self.graphics_preset_row)
+        page.add(preset_group)
 
         screen = Adw.PreferencesGroup(title=tr("Экран"))
         # The aspect ratio, then its resolutions (rebuilt when it changes, the height kept).
@@ -884,7 +1083,7 @@ class LauncherWindow(
         upscaler.add(self.dlss_row)
         self.update_dlss_row()
         self.preset_row = combo_row(tr("Пресет"), None, PRESETS, int(self.ini.get("preset", "4")))
-        self.preset_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
+        self.preset_row.connect("notify::selected", self._on_graphics_preset_scale_changed)
         self.output_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.preset_row)
 
@@ -945,6 +1144,8 @@ class LauncherWindow(
                                     "dvdroot_ps4 игры или модом; без неё патч не применяется"))
             elif key == "puddle_reflections":
                 row.set_subtitle(tr("Отражения в лужах"))
+            elif key == "effect_dynamic_shadows":
+                row.connect("notify::active", self._on_graphics_dynamic_shadows_changed)
             self.effect_rows[key] = row
             effects.add(row)
         self.skip_network_row = Adw.SwitchRow(
@@ -1035,6 +1236,38 @@ class LauncherWindow(
 
         return page
 
+    def _on_graphics_dynamic_shadows_changed(self, row, *_):
+        is_active = row.get_active()
+        self.ini["effect_dynamic_shadows"] = "1" if is_active else "0"
+        if hasattr(self, "dev_dynamic_shadows_row") and self.dev_dynamic_shadows_row.get_active() != is_active:
+            self.dev_dynamic_shadows_row.set_active(is_active)
+        self.store()
+
+    def _on_dev_dynamic_shadows_changed(self, row, *_):
+        is_active = row.get_active()
+        self.ini["effect_dynamic_shadows"] = "1" if is_active else "0"
+        if hasattr(self, "effect_rows") and "effect_dynamic_shadows" in self.effect_rows:
+            if self.effect_rows["effect_dynamic_shadows"].get_active() != is_active:
+                self.effect_rows["effect_dynamic_shadows"].set_active(is_active)
+        self.store()
+
+    def _on_graphics_preset_scale_changed(self, *_):
+        self.update_upscaler_status()
+        if hasattr(self, "dev_preset_scale_row") and hasattr(self, "preset_row"):
+            val = combo_value(self.preset_row)
+            if combo_value(self.dev_preset_scale_row) != val:
+                set_combo_value(self.dev_preset_scale_row, val)
+        self.store()
+
+    def _on_dev_preset_scale_changed(self, row, *_):
+        val = combo_value(row)
+        if val is not None:
+            self.ini["preset"] = str(val)
+            if hasattr(self, "preset_row") and combo_value(self.preset_row) != val:
+                set_combo_value(self.preset_row, val)
+            self.update_upscaler_status()
+            self.store()
+
     def build_dev_page(self):
         page = Adw.PreferencesPage()
 
@@ -1048,6 +1281,77 @@ class LauncherWindow(
         self.log_level_row.connect("notify::selected", lambda *_: self.store())
         log_opt.add(self.log_level_row)
         page.add(log_opt)
+
+        mem_dev = Adw.PreferencesGroup(title=tr("Управление памятью и VRAM (memoryDev)"))
+        self.memory_preset_row = combo_row(
+            tr("Предустановка памяти"),
+            tr("Адаптивное управление VRAM и свопом в системную RAM"),
+            MEMORY_PRESETS,
+            self.settings.get("memory_preset", "high"),
+        )
+        self.memory_preset_row.connect("notify::selected", self.on_graphics_preset_selected)
+        mem_dev.add(self.memory_preset_row)
+        page.add(mem_dev)
+
+        apu_tuning = Adw.PreferencesGroup(
+            title=tr("Тонкая настройка графики и APU"),
+            description=tr("Снижение нагрузки на шейдеры и вызовы отрисовки для слабых видеокарт")
+        )
+        self.dev_dynamic_shadows_row = Adw.SwitchRow(
+            title=tr("Тени от динамических источников"),
+            subtitle=tr("Отключение убирает множество тяжёлых проходов теней от факелов и ламп"),
+            active=self.ini.get("effect_dynamic_shadows", "1") == "1",
+        )
+        self.dev_dynamic_shadows_row.connect("notify::active", self._on_dev_dynamic_shadows_changed)
+        apu_tuning.add(self.dev_dynamic_shadows_row)
+
+        self.dev_shadow_distance_row = Adw.SpinRow.new_with_range(0.25, 3.0, 0.05)
+        self.dev_shadow_distance_row.set_title(tr("Дистанция теней"))
+        self.dev_shadow_distance_row.set_subtitle(tr("Дальность прорисовки теней (0.25 для APU, 1.0 по умолчанию)"))
+        self.dev_shadow_distance_row.set_digits(2)
+        try:
+            sh_val = float(self.ini.get("shadow_distance", "0.40"))
+        except (ValueError, TypeError):
+            sh_val = 0.40
+        self.dev_shadow_distance_row.set_value(sh_val)
+        self.dev_shadow_distance_row.connect("notify::value", lambda *_: self.store())
+        apu_tuning.add(self.dev_shadow_distance_row)
+
+        self.dev_fog_opacity_row = Adw.SpinRow.new_with_range(0.0, 2.0, 0.05)
+        self.dev_fog_opacity_row.set_title(tr("Плотность тумана"))
+        self.dev_fog_opacity_row.set_subtitle(tr("Снижает затраты на трассировку лучей объемного тумана (0.20 для APU, 1.0 по умолчанию)"))
+        self.dev_fog_opacity_row.set_digits(2)
+        try:
+            fog_val = float(self.ini.get("fog_opacity", "1.00"))
+        except (ValueError, TypeError):
+            fog_val = 1.00
+        self.dev_fog_opacity_row.set_value(fog_val)
+        self.dev_fog_opacity_row.connect("notify::value", lambda *_: self.store())
+        apu_tuning.add(self.dev_fog_opacity_row)
+
+        self.dev_light_grid_row = Adw.SwitchRow(
+            title=tr("Оптимизация сетки освещения"),
+            subtitle=tr("Оптимизирует вызовы отрисовки сетки освещения (рекомендуется для слабых GPU)"),
+            active=self.ini.get("light_grid_opt", "1") == "1",
+        )
+        self.dev_light_grid_row.connect("notify::active", lambda *_: self.store())
+        apu_tuning.add(self.dev_light_grid_row)
+
+        preset_val = 3
+        try:
+            preset_val = int(self.ini.get("preset", "3"))
+        except (ValueError, TypeError):
+            preset_val = 3
+        self.dev_preset_scale_row = combo_row(
+            tr("Разрешение рендеринга (апскейлер)"),
+            tr("Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%"),
+            PRESETS,
+            preset_val,
+        )
+        self.dev_preset_scale_row.connect("notify::selected", self._on_dev_preset_scale_changed)
+        apu_tuning.add(self.dev_preset_scale_row)
+
+        page.add(apu_tuning)
 
         dev = Adw.PreferencesGroup(title=tr("Для разработчика"))
         self.mangohud_row = Adw.SwitchRow(title="MangoHud", active=self.settings["mangohud"])
@@ -1292,6 +1596,10 @@ class LauncherWindow(
         s["save_log"] = self.save_log_row.get_active()
         s["crash_diag"] = self.crash_diag_row.get_active()
         s["memory_model"] = combo_value(self.memory_model_row)
+        if hasattr(self, "graphics_preset_row"):
+            s["memory_preset"] = combo_value(self.graphics_preset_row)
+        elif hasattr(self, "memory_preset_row"):
+            s["memory_preset"] = combo_value(self.memory_preset_row)
         s["as_0_3"] = self.as_0_3_row.get_active()
         s["gpu_profile"] = self.profile_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
@@ -1356,6 +1664,14 @@ class LauncherWindow(
             ),
             "fps_limit": str(s["fps_limit"]),
         })
+        if hasattr(self, "dev_shadow_distance_row"):
+            self.ini["shadow_distance"] = f"{self.dev_shadow_distance_row.get_value():.2f}"
+        if hasattr(self, "dev_fog_opacity_row"):
+            self.ini["fog_opacity"] = f"{self.dev_fog_opacity_row.get_value():.2f}"
+        if hasattr(self, "dev_light_grid_row"):
+            self.ini["light_grid_opt"] = "1" if self.dev_light_grid_row.get_active() else "0"
+        if hasattr(self, "dev_dynamic_shadows_row"):
+            self.ini["effect_dynamic_shadows"] = "1" if self.dev_dynamic_shadows_row.get_active() else "0"
         save_ini(self.ini, self.ini_lines)
         self.ini, self.ini_lines = load_ini()
 

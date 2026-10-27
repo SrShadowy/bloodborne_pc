@@ -299,7 +299,7 @@
             <Line Type="bytes" Address="0x026C2548" Value="00"/>
         </PatchList>
     </Metadata>
-    <Metadata Title="Bloodborne" Name="Enable Screen Space Reflections (READ NOTE)" Note="This will DECREASE performance, BUT it enables SSR, very nice reflections on reflective surfaces, was never in the base game but can be enabled through debug functions." Author="Kyo" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
+    <Metadata Title="Bloodborne" Name="Enable Screen Space Reflections (READ NOTE)" Note="This will DECREASE performance, BUT it enables SSR, very nice reflections on reflective surfaces, was never in the base game but can be enabled through debug functions." Author="Kyo" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
         <PatchList>
             <Line Type="bytes" Address="0x026C4FD7" Value="01"/>
             <Line Type="bytes" Address="0x026C4FD3" Value="74"/>
@@ -2330,7 +2330,7 @@
             <Line Type="bytes32" Address="0x04CF9AE4" Value="0x3EE66666"/>
         </PatchList>
     </Metadata>
-    <Metadata Title="Bloodborne" Name="Resolution Patch 2560x1080 (21:9)" Note="2560x1080 resolution with proper lock-on/enemy/ally hp bar coordinates. Remember to increase dmem +4000mb or so in game-specific settings (this implies you also have at least 12gb of vram)." Author="Kyo" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
+    <Metadata Title="Bloodborne" Name="Resolution Patch 2560x1080 (21:9)" Note="2560x1080 resolution with proper lock-on/enemy/ally hp bar coordinates. Remember to increase dmem +4000mb or so in game-specific settings (this implies you also have at least 12gb of vram)." Author="Kyo" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
         <PatchList>
             <Line Type="bytes" Address="0x04b36dda" Value="00f7"/>
             <Line Type="bytes" Address="0x04b36de2" Value="00a0"/>

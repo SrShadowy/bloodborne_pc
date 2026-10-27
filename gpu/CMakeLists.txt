@@ -214,6 +214,7 @@ target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/bac
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/contact
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/contact/rpc
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/contact/game_data
+    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/memoryDev
     ${CMAKE_CURRENT_SOURCE_DIR}/../debugger
     ${CMAKE_CURRENT_SOURCE_DIR}/../ui)
 file(GLOB_RECURSE EXTRA_SOURCES CONFIGURE_DEPENDS
