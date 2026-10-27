@@ -427,8 +427,8 @@ bool WindowSDL::PollEvents() {
             continue;
         }
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !mouse_captured.load(std::memory_order_relaxed) &&
-            mouse_look.load(std::memory_order_relaxed) && !BbOverlay::MenuOpen() && !in_game_menu &&
-            !pointer) {
+            mouse_look.load(std::memory_order_relaxed) && BbSettings::Get().mouse_capture.load(std::memory_order_relaxed) &&
+            !BbOverlay::MenuOpen() && !in_game_menu && !pointer) {
             CaptureMouse(true);
             continue;
         }
@@ -462,7 +462,8 @@ bool WindowSDL::PollEvents() {
             CaptureMouse(false);
         } 
         if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) { // [extra]
-            if (mouse_look.load(std::memory_order_relaxed) && !mouse_user_released && !BbOverlay::MenuOpen()) { // [extra]
+            if (mouse_look.load(std::memory_order_relaxed) && !mouse_user_released && !BbOverlay::MenuOpen() &&
+                !in_game_menu && BbSettings::Get().mouse_capture.load(std::memory_order_relaxed)) { // [extra]
                 CaptureMouse(true); // [extra]
             } // [extra]
         } // [extra]
@@ -518,14 +519,17 @@ bool WindowSDL::PollEvents() {
         last_mouse_motion_ms = SDL_GetTicks();
     } else if (!pointer && released_for_pointer) {
         released_for_pointer = false;
-        if (mouse_look.load(std::memory_order_relaxed) && !BbOverlay::MenuOpen() && !text_active &&
+        if (mouse_look.load(std::memory_order_relaxed) && BbSettings::Get().mouse_capture.load(std::memory_order_relaxed) &&
+            !BbOverlay::MenuOpen() && !text_active &&
             (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS)) {
             CaptureMouse(true);
         }
     }
     {
+        const bool in_any_menu = in_game_menu || pointer || released_for_pointer || BbOverlay::MenuOpen() || text_active;
         const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
-        const bool hold = focused && !mouse_user_released;
+        const bool hold = focused && !mouse_user_released && !in_any_menu &&
+                          BbSettings::Get().mouse_capture.load(std::memory_order_relaxed);
         if (hold != mouse_grabbed) {
             mouse_grabbed = hold;
             SDL_SetWindowMouseGrab(window, hold);
@@ -534,8 +538,8 @@ bool WindowSDL::PollEvents() {
         // compositor may refuse it).
         static u64 last_try_ms = 0;
         if (hold && !mouse_captured.load(std::memory_order_relaxed) &&
-            mouse_look.load(std::memory_order_relaxed) && !BbOverlay::MenuOpen() && !text_active &&
-            !pointer && !released_for_pointer && SDL_GetTicks() - last_try_ms > 500) {
+            mouse_look.load(std::memory_order_relaxed) &&
+            SDL_GetTicks() - last_try_ms > 500) {
             last_try_ms = SDL_GetTicks();
             CaptureMouse(true);
         }
@@ -548,7 +552,9 @@ bool WindowSDL::PollEvents() {
 // Issue #3: the OS cursor over the game. Hidden in fullscreen, and in a window after 3 s without
 // moving the mouse; always shown while the settings menu or a game's pointer menu is open.
 void WindowSDL::UpdateCursor() {
-    const bool in_menu = BbOverlay::CapturesInput() || text_active || BbMenuPointer::InMenu() || mouse_user_released;
+    const bool capture_setting = BbSettings::Get().mouse_capture.load(std::memory_order_relaxed);
+    const bool in_menu = BbOverlay::CapturesInput() || text_active || BbMenuPointer::InMenu() ||
+                         mouse_user_released || !capture_setting;
     const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
     // In a game menu (pointer_shown) it also goes after 1.5 s without moving, so that the tail of a
     // closing menu does not leave it hanging over the game; any motion brings it back.

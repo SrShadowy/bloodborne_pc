@@ -44,9 +44,11 @@ docker run --rm \
     -e HOST_UID="$HOST_UID" \
     -e HOST_GID="$HOST_GID" \
     -e BB_APPIMAGE_VARIANT="$variant" \
+    -e BB_SKIP_VERSION_INC=1 \
     "$IMAGE_NAME" \
     bash -c '
         set -euo pipefail
+        export BB_SKIP_VERSION_INC=1
         trap "chown -R \"$HOST_UID:$HOST_GID\" dist out packaging/runtime-paths.nix 2>/dev/null || true" EXIT
         git config --global --add safe.directory /bbport 2>/dev/null || true
         git config --global --add safe.directory /bbport/gpu/third_party/fsr-vulkan 2>/dev/null || true

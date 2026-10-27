@@ -22,9 +22,9 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent
 DEVELOPER = "SrShadowy"
 
-def run_command(cmd, cwd=ROOT_DIR, check=True):
+def run_command(cmd, cwd=ROOT_DIR, check=True, env=None):
     print(f"\n[*] Running: {' '.join(cmd)}")
-    res = subprocess.run(cmd, cwd=cwd)
+    res = subprocess.run(cmd, cwd=cwd, env=env)
     if check and res.returncode != 0:
         print(f"\n[!] Command failed with exit code {res.returncode}: {' '.join(cmd)}", file=sys.stderr)
         sys.exit(res.returncode)
@@ -330,13 +330,32 @@ def build_and_package(args):
     print("      BBPort - Automated Build & Release Packager")
     print("=" * 70)
 
+    # 0. Auto-increment build version if compiling and not skipped/custom
+    skip_inc = bool(
+        getattr(args, "no_bump", False)
+        or args.name_version
+        or not args.build
+        or os.environ.get("BB_SKIP_VERSION_INC")
+        or os.environ.get("BB_APPIMAGE_VARIANT")
+    )
+    if not skip_inc:
+        try:
+            sys.path.insert(0, str(ROOT_DIR / "scripts"))
+            import bump_version
+            bump_version.bump(ROOT_DIR)
+        except Exception as e:
+            print(f"[!] Warning: failed to auto-bump version: {e}")
+        os.environ["BB_SKIP_VERSION_INC"] = "1"
+
     version = args.name_version or get_git_version()
     print(f"[*] Detected Version: {version}")
 
     # 1. Build step
     if args.build:
         print("\n[+] Step 1: Building binaries with build.sh...")
-        run_command(["bash", "build.sh"])
+        build_env = os.environ.copy()
+        build_env["BB_SKIP_VERSION_INC"] = "1"
+        run_command(["bash", "build.sh"], env=build_env)
     else:
         print("\n[+] Step 1: Skipping build (--no-build specified).")
 
@@ -498,7 +517,6 @@ def build_and_package(args):
     # Directory trees
     print("[*] Copying launcher...")
     copy_tree_filtered(ROOT_DIR / "launcher", staging_dir / "launcher")
-    (staging_dir / "launcher" / "VERSION").write_text(version + "\n", encoding="utf-8")
     # Make launcher scripts executable
     if (staging_dir / "launcher" / "bb-launcher.sh").exists():
         (staging_dir / "launcher" / "bb-launcher.sh").chmod(0o755)
@@ -690,6 +708,8 @@ def main():
                         help="Generate a standalone native AppImage alongside the release tarball")
     parser.add_argument("--no-build", dest="build", action="store_false", default=True,
                         help="Skip compiling binaries with build.sh (use existing out/)")
+    parser.add_argument("--no-bump", action="store_true", default=False,
+                        help="Do not increment build version before building/packaging")
     parser.add_argument("--output-dir", "-o", default="dist",
                         help="Output directory for the packaged archive (default: dist/)")
     parser.add_argument("--format", choices=["gztar", "tar.gz", "xztar", "tar.xz"], default="gztar",

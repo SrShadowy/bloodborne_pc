@@ -25,7 +25,7 @@ let
     ++ lib.optional fsr411 "fsr4_411";
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
-    "run.sh" "out" "out/bb-probe" "out/bb-gpu-capabilities" "out/gpu" "out/gpu/libbbgpu.so" "tools"
+    "VERSION" "run.sh" "out" "out/bb-probe" "out/bb-gpu-capabilities" "out/gpu" "out/gpu/libbbgpu.so" "tools"
   ] ++ assetDirs;
   # DLSS (a build with DLSS_SDK_ROOT): the bridge, NVIDIA's runtime library and its license, as
   # NVIDIA's RTX SDK license allows in an application. Without them the launcher lets the player
@@ -191,6 +191,7 @@ pkgs.stdenv.mkDerivation {
     d=$out/share/bbport
     mkdir -p $d/bin $out/bin
     cp run.sh $d/
+    [ -f VERSION ] && cp VERSION $d/
     cp -r scripts patches fsr4_shaders launcher $d/
     mkdir -p $d/tools
     cp -r tools/* $d/tools/

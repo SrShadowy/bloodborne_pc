@@ -7,6 +7,7 @@
 # `bash packaging/appimage.sh [default|minimal]` (or BB_APPIMAGE_VARIANT): minimal builds without
 # Mesa's Vulkan drivers and MangoHud (a -minimal AppImage), the system's own are used.
 set -euo pipefail
+export BB_SKIP_VERSION_INC=1
 cd -- "$(dirname -- "$0")/.."
 [[ -f out/bb-probe && -f out/gpu/libbbgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 variant=${1:-${BB_APPIMAGE_VARIANT:-default}}

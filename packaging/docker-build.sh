@@ -31,6 +31,7 @@ docker run --rm \
     -u "$(id -u):$(id -g)" \
     -e HOME=/tmp \
     -e APPIMAGE_EXTRACT_AND_RUN=1 \
+    -e BB_SKIP_VERSION_INC="${BB_SKIP_VERSION_INC:-}" \
     -v "$ROOT:/bbport" \
     -w /bbport \
     "$IMAGE_NAME" \

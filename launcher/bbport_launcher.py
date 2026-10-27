@@ -1429,7 +1429,7 @@ class LauncherApp(_AdwAppBase):
 
 
 def get_launcher_version():
-    for cand in [Path(__file__).resolve().parent / "VERSION", PORT_DIR / "VERSION"]:
+    for cand in [PORT_DIR / "VERSION", Path(__file__).resolve().parent / "VERSION"]:
         if cand.is_file():
             try:
                 v = cand.read_text(encoding="utf-8").strip()

@@ -2,6 +2,22 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
+
+for arg in "$@"; do
+    if [[ "$arg" == "--no-bump" ]]; then
+        export BB_SKIP_VERSION_INC=1
+        break
+    fi
+done
+
+# Auto-increment build version unless skipped (e.g. docker-appimage, AppImage packaging, or package.py)
+if [[ -z "${BB_SKIP_VERSION_INC:-}" && -z "${BB_APPIMAGE_VARIANT:-}" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+        python3 scripts/bump_version.py || true
+        export BB_SKIP_VERSION_INC=1
+    fi
+fi
+
 if [[ -z ${CC:-} ]]; then
     CC=$(command -v cc || command -v gcc || true)
     if [[ -z $CC ]]; then
@@ -15,7 +31,7 @@ if [[ -z ${CC:-} ]]; then echo 'Install GCC/Clang or set CC.' >&2; exit 1; fi
 # environment is provided by shell.nix; re-enter it automatically if needed.
 if ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3 && command -v cmake >/dev/null && command -v ninja >/dev/null; }; then
     if [[ -z ${BB_IN_NIX_SHELL:-} ]] && command -v nix-shell >/dev/null; then
-        exec env BB_IN_NIX_SHELL=1 nix-shell shell.nix --run "bash build.sh $*"
+        exec env BB_IN_NIX_SHELL=1 BB_SKIP_VERSION_INC=1 nix-shell shell.nix --run "bash build.sh $*"
     fi
     echo 'Need pkg-config with vulkan and sdl3, cmake and ninja (see shell.nix).' >&2; exit 1
 fi
