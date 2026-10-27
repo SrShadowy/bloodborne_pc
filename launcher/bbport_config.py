@@ -250,6 +250,7 @@ DEFAULTS = {
     "crash_diag": False,
     "memory_model": "auto",
     "memory_preset": "high",
+    "zero_copy": True,
     "as_0_3": False,
     "gpu_profile": False,
     "vk_validation": False,
@@ -550,11 +551,14 @@ def game_environment(s):
         if mem_preset == "apu":
             env["BB_VRAM_LIMIT_MB"] = "2048"
             env["BB_AUTO_MIP_CLAMP"] = "1"
+            env["BB_GUEST_GPU_MEMORY"] = "1"
+            env["BB_GUEST_MEMORY"] = "host"
+            env["BB_CHUNK_UPLOADS"] = "1"
+            env["BB_CHUNK_TEXTURES"] = "1"
             env.setdefault("BB_FRAME_GEN", "0")
             env.setdefault("BB_FPS_LIMIT", "30")
             env.setdefault("BB_FPS", "30")
             env.setdefault("BB_UPSCALE_PRESET", "3")
-            env.setdefault("BB_MODEL_LOD", "2")
             env.setdefault("BB_SHADOW_DISTANCE", "0.4")
             env.setdefault("BB_LIGHT_GRID_OPT", "1")
             env.setdefault("BB_EFFECT_SSR", "0")
@@ -565,6 +569,11 @@ def game_environment(s):
         elif mem_preset == "low":
             if "BB_AUTO_MIP_CLAMP" not in env:
                 env["BB_AUTO_MIP_CLAMP"] = "1"
+    if s.get("zero_copy", True):
+        env.setdefault("BB_GUEST_GPU_MEMORY", "1")
+        env.setdefault("BB_GUEST_MEMORY", "host")
+        env.setdefault("BB_CHUNK_UPLOADS", "1")
+        env.setdefault("BB_CHUNK_TEXTURES", "1")
     # The GPU chosen by name: its index in Vulkan's order now (BB_GPU_ID). One not found (taken
     # out, renamed by a driver update) leaves the choice to the port. BB_GPU_ID from the shell
     # wins.

@@ -185,12 +185,16 @@ if [[ ${BB_MEMORY_PRESET} == "apu" ]]; then
     export BB_VRAM_LIMIT_MB=${BB_VRAM_LIMIT_MB:-2048}
     export BB_GC_BUDGET_MB=${BB_GC_BUDGET_MB:-2048}
     export BB_AUTO_MIP_CLAMP=${BB_AUTO_MIP_CLAMP:-1}
+    # Zero-Copy Direct Memory Import (VK_EXT_external_memory_host):
+    export BB_GUEST_GPU_MEMORY=${BB_GUEST_GPU_MEMORY:-1}
+    export BB_GUEST_MEMORY=${BB_GUEST_MEMORY:-host}
+    export BB_CHUNK_UPLOADS=${BB_CHUNK_UPLOADS:-1}
+    export BB_CHUNK_TEXTURES=${BB_CHUNK_TEXTURES:-1}
     # Graphics optimizations for ~30 FPS on integrated APUs (Radeon 610M / 2 CUs):
     export BB_FRAME_GEN=${BB_FRAME_GEN:-0}
     export BB_FPS=${BB_FPS:-30}
     export BB_FPS_LIMIT=${BB_FPS_LIMIT:-30}
     export BB_UPSCALE_PRESET=${BB_UPSCALE_PRESET:-3} # Performance (540p scene resolution)
-    export BB_MODEL_LOD=${BB_MODEL_LOD:-2}
     export BB_SHADOW_DISTANCE=${BB_SHADOW_DISTANCE:-0.4}
     export BB_LIGHT_GRID_OPT=${BB_LIGHT_GRID_OPT:-1}
     export BB_EFFECT_SSR=${BB_EFFECT_SSR:-0}
@@ -198,7 +202,7 @@ if [[ ${BB_MEMORY_PRESET} == "apu" ]]; then
     export BB_EFFECT_DOF=${BB_EFFECT_DOF:-0}
     export BB_EFFECT_MOTION_BLUR=${BB_EFFECT_MOTION_BLUR:-0}
     export BB_EFFECT_BLOOM=${BB_EFFECT_BLOOM:-0}
-    echo "MemoryDev: APU 2GB Preset active (APU / Radeon 610M target: 2048 MB VRAM limit, Auto Mip-Clamp, 540p, 30 FPS target)"
+    echo "MemoryDev: APU 2GB Preset active (Zero-Copy Host Import VK_EXT_external_memory_host, 2048 MB limit, Auto Mip-Clamp)"
 elif [[ ${BB_MEMORY_PRESET} == "low" ]]; then
     export BB_GC_IDLE_SECONDS=${BB_GC_IDLE_SECONDS:-4}
     export BB_GC_PRESSURE_IDLE_SECONDS=${BB_GC_PRESSURE_IDLE_SECONDS:-2}

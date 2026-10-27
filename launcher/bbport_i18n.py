@@ -613,6 +613,8 @@ EN = {
     "Оптимизирует вызовы отрисовки сетки освещения (рекомендуется для слабых GPU)": "Optimizes light grid draw calls (recommended for low-end GPUs)",
     "Разрешение рендеринга (апскейлер)": "Render Resolution Preset",
     "Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%": "Ultra Performance (360p) cuts shader load by more than 55%",
+    "Прямой импорт памяти (Zero-Copy Host Import)": "Zero-Copy Host Memory Import",
+    "Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV": "Uses VK_EXT_external_memory_host without SIGSEGV page fault traps",
 }
 PT = {
     # Window, pages, buttons
@@ -1090,6 +1092,8 @@ PT = {
     "Оптимизирует вызовы отрисовки сетки освещения (рекомендуется для слабых GPU)": "Reduz chamadas de desenho da iluminação (recomendado para APU/GPUs fracas)",
     "Разрешение рендеринга (апскейлер)": "Escala de Resolução Interna",
     "Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%": "Ultra Performance (360p) corta mais de 55% da carga de shaders",
+    "Прямой импорт памяти (Zero-Copy Host Import)": "Importação Direta de Memória (Zero-Copy Host)",
+    "Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV": "Usa VK_EXT_external_memory_host sem interceptações SIGSEGV na CPU",
 }
 
 PT_BR = {
@@ -1649,6 +1653,8 @@ PT_BR = {
     "Оптимизирует вызовы отрисовки сетки освещения (рекомендуется для слабых GPU)": "Reduz chamadas de desenho da iluminação (recomendado para APU/GPUs fracas)",
     "Разрешение рендеринга (апскейлер)": "Escala de Resolução Interna",
     "Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%": "Ultra Performance (360p) corta mais de 55% da carga de shaders",
+    "Прямой импорт памяти (Zero-Copy Host Import)": "Importação Direta de Memória (Zero-Copy Host)",
+    "Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV": "Usa VK_EXT_external_memory_host sem interceptações SIGSEGV na CPU",
 }
 
 
@@ -2036,6 +2042,8 @@ ZH_CN = {
     "Оптимизирует вызовы отрисовки сетки освещения (рекомендуется для слабых GPU)": "优化光照网格绘制调用（推荐低配显卡使用）",
     "Разрешение рендеринга (апскейлер)": "渲染分辨率预设",
     "Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%": "极致性能 (360p) 可减少 55% 以上的着色器负载",
+    "Прямой импорт памяти (Zero-Copy Host Import)": "零拷贝主机内存直接导入 (Zero-Copy Host Import)",
+    "Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV": "使用 VK_EXT_external_memory_host 避免 CPU 端 SIGSEGV 页错误拦截",
 }
 
 

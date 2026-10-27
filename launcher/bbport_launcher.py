@@ -984,6 +984,8 @@ class LauncherWindow(
                     self.dev_dynamic_shadows_row.set_active(False)
                 if hasattr(self, "dev_preset_scale_row"):
                     set_combo_value(self.dev_preset_scale_row, 3)
+                if hasattr(self, "dev_zero_copy_row"):
+                    self.dev_zero_copy_row.set_active(True)
 
             self.settings["memory_preset"] = preset_key
             self.store()
@@ -1351,6 +1353,14 @@ class LauncherWindow(
         self.dev_preset_scale_row.connect("notify::selected", self._on_dev_preset_scale_changed)
         apu_tuning.add(self.dev_preset_scale_row)
 
+        self.dev_zero_copy_row = Adw.SwitchRow(
+            title=tr("Прямой импорт памяти (Zero-Copy Host Import)"),
+            subtitle=tr("Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV"),
+            active=self.settings.get("zero_copy", True),
+        )
+        self.dev_zero_copy_row.connect("notify::active", lambda *_: self.store())
+        apu_tuning.add(self.dev_zero_copy_row)
+
         page.add(apu_tuning)
 
         dev = Adw.PreferencesGroup(title=tr("Для разработчика"))
@@ -1604,6 +1614,8 @@ class LauncherWindow(
         s["gpu_profile"] = self.profile_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.extra_row.get_text().strip()
+        if hasattr(self, "dev_zero_copy_row"):
+            s["zero_copy"] = self.dev_zero_copy_row.get_active()
         if hasattr(self, "log_level_row"):
             s["log_level"] = combo_value(self.log_level_row)
         s["mods_enabled"] = self.mods_enabled_row.get_active()
