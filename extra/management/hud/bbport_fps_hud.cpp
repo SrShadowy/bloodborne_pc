@@ -152,9 +152,22 @@ void Render(const Stats& stats) {
         if (s.fps_hud_show_vram.load()) {
             char vram_buf[64] = {};
             const uint64_t proj_vram = metrics.vram_bytes;
+            const uint64_t proj_gtt = metrics.gtt_bytes;
+            const uint64_t total_proc_gpu = proj_vram + proj_gtt;
             const uint64_t sys_vram = metrics.vram_sys_bytes;
 
-            if (proj_vram >= (1024ULL * 1024 * 1024)) {
+            if (proj_gtt > 0) {
+                // APU or Zero-Copy Host Memory import active: report total process GPU memory and GTT breakdown
+                if (total_proc_gpu >= (1024ULL * 1024 * 1024)) {
+                    std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB (+GTT %lluM)",
+                                  double(total_proc_gpu) / (1024.0 * 1024.0 * 1024.0),
+                                  static_cast<unsigned long long>(proj_gtt >> 20));
+                } else {
+                    std::snprintf(vram_buf, sizeof(vram_buf), "%llu MB (+GTT %lluM)",
+                                  static_cast<unsigned long long>(total_proc_gpu >> 20),
+                                  static_cast<unsigned long long>(proj_gtt >> 20));
+                }
+            } else if (proj_vram >= (1024ULL * 1024 * 1024)) {
                 if (sys_vram > proj_vram) {
                     std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB (Tot: %.2f)",
                                   double(proj_vram) / (1024.0 * 1024.0 * 1024.0),
@@ -179,16 +192,35 @@ void Render(const Stats& stats) {
                 std::snprintf(vram_buf, sizeof(vram_buf), "0 MB");
             }
             entries.push_back(MetricEntry{"VRAM", IM_COL32(230, 130, 255, 255), vram_buf, false});
+
+            if (metrics.mem_clock_mhz > 0) {
+                char mem_buf[32] = {};
+                std::snprintf(mem_buf, sizeof(mem_buf), "%u MHz", metrics.mem_clock_mhz);
+                entries.push_back(MetricEntry{"MEM", IM_COL32(240, 160, 255, 255), mem_buf, false});
+            }
         }
 
         if (s.fps_hud_show_ram.load()) {
             char ram_buf[64] = {};
-            if (metrics.ram_rss_bytes >= (1024ULL * 1024 * 1024)) {
-                std::snprintf(ram_buf, sizeof(ram_buf), "%.2f GB",
-                              double(metrics.ram_rss_bytes) / (1024.0 * 1024.0 * 1024.0));
+            const double proc_gb = double(metrics.ram_rss_bytes) / (1024.0 * 1024.0 * 1024.0);
+            if (metrics.ram_sys_total_bytes > 0) {
+                const double sys_used_gb = double(metrics.ram_sys_used_bytes) / (1024.0 * 1024.0 * 1024.0);
+                const double sys_tot_gb = double(metrics.ram_sys_total_bytes) / (1024.0 * 1024.0 * 1024.0);
+                if (proc_gb >= 1.0) {
+                    std::snprintf(ram_buf, sizeof(ram_buf), "%.2f GB (Sys: %.1f/%.0fG)",
+                                  proc_gb, sys_used_gb, sys_tot_gb);
+                } else {
+                    std::snprintf(ram_buf, sizeof(ram_buf), "%llu MB (Sys: %.1f/%.0fG)",
+                                  static_cast<unsigned long long>(metrics.ram_rss_bytes >> 20),
+                                  sys_used_gb, sys_tot_gb);
+                }
             } else {
-                std::snprintf(ram_buf, sizeof(ram_buf), "%llu MB",
-                              static_cast<unsigned long long>(metrics.ram_rss_bytes >> 20));
+                if (proc_gb >= 1.0) {
+                    std::snprintf(ram_buf, sizeof(ram_buf), "%.2f GB", proc_gb);
+                } else {
+                    std::snprintf(ram_buf, sizeof(ram_buf), "%llu MB",
+                                  static_cast<unsigned long long>(metrics.ram_rss_bytes >> 20));
+                }
             }
             entries.push_back(MetricEntry{"RAM", IM_COL32(255, 185, 75, 255), ram_buf, false});
         }

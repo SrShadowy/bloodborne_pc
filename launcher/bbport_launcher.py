@@ -1487,7 +1487,7 @@ class LauncherWindow(
         else:
             hint = tr("Сглаживание в разрешении вывода без модели FSR") if value == "taa" else None
         if hasattr(self, "preset_row"):
-            self.preset_row.set_sensitive(value not in ("taa", "off"))
+            self.preset_row.set_sensitive(value != "taa")
         if hasattr(self, "sharpen_row"):
             self.sharpen_row.set_sensitive(value != "off")
         if hasattr(self, "sharpness_row"):

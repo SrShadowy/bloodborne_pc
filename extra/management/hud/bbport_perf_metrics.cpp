@@ -50,16 +50,32 @@ void SampleMetrics() {
         s_last_sample_time = now;
     }
 
-    // 2. Process RAM (Resident Set Size) via getrusage (kernel process accounting, 0 files, no sudo)
+    // 2. Process RAM (Resident Set Size) via getrusage, and System RAM via /proc/meminfo
     struct rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) == 0) {
         // ru_maxrss is in KiB on Linux
         s_cached_snapshot.ram_rss_bytes = uint64_t(usage.ru_maxrss) * 1024ULL;
     }
+    if (FILE* f = std::fopen("/proc/meminfo", "r")) {
+        char line[128];
+        unsigned long long total_kb = 0, avail_kb = 0;
+        while (std::fgets(line, sizeof(line), f)) {
+            if (std::sscanf(line, "MemTotal: %llu kB", &total_kb) == 1) {}
+            else if (std::sscanf(line, "MemAvailable: %llu kB", &avail_kb) == 1) {
+                break;
+            }
+        }
+        std::fclose(f);
+        if (total_kb > 0) {
+            s_cached_snapshot.ram_sys_total_bytes = total_kb * 1024ULL;
+            s_cached_snapshot.ram_sys_used_bytes = (total_kb >= avail_kb) ? (total_kb - avail_kb) * 1024ULL : 0;
+        }
+    }
 
-    // 3. Process VRAM (project/game memory):
-    // On Linux, inspect /proc/self/fdinfo to read exact DRM client VRAM allocations.
+    // 3. Process VRAM & GTT (project/game memory):
+    // On Linux, inspect /proc/self/fdinfo to read exact DRM client VRAM and GTT allocations.
     uint64_t proc_vram_bytes = 0;
+    uint64_t proc_gtt_bytes = 0;
 #ifdef __linux__
     if (DIR* dir = opendir("/proc/self/fdinfo")) {
         std::vector<uint64_t> clients;
@@ -70,33 +86,39 @@ void SampleMetrics() {
             if (!f) continue;
             char line[128];
             bool drm = false;
-            unsigned long long client = 0, vram_kib = 0;
+            unsigned long long client = 0, vram_kib = 0, gtt_kib = 0;
             while (std::fgets(line, sizeof(line), f)) {
                 drm |= (std::strncmp(line, "drm-driver:", 11) == 0);
                 std::sscanf(line, "drm-client-id: %llu", &client);
                 if (std::sscanf(line, "drm-memory-vram: %llu", &vram_kib) == 1 && vram_kib > 0) {}
                 else if (std::sscanf(line, "drm-total-vram: %llu", &vram_kib) == 1 && vram_kib > 0) {}
+                else if (std::sscanf(line, "drm-memory-gtt: %llu", &gtt_kib) == 1 && gtt_kib > 0) {}
+                else if (std::sscanf(line, "drm-total-gtt: %llu", &gtt_kib) == 1 && gtt_kib > 0) {}
             }
             std::fclose(f);
-            if (drm && vram_kib > 0 && std::find(clients.begin(), clients.end(), client) == clients.end()) {
+            if (drm && (vram_kib > 0 || gtt_kib > 0) && std::find(clients.begin(), clients.end(), client) == clients.end()) {
                 clients.push_back(client);
                 proc_vram_bytes += (uint64_t(vram_kib) * 1024ULL);
+                proc_gtt_bytes += (uint64_t(gtt_kib) * 1024ULL);
             }
         }
         closedir(dir);
     }
 #endif
     // Fallback: internal Vulkan atomic memory trackers (in-process allocated memory)
-    if (proc_vram_bytes == 0) {
+    if (proc_vram_bytes == 0 && proc_gtt_bytes == 0) {
         const uint64_t alloc = BbStats::device_alloc_bytes.load(std::memory_order_relaxed);
         const uint64_t freed = BbStats::device_free_bytes.load(std::memory_order_relaxed);
         proc_vram_bytes = (alloc > freed) ? (alloc - freed) : 0;
     }
     s_cached_snapshot.vram_bytes = proc_vram_bytes;
+    s_cached_snapshot.gtt_bytes = proc_gtt_bytes;
 
     // 4. GPU Usage: probe all available DRM cards and track the active/dedicated GPU
     static int s_gpu_fds[4] = {-1, -1, -1, -1};
     static int s_vram_fds[4] = {-1, -1, -1, -1};
+    static int s_gtt_fds[4] = {-1, -1, -1, -1};
+    static int s_mclk_fds[4] = {-1, -1, -1, -1};
     static bool s_probed = false;
     if (!s_probed) {
         s_probed = true;
@@ -106,11 +128,15 @@ void SampleMetrics() {
             s_gpu_fds[i] = open(path, O_RDONLY);
             std::snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/mem_info_vram_used", i);
             s_vram_fds[i] = open(path, O_RDONLY);
+            std::snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/mem_info_gtt_used", i);
+            s_gtt_fds[i] = open(path, O_RDONLY);
+            std::snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/pp_dpm_mclk", i);
+            s_mclk_fds[i] = open(path, O_RDONLY);
         }
     }
 
     float max_busy = -1.0f;
-    uint64_t vram_used_sysfs = 0;
+    int best_card = -1;
     for (int i = 0; i < 4; ++i) {
         if (s_gpu_fds[i] >= 0) {
             char buf[16]{};
@@ -122,16 +148,62 @@ void SampleMetrics() {
                     const float fval = float(std::clamp(val, 0, 100));
                     if (fval > max_busy) {
                         max_busy = fval;
-                        if (s_vram_fds[i] >= 0) {
-                            char vbuf[32]{};
-                            const ssize_t vn = pread(s_vram_fds[i], vbuf, sizeof(vbuf) - 1, 0);
-                            if (vn > 0) {
-                                vbuf[vn] = '\0';
-                                unsigned long long v = 0;
-                                if (std::sscanf(vbuf, "%llu", &v) == 1 && v > 0) {
-                                    vram_used_sysfs = v;
-                                }
-                            }
+                        best_card = i;
+                    }
+                }
+            }
+        }
+    }
+
+    if (best_card < 0) {
+        for (int i = 0; i < 4; ++i) {
+            if (s_gpu_fds[i] >= 0 || s_vram_fds[i] >= 0) {
+                best_card = i;
+                break;
+            }
+        }
+    }
+
+    uint64_t vram_used_sysfs = 0;
+    uint64_t gtt_used_sysfs = 0;
+    uint32_t mem_clock = 0;
+
+    if (best_card >= 0) {
+        if (s_vram_fds[best_card] >= 0) {
+            char vbuf[32]{};
+            const ssize_t vn = pread(s_vram_fds[best_card], vbuf, sizeof(vbuf) - 1, 0);
+            if (vn > 0) {
+                vbuf[vn] = '\0';
+                unsigned long long v = 0;
+                if (std::sscanf(vbuf, "%llu", &v) == 1 && v > 0) {
+                    vram_used_sysfs = v;
+                }
+            }
+        }
+        if (s_gtt_fds[best_card] >= 0) {
+            char gbuf[32]{};
+            const ssize_t gn = pread(s_gtt_fds[best_card], gbuf, sizeof(gbuf) - 1, 0);
+            if (gn > 0) {
+                gbuf[gn] = '\0';
+                unsigned long long g = 0;
+                if (std::sscanf(gbuf, "%llu", &g) == 1 && g > 0) {
+                    gtt_used_sysfs = g;
+                }
+            }
+        }
+        if (s_mclk_fds[best_card] >= 0) {
+            char mbuf[256]{};
+            const ssize_t mn = pread(s_mclk_fds[best_card], mbuf, sizeof(mbuf) - 1, 0);
+            if (mn > 0) {
+                mbuf[mn] = '\0';
+                const char* star = std::strchr(mbuf, '*');
+                if (star) {
+                    const char* p = star;
+                    while (p > mbuf && *p != ':') --p;
+                    if (*p == ':') {
+                        unsigned int mhz = 0;
+                        if (std::sscanf(p + 1, " %uM", &mhz) == 1 && mhz > 0) {
+                            mem_clock = mhz;
                         }
                     }
                 }
@@ -149,6 +221,8 @@ void SampleMetrics() {
         }
     }
     s_cached_snapshot.vram_sys_bytes = vram_used_sysfs;
+    s_cached_snapshot.gtt_sys_bytes = gtt_used_sysfs;
+    s_cached_snapshot.mem_clock_mhz = mem_clock;
 }
 
 } // namespace

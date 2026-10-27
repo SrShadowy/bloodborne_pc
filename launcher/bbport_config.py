@@ -92,6 +92,7 @@ UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
              ("TAA (нативное сглаживание)", "taa"), ("DLSS (NVIDIA RTX)", "dlss"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
+PRESET_SCALES = [1.0, 1.5, 1.7, 2.0, 3.0]
 ASPECTS = ["auto", "4:3", "16:10", "16:9", "21:9", "32:9"]
 ASPECT_RATIOS = {"4:3": 4 / 3, "16:10": 16 / 10, "16:9": 16 / 9, "21:9": 64 / 27, "32:9": 32 / 9}
 OUTPUTS = {
@@ -574,6 +575,31 @@ def game_environment(s):
         env.setdefault("BB_GUEST_MEMORY", "host")
         env.setdefault("BB_CHUNK_UPLOADS", "1")
         env.setdefault("BB_CHUNK_TEXTURES", "1")
+    # Link internal resolution scale preset to BB_RENDER_RES when upscaler is off
+    if "BB_RENDER_RES" not in env:
+        ini_file = PORT_DIR / "bbport.ini"
+        upscaler_mode = "off"
+        preset_idx = 0
+        output_res_str = s.get("output_res", "1920x1080")
+        if ini_file.is_file():
+            try:
+                for line in ini_file.read_text().splitlines():
+                    if line.startswith("upscaler="):
+                        upscaler_mode = line.split("=", 1)[1].strip()
+                    elif line.startswith("preset="):
+                        preset_idx = int(line.split("=", 1)[1].strip() or 0)
+                    elif line.startswith("output_res="):
+                        output_res_str = line.split("=", 1)[1].strip()
+            except Exception:
+                pass
+        if upscaler_mode == "off" and preset_idx > 0:
+            out_w, out_h = parse_size(output_res_str, (1920, 1080))
+            if 0 <= preset_idx < len(PRESET_SCALES):
+                scale = PRESET_SCALES[preset_idx]
+                if scale > 1.0:
+                    rw = max(2, round(out_w / scale / 2) * 2)
+                    rh = max(2, round(out_h / scale / 2) * 2)
+                    env["BB_RENDER_RES"] = f"{rw}x{rh}"
     # The GPU chosen by name: its index in Vulkan's order now (BB_GPU_ID). One not found (taken
     # out, renamed by a driver update) leaves the choice to the port. BB_GPU_ID from the shell
     # wins.
