@@ -20,7 +20,12 @@ using Vulkan::g_bb_background_pipelines_total;
 using Vulkan::g_bb_compiles_total;
 using Vulkan::g_bb_shader_import_active;
 
-namespace BbOverlay::detail {
+namespace BbOverlay {
+void SetOpen(bool value);
+void TrophyWindow(float dt);
+bool TrophyActive();
+
+namespace detail {
 
 inline bool dirty = false; // settings changed while open: saved on close
 inline float base_scale = 1.0f;
@@ -43,6 +48,9 @@ void Hint(const char* text);
 /// Text about a problem (an upscaler that cannot run, a missing file), in orange.
 void ProblemText(const char* text);
 
+// In-game settings overlay menu (bbport_overlay_menu.cpp).
+void Menu();
+
 // The menu's sections (bbport_overlay_sections.cpp).
 void ShadersSection();
 bool UpscalerSection(BbSettings::Values& s);
@@ -51,4 +59,5 @@ void OutputSection(BbSettings::Values& s);
 void GameEffectsSection(BbSettings::Values& s);
 void FrameRateLimitSection(BbSettings::Values& s);
 
-} // namespace BbOverlay::detail
+} // namespace detail
+} // namespace BbOverlay

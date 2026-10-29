@@ -328,6 +328,7 @@ struct Values {
 Values& Get();
 /// Localized overlay text; the Language selector itself stays in English.
 const char* MenuText(const char* english, const char* russian);
+const char* MenuText(const char* english, const char* portuguese, const char* russian);
 /// The ini code ("en", "pt_br", "ru") and display name of a Language.
 const char* LanguageCode(int lang);
 const char* LanguageName(int lang);

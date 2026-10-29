@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -411,8 +412,164 @@ Values& Get() {
     return values;
 }
 
+static const char* PortugueseMenuText(const char* english) {
+    if (!english) return "";
+    static const std::unordered_map<std::string_view, const char*> s_pt = {
+        // Output / Display
+        {"Output", "Saída"},
+        {"Aspect ratio", "Formato de tela"},
+        {"Resolution", "Resolução"},
+        {"Auto", "Automático"},
+        {"Auto (monitor)", "Automático (monitor)"},
+        {"Auto (by the GPU)", "Automático (pela GPU)"},
+        {"Auto (the DLL's choice)", "Automático (escolha da DLL)"},
+        {"Auto (the game's without an upscaler)", "Automático (sem upscaler)"},
+        {"Size of the final frame and UI; applies at once. The preset sets the scene size "
+         "relative to the output: 4K Performance = 1920x1080. Another aspect ratio widens the "
+         "view (the UI keeps to the screen edges).",
+         "Tamanho do quadro final e interface; aplica-se imediatamente. A predefinição define o tamanho "
+         "da cena relativo à saída: 4K Desempenho = 1920x1080. Outro formato de tela amplia a visão "
+         "(interface ajustada às bordas)."},
+        {"Size of the final frame and UI. The preset sets the scene size relative to "
+         "the output: 4K Performance = 1920x1080. Another aspect ratio widens the view (the "
+         "UI keeps to the screen edges). Applies after restarting the game.",
+         "Tamanho do quadro final e interface. A predefinição define o tamanho da cena relativo à saída: "
+         "4K Desempenho = 1920x1080. Outro formato amplia a visão (interface mantida nas bordas). "
+         "Aplica-se após reiniciar o jogo."},
+        {"The final frame and UI size changes at the next frame boundary. "
+         "The preset sets the scene size relative to the output: 4K Performance = 1920x1080. "
+         "Another aspect ratio widens the view (the UI keeps to the screen edges). "
+         "Changing the size resets the upscaler's history and may cause a brief pause.",
+         "O tamanho do quadro final e interface muda na transição do próximo quadro. A predefinição "
+         "define a resolução relativa à saída: 4K Desempenho = 1920x1080. Outro formato amplia a visão. "
+         "Mudar a resolução redefine o histórico do upscaler e pode causar uma breve pausa."},
+
+        // Upscaler
+        {"Temporal upscaler", "Upscaler temporal"},
+        {"Off", "Desligado"},
+        {"On", "Ligado"},
+        {"On + Boost", "Ligado + Boost"},
+        {"TAA (native anti-aliasing)", "TAA (anti-aliasing nativo)"},
+        {"FSR 1 (spatial, weak GPUs)", "FSR 1 (espacial, GPUs fracas)"},
+        {"FSR 3.1 (experimental)", "FSR 3.1 (experimental)"},
+        {"FSR 4 (AMD's DLL)", "FSR 4 (DLL da AMD)"},
+        {"Upscaler", "Upscaler"},
+        {"— AMD's DLLs not found", "— DLLs da AMD não encontradas"},
+        {"— not supported by this GPU", "— incompatível com esta GPU"},
+        {"— in development", "— em desenvolvimento"},
+        {"FSR 4 model", "Modelo do FSR 4"},
+        {"— not on this GPU", "— incompatível com esta GPU"},
+        {"— not built (launcher)", "— não compilado (launcher)"},
+        {"FSR 4 unavailable: %s", "FSR 4 indisponível: %s"},
+        {"FSR 4: auto exposure", "FSR 4: autoexposição"},
+        {"FSR 4: invert jitter sign", "FSR 4: inverter sinal de jitter"},
+        {"Preset", "Predefinição"},
+        {"%s (x%.1f, render %dx%d)", "%s (x%.1f, render %dx%d)"},
+        {"Active scene render: %d x %d", "Renderização da cena ativa: %d x %d"},
+        {"Startup preset: %s", "Predefinição de inicialização: %s"},
+        {"Sharpening (RCAS)", "Nitidez (RCAS)"},
+        {"Sharpness", "Nitidez"},
+        {"Subpixel jitter", "Jitter subpixel"},
+        {"Anti-aliasing", "Anti-aliasing"},
+        {"FXAA2_GS (the game's)", "FXAA2_GS (do jogo)"},
+        {"SMAA (without an upscaler)", "SMAA (sem upscaler)"},
+        {"The game's own", "Padrão do jogo"},
+        {"Game default", "Padrão do jogo"},
+
+        // Frame Generation & Low Latency
+        {"Frame generation", "Geração de quadros"},
+        {"Multiplier", "Multiplicador"},
+        {"Frame generation: %s", "Geração de quadros: %s"},
+        {"— not available here", "— indisponível aqui"},
+        {"— on with DLSS frame generation", "— ativado com geração de quadros DLSS"},
+        {"Low latency (NVIDIA Reflex)", "Baixa latência (NVIDIA Reflex)"},
+        {"Low latency (AMD Anti-Lag 2)", "Baixa latência (AMD Anti-Lag 2)"},
+
+        // Reactive mask
+        {"Reactive mask", "Máscara reativa"},
+        {"Enable mask", "Ativar máscara"},
+        {"Scale", "Escala"},
+        {"Threshold", "Limite"},
+        {"Maximum", "Máximo"},
+        {"Motion debug view", "Depuração de movimento"},
+        {"Show mask (debug)", "Exibir máscara (debug)"},
+        {"Show motion vectors (debug)", "Exibir vetores de movimento (debug)"},
+        {"Show AO only (debug)", "Exibir apenas AO (debug)"},
+        {"Character motion vectors", "Vetores de movimento do personagem"},
+
+        // Effects & Detail
+        {"Game effects", "Efeitos do jogo"},
+        {"Effects", "Efeitos"},
+        {"Model detail", "Detalhe dos modelos"},
+        {"Highest (-2)", "Mais alto (-2)"},
+        {"Higher (-1)", "Alto (-1)"},
+        {"Default (0)", "Padrão (0)"},
+        {"Lower (1)", "Baixo (1)"},
+        {"Lowest (2)", "Mais baixo (2)"},
+        {"Coarse light grid", "Grade de iluminação aproximada"},
+        {"GT-VBAO ambient occlusion", "Oclusão de ambiente GT-VBAO"},
+        {"Chromatic aberration", "Aberração cromática"},
+        {"Depth of field (DoF)", "Profundidade de campo (DoF)"},
+        {"Motion blur", "Desfoque de movimento"},
+        {"Ambient occlusion (SSAO)", "Oclusão de ambiente (SSAO)"},
+        {"Game's own anti-aliasing", "Anti-aliasing próprio do jogo"},
+        {"Shadows from dynamic lights", "Sombras de luzes dinâmicas"},
+        {"Screen-space reflections (not in original game)", "Reflexos em espaço de tela (SSR)"},
+        {"Bloom", "Bloom (Brilho)"},
+        {"Skip startup intros", "Pular introduções ao iniciar"},
+        {"Free camera (Cross + L3)", "Câmera livre (Cross + L3)"},
+        {"Debug menu (requires font files)", "Menu de depuração (requer fontes)"},
+        {"Hold Cross and press L3 (keyboard: F + Left Ctrl).", "Segure Cruz e aperte L3 (teclado: F + Ctrl Esquerdo)."},
+
+        // Frame Rate Limit
+        {"Frame rate limit", "Limite de taxa de quadros"},
+        {"Frame rate limit (now)", "Limite de taxa de quadros (agora)"},
+        {"Target FPS", "FPS Alvo"},
+        {"Off (display refresh)", "Desligado (taxa do monitor)"},
+        {"Off (match display)", "Desligado (taxa do monitor)"},
+        {"Display (refresh rate)", "Monitor (taxa de atualização)"},
+        {"Match display", "Acompanhar monitor"},
+        {"Limit (F3: 30 FPS on and off)", "Limite (F3: 30 FPS liga/desliga)"},
+
+        // System / Process
+        {"Apply and restart game", "Aplicar e reiniciar jogo"},
+        {"Changes apply after restarting the game", "Alterações entram em vigor após reiniciar o jogo"},
+
+        // Shaders / Diagnostics
+        {"Shaders (diagnostics)", "Shaders (diagnósticos)"},
+        {"Compiled this session", "Compilados nesta sessão"},
+        {"Made in the background", "Compilados em segundo plano"},
+        {", recipes importing", ", importando receitas"},
+        {"Nothing compiled yet", "Nada compilado ainda"},
+        {"Ago", "Tempo"},
+        {"What", "Tipo"},
+        {"Hash", "Hash"},
+        {"shader", "shader"},
+        {"pipeline (waited)", "pipeline (aguardou)"},
+        {"compute pipeline", "pipeline compute"},
+        {"pipeline (background)", "pipeline (segundo plano)"},
+    };
+
+    auto it = s_pt.find(english);
+    if (it != s_pt.end()) {
+        return it->second;
+    }
+    return english;
+}
+
+const char* MenuText(const char* english, const char* portuguese, const char* russian) {
+    const int lang = Get().menu_language.load();
+    if (lang == LangPortuguese) return portuguese;
+    if (lang == LangRussian) return russian;
+    return english;
+}
+
 const char* MenuText(const char* english, const char* russian) {
-    return Get().menu_language.load() == LangRussian ? russian : english;
+    const int lang = Get().menu_language.load();
+    if (lang == LangPortuguese) {
+        return PortugueseMenuText(english);
+    }
+    return (lang == LangRussian) ? russian : english;
 }
 
 void Load() {

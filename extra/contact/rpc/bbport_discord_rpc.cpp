@@ -91,10 +91,12 @@ std::vector<std::string> GetPossibleSocketPaths() {
         bases.push_back(xdg);
         bases.push_back(std::string(xdg) + "/app/com.discordapp.Discord");
         bases.push_back(std::string(xdg) + "/app/com.discordapp.DiscordCanary");
+        bases.push_back(std::string(xdg) + "/.flatpak/com.discordapp.Discord/xdg-run");
     }
     bases.push_back(run_user);
     bases.push_back(run_user + "/app/com.discordapp.Discord");
     bases.push_back(run_user + "/app/com.discordapp.DiscordCanary");
+    bases.push_back(run_user + "/.flatpak/com.discordapp.Discord/xdg-run");
     bases.push_back(tmp);
 
     for (const auto& base : bases) {

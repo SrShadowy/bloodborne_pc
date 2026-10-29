@@ -35,7 +35,9 @@ void Slider(const char* label, std::atomic<float>& value, float lo, float hi, bo
 
 void Hint(const char* text) {
     ImGui::SameLine();
+    ImGui::PushTextWrapPos(-1.0f);
     ImGui::TextDisabled("(?)");
+    ImGui::PopTextWrapPos();
     if (ImGui::BeginItemTooltip()) {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
         ImGui::TextUnformatted(text);
@@ -178,7 +180,7 @@ void RenderFpsOverlaySection(BbSettings::Values& s, int lang, bool& dirty) {
 
     ImGui::PushStyleColor(ImGuiCol_Button, win_open ? ImVec4(0.24f, 0.45f, 0.40f, 1.0f) : ImVec4(0.18f, 0.35f, 0.48f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, win_open ? ImVec4(0.30f, 0.55f, 0.48f, 1.0f) : ImVec4(0.24f, 0.45f, 0.58f, 1.0f));
-    if (ImGui::Button(btn_text, ImVec2(-1, 28.0f))) {
+    if (ImGui::Button(btn_text, ImVec2(-32.0f, 28.0f))) {
         s.fps_hud_window_open.store(!win_open, std::memory_order_relaxed);
         dirty = true;
     }
@@ -491,6 +493,7 @@ void RenderInfoHudSection(BbSettings::Values& s, int lang, bool& dirty) {
 }
 
 void RenderDiscordRpcSection(BbSettings::Values& s, int lang, bool& dirty) {
+    BbDiscordRpc::Init();
     const char* sec_title = "Discord Rich Presence (RPC)";
     ImGui::SeparatorText(sec_title);
 
@@ -527,7 +530,7 @@ void RenderDiscordRpcSection(BbSettings::Values& s, int lang, bool& dirty) {
                                           "Configure Discord Presence###btn_open_drpc_win";
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.36f, 0.68f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.46f, 0.82f, 1.0f));
-    if (ImGui::Button(btn_label, ImVec2(-1, 0))) {
+    if (ImGui::Button(btn_label, ImVec2(-32.0f, 0))) {
         s.discord_rpc_window_open = true;
         dirty = true;
     }
@@ -852,9 +855,11 @@ void RenderMemoryToolsSection(float base_scale) {
         }
         ImGui::PopStyleColor(2);
     }
-    ImGui::TextDisabled("%s", UI::L("Opens separate floating windows for memory scanning, hex view, and live disassembly",
-                                   "Abre janelas flutuantes separadas para varredura, hex view e desassemblagem em tempo real",
-                                   "Открывает отдельные плавающие окна для сканирования, hex-инспектора и дизассемблера"));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", UI::L("Opens separate floating windows for memory scanning, hex view, and live disassembly.",
+                                   "Abre janelas flutuantes separadas para varredura, hex view e desassemblagem em tempo real.",
+                                   "Открывает отдельные плавающие окна для сканирования, hex-инспектора и дизассемблера."));
+    ImGui::PopStyleColor();
 }
 
 #undef S
