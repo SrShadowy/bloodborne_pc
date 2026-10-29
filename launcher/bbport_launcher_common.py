@@ -153,6 +153,13 @@ BUTTON_PROMPTS = [("Авто (последнее устройство)", "auto")
                   ("Xbox", "xbox"), ("Клавиатура и мышь", "keyboard")]
 PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
                  ("FIFO Relaxed", "FifoRelaxed"), ("Immediate", "Immediate")]
+# The game window's backend (SDL3 + Vulkan): auto keeps the run.sh default (X11/XWayland under
+# Steam, the compositor's Wayland otherwise); x11/wayland force it.
+VIDEO_BACKENDS = [
+    ("Авто", "auto", "Под Steam: X11 (XWayland) для Overlay и Steam Input; вне его — Wayland"),
+    ("X11 (XWayland)", "x11", "Когда игра не открывает окно в нативном Wayland"),
+    ("Wayland", "wayland", "Нативный бэкенд композитора, без XWayland"),
+]
 # A third element is a note shown under the row's title while that choice is selected: the
 # choice labels stay short, so the selected one is shown in full.
 DRAW_PIPE = [("Авто", "", "Включён при 8 и более потоках процессора"), ("Включён", "1"),

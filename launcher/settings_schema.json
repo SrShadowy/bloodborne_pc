@@ -312,6 +312,80 @@
      }
     },
     {
+     "key": "video_backend",
+     "type": "choice",
+     "store": "settings",
+     "default": "auto",
+     "title": {
+      "ru": "Оконный бэкенд",
+      "en": "Window backend",
+      "pt_BR": "Backend da janela",
+      "zh_CN": "窗口后端",
+      "fr_FR": "Backend de fenêtre"
+     },
+     "description": {
+      "ru": "Оконный бэкенд игры (SDL3 + Vulkan) и лаунчера.",
+      "en": "Window backend for the game (SDL3 + Vulkan) and launcher.",
+      "pt_BR": "Backend da janela do jogo (SDL3 + Vulkan) e do inicializador.",
+      "zh_CN": "游戏（SDL3 + Vulkan）与启动器的窗口后端。",
+      "fr_FR": "Backend de fenêtre pour le jeu (SDL3 + Vulkan) et le lanceur."
+     },
+     "group": {
+      "ru": "Окно",
+      "en": "Window",
+      "pt_BR": "Janela",
+      "zh_CN": "窗口",
+      "fr_FR": "Fenêtre"
+     },
+     "choices": [
+      {
+       "value": "auto",
+       "ru": "Авто",
+       "en": "Auto",
+       "pt_BR": "Automático",
+       "zh_CN": "自动",
+       "fr_FR": "Auto",
+       "description": {
+        "ru": "Под Steam: X11 (XWayland) для Overlay и Steam Input; вне его — Wayland.",
+        "en": "Under Steam: X11 (XWayland) for Overlay and Steam Input; outside — Wayland.",
+        "pt_BR": "Sob o Steam: X11 (XWayland) para Overlay e Steam Input; fora dele — Wayland.",
+        "zh_CN": "在 Steam 下：X11 (XWayland) 用于叠加层和 Steam 输入；否则为 Wayland。",
+        "fr_FR": "Sous Steam : X11 (XWayland) pour l'overlay et Steam Input ; sinon Wayland."
+       }
+      },
+      {
+       "value": "x11",
+       "ru": "X11 (XWayland)",
+       "en": "X11 (XWayland)",
+       "pt_BR": "X11 (XWayland)",
+       "zh_CN": "X11 (XWayland)",
+       "fr_FR": "X11 (XWayland)",
+       "description": {
+        "ru": "Когда игра не открывает окно в нативном Wayland.",
+        "en": "When the game does not open a window under native Wayland.",
+        "pt_BR": "Quando o jogo não abre uma janela no Wayland nativo.",
+        "zh_CN": "当游戏在原生 Wayland 下无法打开窗口时使用。",
+        "fr_FR": "Lorsque le jeu n'ouvre pas de fenêtre sous Wayland natif."
+       }
+      },
+      {
+       "value": "wayland",
+       "ru": "Wayland",
+       "en": "Wayland",
+       "pt_BR": "Wayland",
+       "zh_CN": "Wayland",
+       "fr_FR": "Wayland",
+       "description": {
+        "ru": "Нативный бэкенд композитора, без XWayland.",
+        "en": "Native compositor backend, without XWayland.",
+        "pt_BR": "Backend nativo do compositor, sem XWayland.",
+        "zh_CN": "原生混成器后端，无需 XWayland。",
+        "fr_FR": "Backend natif du compositeur, sans XWayland."
+       }
+      }
+     ]
+    },
+    {
      "key": "present_mode",
      "type": "choice",
      "store": "settings",
@@ -2068,11 +2142,13 @@
    "icon": "online",
    "title": {
     "ru": "Онлайн",
-    "en": "Online"
+    "en": "Online",
+    "pt_BR": "Online"
    },
    "description": {
     "ru": "Кооператив и онлайн-функции игры (модуль online\\bbnet20.dll).",
-    "en": "Co-op and the game's online features (the module online\\bbnet20.dll)."
+    "en": "Co-op and the game's online features (the module online\\bbnet20.dll).",
+    "pt_BR": "Recursos cooperativos e online do jogo (módulo online\\bbnet20.dll)."
    },
    "items": [
     {
@@ -2085,15 +2161,18 @@
      ],
      "group": {
       "ru": "Игра по сети",
-      "en": "Online play"
+      "en": "Online play",
+      "pt_BR": "Jogo em rede"
      },
      "title": {
       "ru": "Играть онлайн",
-      "en": "Play online"
+      "en": "Play online",
+      "pt_BR": "Jogar online"
      },
      "description": {
       "ru": "Сообщения, пятна крови и призраки приходят с игрового сервера; колокола и призывы идут через сервер кооператива. Выключено: игра остаётся офлайн. Включено: в игре показывается выбор «онлайн/офлайн». Совместимо с версией для Linux: нужны версия игры 1.09 и тот же сервер.",
-      "en": "Messages, bloodstains and ghosts come from the game server; bells and summons go through the co-op server. Off: the game stays offline. On: the game's online / offline choice is shown. Works with the Linux version: game version 1.09 and the same server are needed."
+      "en": "Messages, bloodstains and ghosts come from the game server; bells and summons go through the co-op server. Off: the game stays offline. On: the game's online / offline choice is shown. Works with the Linux version: game version 1.09 and the same server are needed.",
+      "pt_BR": "Mensagens, manchas de sangue e espectros vêm do servidor do jogo; sinos e invocações passam pelo servidor cooperativo. Desativado: o jogo permanece offline. Ativado: a escolha online/offline é mostrada no jogo. Compatível com a versão Linux: necessária a versão 1.09 do jogo e o mesmo servidor."
      }
     },
     {
@@ -2106,15 +2185,18 @@
      ],
      "group": {
       "ru": "Игра по сети",
-      "en": "Online play"
+      "en": "Online play",
+      "pt_BR": "Jogo em rede"
      },
      "title": {
       "ru": "Пул",
-      "en": "Pool"
+      "en": "Pool",
+      "pt_BR": "Pool"
      },
      "description": {
       "ru": "С кем играть: у всех в сессии должен быть один пул.",
-      "en": "Whom to play with: everyone in a session needs the same pool."
+      "en": "Whom to play with: everyone in a session needs the same pool.",
+      "pt_BR": "Com quem jogar: todos na sessão precisam usar o mesmo pool."
      },
      "enabled_by": "online",
      "choices": [
@@ -2124,8 +2206,10 @@
        "en": "Seamless Hunt (seamlesshunt.com)",
        "description": {
         "ru": "Сервер BBSC: бесшовный кооператив, колокола и призывы; аккаунт создаётся на сайте.",
-        "en": "BBSC's server: seamless co-op, bells and summons; the account is made on the website."
-       }
+        "en": "BBSC's server: seamless co-op, bells and summons; the account is made on the website.",
+        "pt_BR": "Servidor do BBSC: cooperativo contínuo, sinos e invocações; a conta é criada no site."
+       },
+       "pt_BR": "Seamless Hunt (seamlesshunt.com)"
       },
       {
        "value": "huntersdream",
@@ -2133,8 +2217,10 @@
        "en": "The Hunter's Dream (thehuntersdream.com)",
        "description": {
         "ru": "Кооператив с игроками bbhost через The Hunter's Dream; вход через Discord.",
-        "en": "Co-op with bbhost players through The Hunter's Dream; sign-in with Discord."
-       }
+        "en": "Co-op with bbhost players through The Hunter's Dream; sign-in with Discord.",
+        "pt_BR": "Cooperativo com jogadores do bbhost através do The Hunter's Dream; login pelo Discord."
+       },
+       "pt_BR": "The Hunter's Dream (thehuntersdream.com)"
       }
      ]
     },
@@ -2148,15 +2234,18 @@
      ],
      "group": {
       "ru": "Игровой сервер (сообщения, пятна крови, призраки)",
-      "en": "Game server (messages, bloodstains, ghosts)"
+      "en": "Game server (messages, bloodstains, ghosts)",
+      "pt_BR": "Servidor de jogo (mensagens, manchas de sangue, espectros)"
      },
      "title": {
       "ru": "Игровой сервер",
-      "en": "Game server"
+      "en": "Game server",
+      "pt_BR": "Servidor de jogo"
      },
      "description": {
       "ru": "Пусто: сервер Seamless Hunt.",
-      "en": "Empty: Seamless Hunt's server."
+      "en": "Empty: Seamless Hunt's server.",
+      "pt_BR": "Vazio: servidor Seamless Hunt."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2174,15 +2263,18 @@
      ],
      "group": {
       "ru": "Сервер кооператива (колокола и призывы)",
-      "en": "Co-op server (bells and summons)"
+      "en": "Co-op server (bells and summons)",
+      "pt_BR": "Servidor cooperativo (sinos e invocações)"
      },
      "title": {
       "ru": "Адрес сервера",
-      "en": "Server address"
+      "en": "Server address",
+      "pt_BR": "Endereço do servidor"
      },
      "description": {
       "ru": "play.seamlesshunt.com:31313 — сервер Seamless Hunt (BBSC). Публичный сервер shadPS4 принимает только сборки shadPS4. Для частного сервера укажите host:port от его владельца.",
-      "en": "play.seamlesshunt.com:31313 is Seamless Hunt's server (BBSC). shadPS4's public server accepts only shadPS4's builds. For a private server enter the host:port its owner gives."
+      "en": "play.seamlesshunt.com:31313 is Seamless Hunt's server (BBSC). shadPS4's public server accepts only shadPS4's builds. For a private server enter the host:port its owner gives.",
+      "pt_BR": "play.seamlesshunt.com:31313 é o servidor do Seamless Hunt (BBSC). O servidor público do shadPS4 aceita apenas compilações do shadPS4. Para um servidor privado, insira host:porta fornecidos pelo proprietário."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2200,15 +2292,18 @@
      ],
      "group": {
       "ru": "Сервер кооператива (колокола и призывы)",
-      "en": "Co-op server (bells and summons)"
+      "en": "Co-op server (bells and summons)",
+      "pt_BR": "Servidor cooperativo (sinos e invocações)"
      },
      "title": {
       "ru": "Адрес WebAPI",
-      "en": "WebAPI address"
+      "en": "WebAPI address",
+      "pt_BR": "Endereço do WebAPI"
      },
      "description": {
       "ru": "Пусто: адрес сервера с портом 31315.",
-      "en": "Empty: the server's address with port 31315."
+      "en": "Empty: the server's address with port 31315.",
+      "pt_BR": "Vazio: endereço do servidor com a porta 31315."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2226,15 +2321,18 @@
      ],
      "group": {
       "ru": "Сервер кооператива (колокола и призывы)",
-      "en": "Co-op server (bells and summons)"
+      "en": "Co-op server (bells and summons)",
+      "pt_BR": "Servidor cooperativo (sinos e invocações)"
      },
      "title": {
       "ru": "Бесшовный кооператив (BBSC)",
-      "en": "Seamless co-op (BBSC)"
+      "en": "Seamless co-op (BBSC)",
+      "pt_BR": "Cooperativo contínuo (BBSC)"
      },
      "description": {
       "ru": "Сессия переживает смерти, лампы, смену локаций и боссов; до 5 охотников. Нужен сервер с игровым сервером BBSC, у всех игроков включено. Пока включено, колокола игры заменены колоколами BBSC; после выключения прежние вернутся при следующей загрузке персонажа (сохранение копируется в save-backups).",
-      "en": "The session survives deaths, lamps, area changes and bosses; up to 5 hunters. Needs a server with BBSC's game server, on for every player. While on, the game's bells are replaced by BBSC's; after turning it off the old ones come back at the next character load (the save is copied to save-backups)."
+      "en": "The session survives deaths, lamps, area changes and bosses; up to 5 hunters. Needs a server with BBSC's game server, on for every player. While on, the game's bells are replaced by BBSC's; after turning it off the old ones come back at the next character load (the save is copied to save-backups).",
+      "pt_BR": "A sessão continua após mortes, lâmpadas, mudanças de área e chefes; até 5 caçadores. Requer um servidor com BBSC e ativado para todos os jogadores. Enquanto ativo, os sinos do jogo são substituídos pelos do BBSC; ao desativar, os originais retornam no próximo carregamento de personagem (o save é copiado para save-backups)."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2252,15 +2350,18 @@
      ],
      "group": {
       "ru": "Учётная запись",
-      "en": "Account"
+      "en": "Account",
+      "pt_BR": "Conta"
      },
      "title": {
       "ru": "Online ID (NPID)",
-      "en": "Online ID (NPID)"
+      "en": "Online ID (NPID)",
+      "pt_BR": "ID Online (NPID)"
      },
      "description": {
       "ru": "Имя учётной записи shadNet, не email. Зарегистрируйтесь на seamlesshunt.com или спросите владельца частного сервера.",
-      "en": "The shadNet account name, not an email. Register on seamlesshunt.com or ask the private server's owner."
+      "en": "The shadNet account name, not an email. Register on seamlesshunt.com or ask the private server's owner.",
+      "pt_BR": "Nome da conta shadNet, não o e-mail. Registre-se em seamlesshunt.com ou consulte o proprietário do servidor privado."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2278,15 +2379,18 @@
      ],
      "group": {
       "ru": "Учётная запись",
-      "en": "Account"
+      "en": "Account",
+      "pt_BR": "Conta"
      },
      "title": {
       "ru": "Пароль",
-      "en": "Password"
+      "en": "Password",
+      "pt_BR": "Senha"
      },
      "description": {
       "ru": "Хранится на этом компьютере вместе с настройками лаунчера.",
-      "en": "Kept on this computer with the launcher's settings."
+      "en": "Kept on this computer with the launcher's settings.",
+      "pt_BR": "Armazenada neste computador junto com as configurações do launcher."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2304,15 +2408,18 @@
      ],
      "group": {
       "ru": "The Hunter's Dream",
-      "en": "The Hunter's Dream"
+      "en": "The Hunter's Dream",
+      "pt_BR": "The Hunter's Dream"
      },
      "title": {
       "ru": "Адрес сервера",
-      "en": "Server address"
+      "en": "Server address",
+      "pt_BR": "Endereço do servidor"
      },
      "description": {
       "ru": "Пусто: https://thehuntersdream.com.",
-      "en": "Empty: https://thehuntersdream.com."
+      "en": "Empty: https://thehuntersdream.com.",
+      "pt_BR": "Vazio: https://thehuntersdream.com."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2330,15 +2437,18 @@
      ],
      "group": {
       "ru": "The Hunter's Dream",
-      "en": "The Hunter's Dream"
+      "en": "The Hunter's Dream",
+      "pt_BR": "The Hunter's Dream"
      },
      "title": {
       "ru": "Учётная запись",
-      "en": "Account"
+      "en": "Account",
+      "pt_BR": "Conta"
      },
      "description": {
       "ru": "Вход через Discord, как в bbhost: на сайте нужно подтвердить код. Пароль не нужен, токен хранится на этом компьютере вместе с настройками лаунчера. BBSC в этом пуле нет.",
-      "en": "Sign-in with Discord as in bbhost: a code is approved on the website. No password; the token is kept on this computer with the launcher's settings. No BBSC in this pool."
+      "en": "Sign-in with Discord as in bbhost: a code is approved on the website. No password; the token is kept on this computer with the launcher's settings. No BBSC in this pool.",
+      "pt_BR": "Login pelo Discord como no bbhost: um código é confirmado no site. Sem senha; o token é mantido neste computador junto com as configurações do launcher. Não há BBSC neste pool."
      },
      "enabled_by": "online",
      "visible_when": {
@@ -2356,15 +2466,18 @@
      ],
      "group": {
       "ru": "Соединение",
-      "en": "Connection"
+      "en": "Connection",
+      "pt_BR": "Conexão"
      },
      "title": {
       "ru": "UPnP (открыть порт на роутере автоматически)",
-      "en": "UPnP (open the port on the router automatically)"
+      "en": "UPnP (open the port on the router automatically)",
+      "pt_BR": "UPnP (abrir porta no roteador automaticamente)"
      },
      "description": {
       "ru": "Выключите при Tailscale или другом VPN.",
-      "en": "Turn off with Tailscale or another VPN."
+      "en": "Turn off with Tailscale or another VPN.",
+      "pt_BR": "Desative ao usar Tailscale ou outra VPN."
      },
      "enabled_by": "online"
     },
@@ -2378,15 +2491,18 @@
      ],
      "group": {
       "ru": "Соединение",
-      "en": "Connection"
+      "en": "Connection",
+      "pt_BR": "Conexão"
      },
      "title": {
       "ru": "Проверить соединение",
-      "en": "Check the connection"
+      "en": "Check the connection",
+      "pt_BR": "Testar conexão"
      },
      "description": {
       "ru": "У всех в сессии должны быть одна версия игры (1.09) и один сервер. Читы меняют игру и для других игроков: выключайте их при совместной игре.",
-      "en": "Everyone in a session needs the same game version (1.09) and the same server. Cheats change the game for the other players too: turn them off in co-op."
+      "en": "Everyone in a session needs the same game version (1.09) and the same server. Cheats change the game for the other players too: turn them off in co-op.",
+      "pt_BR": "Todos na sessão precisam da mesma versão do jogo (1.09) e do mesmo servidor. Trapaças afetam os demais jogadores: desative-as no jogo cooperativo."
      }
     }
    ]

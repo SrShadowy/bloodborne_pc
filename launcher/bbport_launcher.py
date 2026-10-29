@@ -360,6 +360,9 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
                                                 lambda _button: self.fill_displays()))
         self.fill_displays()
         screen.add(self.display_row)
+        self.video_backend_row = combo_row(tr("Оконный бэкенд"), None, VIDEO_BACKENDS,
+                                           self.settings.get("video_backend", self.ini.get("video_backend", "auto")))
+        screen.add(self.video_backend_row)
         aspect = self.ini.get("aspect_ratio", "auto")
         self.fill_aspects(aspect if aspect in ASPECTS else "auto")
         # Auto (output_res=auto, and new settings): the monitor's own resolution.
@@ -638,6 +641,7 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             "game_dir": self.game_row, "user_dir": self.user_row, "language": self.language_row,
             "game_text_language": self.text_language_row, "game_voice_language": self.voice_language_row,
             "skip_network_choice": self.skip_network_row, "display": self.display_row,
+            "video_backend": self.video_backend_row,
             "fullscreen": self.fullscreen_row, "aspect_ratio": self.aspect_row,
             "output_res": self.output_row, "present_mode": self.present_row, "hdr": self.hdr_row,
             "upscaler": self.upscaler_row, "preset": self.preset_row, "anti_aliasing": self.aa_row,
@@ -1004,6 +1008,7 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         s["gamepad"] = combo_value(self.gamepad_row)
         s["gamepad_name"] = self.gamepad_row.names[self.gamepad_row.get_selected()]
         s["display"] = combo_value(self.display_row)
+        s["video_backend"] = combo_value(self.video_backend_row)
         s["gpu"] = combo_value(self.gpu_row)
         s["skip_network_choice"] = self.skip_network_row.get_active()
         s["language"] = combo_value(self.language_row)
@@ -1056,6 +1061,7 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             "vbao": "1" if self.vbao_row.get_active() else "0",
             "aspect_ratio": combo_value(self.aspect_row),
             "output_res": combo_value(self.output_row),
+            "video_backend": combo_value(self.video_backend_row),
             "model_lod": combo_value(self.lod_row),
             "texture_quality": combo_value(self.texture_row),
             "mouse_look": "1" if self.mouse_look_row.get_active() else "0",
