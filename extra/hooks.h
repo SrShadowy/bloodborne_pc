@@ -18,7 +18,5 @@
 
 #ifdef __cplusplus
 #include "vulkan/vk_common.h"
-void extra_fg_set_display_lut(vk::ImageView lut);
-vk::ImageView extra_fg_get_display_lut();
 bool extra_shader_pack_restore_master();
 #endif

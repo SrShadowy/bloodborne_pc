@@ -250,7 +250,6 @@ target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/bac
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/debugger
-    ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/frame_gen
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/screenshot
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/shader_tracker
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/camera

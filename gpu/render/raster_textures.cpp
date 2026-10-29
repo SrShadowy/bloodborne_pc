@@ -12,7 +12,6 @@
 #include <unordered_set>
 #include <mutex>
 #include "render/raster_internal.h"
-#include "extra/hooks.h" // [extra]
 #include "upscale/vk_frame_generation.h"
 
 namespace Vulkan {
@@ -497,7 +496,6 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             if (upscaler->Enabled()) {
                 // bbport: the display pass reads the upscaled frame (scaled presets).
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
-                if (desc.view_info.type == Gcn::ImageType::Color1DArray) extra_fg_set_display_lut(*image_view.image_view); // [extra]
             }
             image_infos.emplace_back(VK_NULL_HANDLE, view, layout);
             if (set_ok && binding_index < resolved.size()) {

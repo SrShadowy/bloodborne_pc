@@ -47,8 +47,9 @@ std::atomic<float> shown_aspect{16.0f / 9.0f};
 vk::Format FrameViewFormat(BbVideoOut::PixelFormat format) {
     switch (format) {
     case BbVideoOut::PixelFormat::A8B8G8R8Srgb:
-    case BbVideoOut::PixelFormat::A8R8G8B8Srgb:
         return vk::Format::eR8G8B8A8Srgb;
+    case BbVideoOut::PixelFormat::A8R8G8B8Srgb:
+        return vk::Format::eB8G8R8A8Srgb;
     case BbVideoOut::PixelFormat::A2R10G10B10:
     case BbVideoOut::PixelFormat::A2R10G10B10Srgb:
     case BbVideoOut::PixelFormat::A2R10G10B10Bt2020Pq:
@@ -261,10 +262,6 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
 
     VideoCore::ImageViewInfo view_info{};
     view_info.format = FrameViewFormat(attribute.attrib.pixel_format);
-    if (attribute.attrib.pixel_format == BbVideoOut::PixelFormat::A8R8G8B8Srgb) {
-        view_info.mapping.r = vk::ComponentSwizzle::eB;
-        view_info.mapping.b = vk::ComponentSwizzle::eR;
-    }
     // The frame is opaque: alpha would blend it with the overlay.
     view_info.mapping.a = vk::ComponentSwizzle::eOne;
     vk::ImageView source{};

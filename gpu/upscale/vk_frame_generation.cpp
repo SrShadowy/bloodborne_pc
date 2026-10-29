@@ -27,16 +27,6 @@
 #include "vulkan/shader_module.h"
 #include "vulkan/instance.h"
 
-static std::atomic<VkImageView> s_display_lut{VK_NULL_HANDLE};
-
-void extra_fg_set_display_lut(vk::ImageView lut) {
-    s_display_lut.store(static_cast<VkImageView>(lut), std::memory_order_relaxed);
-}
-
-vk::ImageView extra_fg_get_display_lut() {
-    return vk::ImageView{s_display_lut.load(std::memory_order_relaxed)};
-}
-
 namespace Vulkan {
 
 namespace {
