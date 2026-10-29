@@ -60,6 +60,36 @@ bool LoadCatalog(const std::filesystem::path& catalog_path) {
 
         s_total_instances = j.value("total_instances", 0u);
 
+        // Format 1: Upstream tools/shader_catalog.py (bbport-shader-catalog-1)
+        if (j.contains("programs") && j["programs"].is_object()) {
+            if (j.contains("bundles") && j["bundles"].is_object()) {
+                for (auto& [bname, bval] : j["bundles"].items()) {
+                    BundleStat b{};
+                    b.name = bname;
+                    if (bval.is_number()) {
+                        b.count = bval.get<uint32_t>();
+                        s_total_instances += b.count;
+                    }
+                    s_bundles.push_back(std::move(b));
+                }
+            }
+            for (auto& [k, v] : j["programs"].items()) {
+                StaticShaderInfo info{};
+                info.hash = ParseHexU64(k);
+                info.stage = v.value("stage", "Unknown");
+                info.code_size = v.value("code_bytes", 0u);
+                if (v.contains("bundles") && v["bundles"].is_array()) {
+                    for (const auto& b : v["bundles"]) {
+                        info.bundles.push_back(b.get<std::string>());
+                    }
+                }
+                if (info.hash != 0) {
+                    s_shaders[info.hash] = std::move(info);
+                }
+            }
+        }
+
+        // Format 2: Legacy static catalog
         if (j.contains("bundle_summaries") && j["bundle_summaries"].is_object()) {
             for (auto& [bname, binfo] : j["bundle_summaries"].items()) {
                 BundleStat b{};
@@ -106,10 +136,15 @@ bool AutoLoad(const std::filesystem::path& cache_dir) {
     if (IsLoaded()) return true;
 
     const std::vector<std::filesystem::path> candidates = {
+        std::filesystem::path("catalog.json"),
+        std::filesystem::path("shader_catalog.json"),
+        cache_dir / "catalog.json",
         cache_dir / "static_shader_catalog.json",
+        cache_dir / "CUSA03173" / "catalog.json",
         cache_dir / "CUSA03173" / "static_shader_catalog.json",
-        std::filesystem::path("dist/user/cache/CUSA03173/static_shader_catalog.json"),
+        std::filesystem::path("user/cache/CUSA03173/catalog.json"),
         std::filesystem::path("user/cache/CUSA03173/static_shader_catalog.json"),
+        std::filesystem::path("dist/user/cache/CUSA03173/static_shader_catalog.json"),
     };
 
     for (const auto& p : candidates) {

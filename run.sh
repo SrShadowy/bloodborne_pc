@@ -470,8 +470,14 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
 fi
 # Shader recipes (gpu/render/shader_rebuild.h): the shaders of the recorded game, translated for
 # this GPU by a background process at start, the code read from the game's own files.
-if [[ -z ${BB_SHADER_RECIPES+set} && -f shader_recipes.bin ]]; then
-    export BB_SHADER_RECIPES=$PWD/shader_recipes.bin
+if [[ -z ${BB_SHADER_RECIPES+set} ]]; then
+    if [[ -f shader_recipes.bin ]]; then
+        export BB_SHADER_RECIPES=$PWD/shader_recipes.bin
+    elif [[ -f dist/shader_recipes.bin ]]; then
+        export BB_SHADER_RECIPES=$PWD/dist/shader_recipes.bin
+    elif [[ -f "$cache_dir/shader_recipes.bin" ]]; then
+        export BB_SHADER_RECIPES="$cache_dir/shader_recipes.bin"
+    fi
 fi
 # Image shapes (gpu/textures/image_spares.h): the textures the game makes, so spares are made
 # ahead from the first session on.

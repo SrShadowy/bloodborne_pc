@@ -6,6 +6,8 @@
 #include "extra/core/shader_precompile/bbport_shader_pack.h"
 #include "extra/core/shader_precompile/bbport_static_catalog.h"
 #include "extra/core/shader_precompile/bbport_vk_pipeline_cache.h"
+#include "bbgpu.h"
+#include "render/pipeline_cache_internal.h"
 
 #include <imgui.h>
 #include <cstdio>
@@ -86,6 +88,37 @@ void TabShadersViews::RenderOverview(const std::filesystem::path& cache_dir) {
                 L("Valid Rebuilt", "Reconstruidos"), preloaded, total_keys, rebuild_pct,
                 L("Stale/Rejected", "Obsoletos/Rejeitados"), stale);
     ImGui::ProgressBar(rebuild_pct / 100.0f, ImVec2(-1.0f, 0.0f));
+
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "[4] %s",
+                       L("Shader Recipes Pack (Upstream 0.7)", "Pacote de Receitas de Shaders (Upstream 0.7)"));
+    std::error_code ec;
+    std::filesystem::path recipes_path = "shader_recipes.bin";
+    if (const char* env_p = std::getenv("BB_SHADER_RECIPES"); env_p && *env_p) {
+        recipes_path = env_p;
+    } else if (!std::filesystem::exists(recipes_path, ec)) {
+        recipes_path = cache_dir / "shader_recipes.bin";
+    }
+    const bool recipes_exist = std::filesystem::exists(recipes_path, ec);
+    const uintmax_t recipes_size = recipes_exist ? std::filesystem::file_size(recipes_path, ec) : 0;
+    const bool is_importing = Vulkan::g_bb_shader_import_active.load(std::memory_order_relaxed);
+
+    if (recipes_exist) {
+        ImGui::BulletText("shader_recipes.bin: %s (%zu KB)",
+                          is_importing ? L("IMPORTING IN BACKGROUND...", "IMPORTANDO EM SEGUNDO PLANO...") : L("ACTIVE / READY", "ATIVO / PRONTO"),
+                          recipes_size / 1024);
+        if (is_importing) {
+            ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.20f, 1.0f), "  [*] %s",
+                               L("Background worker translating shaders for this GPU...",
+                                 "Trabalhador em segundo plano traduzindo shaders para esta GPU..."));
+        } else {
+            ImGui::TextDisabled("  -> %s", L("Agnostic recipes precompiled on demand", "Receitas agnosticas pre-compiladas sob demanda"));
+        }
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.30f, 1.0f), "  [!] %s",
+                           L("No shader_recipes.bin active (export in Diagnostics tab).",
+                             "Nenhum shader_recipes.bin ativo (exporte na aba Diagnostico)."));
+    }
 }
 
 void TabShadersViews::RenderLiveEvents() {
@@ -199,8 +232,9 @@ void TabShadersViews::RenderStaticCatalog() {
     if (BbStaticCatalog::IsLoaded()) {
         const auto cstats = BbStaticCatalog::GetClassificationStats();
         const float pct = BbStaticCatalog::GetStaticCoveragePercentage();
-        ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.65f, 1.0f), "[OK] %s",
-                           L("Game Shaders Catalog Loaded (4,376 Programs)", "Catalogo de Shaders do Jogo Carregado"));
+        ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.65f, 1.0f), "[OK] %s (%u %s)",
+                           L("Game Shaders Catalog Loaded", "Catalogo de Shaders do Jogo Carregado"),
+                           cstats.total_static, L("programs", "programas"));
         ImGui::Text("%s: %u | %s: %u (%.1f%%) | %s: %u",
                     L("Total Static", "Total Estatico"), cstats.total_static,
                     L("Confirmed Matches", "Coincidentes"), cstats.confirmed_match, pct,
@@ -217,7 +251,12 @@ void TabShadersViews::RenderStaticCatalog() {
         ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.30f, 1.0f), "[!] %s",
                            L("Static catalog not loaded.", "Catalogo estatico nao carregado."));
         if (ImGui::Button(L("Load Static Catalog", "Carregar Catalogo Estatico"))) {
-            BbStaticCatalog::AutoLoad("dist/user/cache");
+            if (BbStaticCatalog::AutoLoad(".") || BbStaticCatalog::AutoLoad("user/cache/CUSA03173")) {
+                UiManager::SetStatus(L("Static catalog loaded successfully!", "Catalogo estatico carregado com sucesso!"));
+            } else {
+                UiManager::SetStatus(L("catalog.json not found. Run: python3 tools/shader_catalog.py build GAME_DIR catalog.json",
+                                       "catalog.json nao encontrado. Execute: python3 tools/shader_catalog.py build GAME_DIR catalog.json"));
+            }
         }
     }
 }
@@ -245,6 +284,22 @@ void TabShadersViews::RenderDiagnostics(const std::filesystem::path& cache_dir) 
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(%s)", report_path.filename().string().c_str());
+
+    ImGui::Spacing();
+    if (ImGui::Button(L("Export Shader Recipes (shader_recipes.bin)", "Exportar Receitas de Shaders (shader_recipes.bin)"))) {
+        const char* gdir = std::getenv("BB_SHADER_GAME_DIR");
+        if (!gdir || !*gdir) gdir = std::getenv("BB_GAME_DIR");
+        if (gdir && *gdir) {
+            const int res = ::bbgpu_export_shader_recipes(cache_dir.string().c_str(), gdir, "shader_recipes.bin");
+            if (res == 0) {
+                UiManager::SetStatus(L("shader_recipes.bin exported successfully!", "shader_recipes.bin exportado com sucesso!"));
+            } else {
+                UiManager::SetStatus(L("Failed to export shader recipes.", "Falha ao exportar receitas de shaders."));
+            }
+        } else {
+            UiManager::SetStatus(L("Game directory not set (define BB_SHADER_GAME_DIR).", "Diretorio do jogo nao definido (defina BB_SHADER_GAME_DIR)."));
+        }
+    }
 }
 
 } // namespace UI

@@ -136,14 +136,31 @@ public:
     /// `wanted`: only these programs are kept (every one when null).
     void Load(const fs::path& game_dir, const std::unordered_set<u64>* wanted) {
         std::error_code ec;
-        for (const auto& entry : fs::directory_iterator{game_dir / "dvdroot_ps4" / "shader", ec}) {
+        fs::path shader_dir = game_dir / "dvdroot_ps4" / "shader";
+        if (!fs::is_directory(shader_dir, ec)) {
+            shader_dir = game_dir / "shader";
+        }
+        if (!fs::is_directory(shader_dir, ec)) {
+            shader_dir = game_dir;
+        }
+        for (const auto& entry : fs::directory_iterator{shader_dir, ec}) {
             if (entry.path().extension() == ".dcx") {
                 source = entry.path().filename().string();
                 Scan(Inflate(ReadFile(entry.path())), wanted);
             }
         }
-        source = "eboot.bin";
-        Scan(ReadFile(game_dir / "eboot.bin"), wanted);
+        fs::path eboot_path = game_dir / "eboot.bin";
+        if (!fs::is_regular_file(eboot_path, ec)) {
+            if (fs::is_regular_file(game_dir / ".." / "eboot.bin", ec)) {
+                eboot_path = game_dir / ".." / "eboot.bin";
+            } else if (fs::is_regular_file(game_dir / ".." / ".." / "eboot.bin", ec)) {
+                eboot_path = game_dir / ".." / ".." / "eboot.bin";
+            }
+        }
+        if (fs::is_regular_file(eboot_path, ec)) {
+            source = "eboot.bin";
+            Scan(ReadFile(eboot_path), wanted);
+        }
     }
     const std::vector<u32>* Code(u64 hash) const {
         const auto it = programs.find(hash);

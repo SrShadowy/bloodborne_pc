@@ -512,25 +512,101 @@ int main(int argc, char **argv) {
     mallopt(M_ARENA_MAX,1);
     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
 #endif
-    if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
-    /* Shader recipes (gpu/render/shader_rebuild.h): no game here, the guest's addresses stay free. */
-    if (argc == 5 && !strcmp(argv[1], "--export-shader-recipes"))
+    if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "-h")) {
+        fprintf(stdout, "Usage: %s <boot.bin> [options] | <command> [args...]\n\n"
+                        "Game Execution:\n"
+                        "  %s <boot.bin> [options]\n"
+                        "    --app0 <dir>              Game files directory (e.g. CUSA03173)\n"
+                        "    --user <dir>              User saves and cache directory\n"
+                        "    --content-profile <file>  Content profile binary (content.bin)\n"
+                        "    --patches <file>          Runtime patch binary (patches.bin)\n"
+                        "    --timeout <seconds>       Exit after specified seconds\n"
+                        "    --cpu-only                Run without GPU translation\n"
+                        "    --strict-imports          Abort if any imports are missing\n\n"
+                        "Shader Tools & Recipes (0.7):\n"
+                        "  --export-shader-recipes <cache_dir> <game_dir> <out_recipes_bin>\n"
+                        "      Export recorded cache inputs into a portable shader recipe pack\n"
+                        "  --import-shaders <cache_dir> <recipes_bin> <game_dir> <params_hex> <positions_hex>\n"
+                        "      Precompile shader recipes in background for current GPU\n"
+                        "  --rebuild-shader-cache <cache_dir>\n"
+                        "      Recompile cached shaders against current binary version\n"
+                        "  --merge-shader-packs <cache_dir> <base_bin> <theirs_bin> <game_dir> <out_bin> <work_dir> <threads>\n"
+                        "      Merge two shader recipe packs into one\n"
+                        "  --merge-shader-metas <cache_dir> <base_bin> <game_dir> <meta_dir> <out_bin> <work_dir> <threads>\n"
+                        "      Reconstruct and merge metadata into shader recipes\n"
+                        "  --predict-shaders-test <cache_dir> <game_dir> <recipes_bin> <dump_dir> <limit>\n"
+                        "      Run input prediction benchmark against game shaders\n"
+                        "  --meta-reconstruct-test <cache_dir> <game_dir> <recipes_bin>\n"
+                        "      Verify metadata reconstruction against recipes\n"
+                        "  --vulkan-only\n"
+                        "      Quick Vulkan smoke test\n",
+                argv[0], argv[0]);
+        return (argc < 2) ? 1 : 0;
+    }
+
+    if (!strcmp(argv[1], "--vulkan-only")) {
+        if (argc != 2) {
+            fprintf(stderr, "Usage: %s --vulkan-only\n", argv[0]);
+            return 1;
+        }
+        return vulkan_smoke();
+    }
+    if (!strcmp(argv[1], "--export-shader-recipes")) {
+        if (argc != 5) {
+            fprintf(stderr, "Usage: %s --export-shader-recipes <cache_dir> <game_dir> <out_recipes_bin>\n", argv[0]);
+            return 1;
+        }
         return bbgpu_export_shader_recipes(argv[2], argv[3], argv[4]);
-    if (argc == 7 && !strcmp(argv[1], "--import-shaders"))
+    }
+    if (!strcmp(argv[1], "--import-shaders")) {
+        if (argc != 7) {
+            fprintf(stderr, "Usage: %s --import-shaders <cache_dir> <recipes_bin> <game_dir> <motion_params_hex> <motion_positions_hex>\n", argv[0]);
+            return 1;
+        }
         return bbgpu_import_shader_recipes(argv[2], argv[3], argv[4], strtoull(argv[5], NULL, 16),
                                            strtoull(argv[6], NULL, 16));
-    if (argc == 3 && !strcmp(argv[1], "--rebuild-shader-cache"))
+    }
+    if (!strcmp(argv[1], "--rebuild-shader-cache")) {
+        if (argc != 3) {
+            fprintf(stderr, "Usage: %s --rebuild-shader-cache <cache_dir>\n", argv[0]);
+            return 1;
+        }
         return bbgpu_rebuild_shader_cache(argv[2]);
-    if (argc == 9 && !strcmp(argv[1], "--merge-shader-metas"))
+    }
+    if (!strcmp(argv[1], "--merge-shader-metas")) {
+        if (argc != 9) {
+            fprintf(stderr, "Usage: %s --merge-shader-metas <cache_dir> <base_recipes_bin> <game_dir> <meta_dir> <out_merged_bin> <work_dir> <threads>\n", argv[0]);
+            return 1;
+        }
         return bbgpu_merge_shader_metas(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], atoi(argv[8]));
+    }
 #ifndef _WIN32
-    if (argc == 7 && !strcmp(argv[1], "--predict-shaders-test"))
+    if (!strcmp(argv[1], "--predict-shaders-test")) {
+        if (argc != 7) {
+            fprintf(stderr, "Usage: %s --predict-shaders-test <cache_dir> <game_dir> <recipes_bin> <dump_dir> <limit>\n", argv[0]);
+            return 1;
+        }
         return bbgpu_predict_shaders_test(argv[2], argv[3], argv[4], argv[5], atoi(argv[6]));
-    if (argc == 9 && !strcmp(argv[1], "--merge-shader-packs"))
+    }
+    if (!strcmp(argv[1], "--merge-shader-packs")) {
+        if (argc != 9) {
+            fprintf(stderr, "Usage: %s --merge-shader-packs <cache_dir> <base_recipes_bin> <theirs_recipes_bin> <game_dir> <out_merged_bin> <work_dir> <threads>\n", argv[0]);
+            return 1;
+        }
         return bbgpu_merge_shader_packs(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], atoi(argv[8]));
-    if (argc == 5 && !strcmp(argv[1], "--meta-reconstruct-test"))
+    }
+    if (!strcmp(argv[1], "--meta-reconstruct-test")) {
+        if (argc != 5) {
+            fprintf(stderr, "Usage: %s --meta-reconstruct-test <cache_dir> <game_dir> <recipes_bin>\n", argv[0]);
+            return 1;
+        }
         return bbgpu_meta_reconstruct_test(argv[2], argv[3], argv[4]);
+    }
 #endif
+    if (argv[1][0] == '-') {
+        fprintf(stderr, "Unknown command: %s (run '%s --help' for usage)\n", argv[1], argv[0]);
+        return 1;
+    }
     print_environment();
     check_cpu();
     /* Before the guest's memory exists: the recorded shader inputs are mapped back at their
@@ -549,10 +625,6 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--patches") && i+1<argc) patch_file=argv[++i];
         else if (!strcmp(argv[i], "--timeout") && i+1<argc) timeout_seconds=(unsigned)strtoul(argv[++i],NULL,10);
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return 1; }
-    }
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--timeout seconds] | --vulkan-only\n", argv[0]);
-        return 1;
     }
     if (content_profile) {
         FILE *profile=fopen(content_profile,"rb");

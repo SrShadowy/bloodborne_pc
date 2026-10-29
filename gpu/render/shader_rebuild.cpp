@@ -526,6 +526,8 @@ int RunSelf(std::initializer_list<std::string> args, bool below_normal = false) 
 int RebuildOneDir(const fs::path& dir) {
     auto header = ReadFile(dir / "profile.bin");
     if (header.size() != HeaderWords * 4 + sizeof(Shader::Profile)) {
+        std::fprintf(stderr, "Shader cache %s: missing or invalid profile.bin (expected %zu bytes, got %zu)\n",
+                     dir.string().c_str(), HeaderWords * 4 + sizeof(Shader::Profile), header.size());
         return 1;
     }
     Shader::Profile profile{};
@@ -606,6 +608,7 @@ int ExportRecipes(const char* cache_dir, const char* game_dir, const char* out_p
     game.Load(game_dir, nullptr);
     std::printf("Shader recipes: %zu programs in the game's files\n", game.Count());
     if (game.Count() == 0) {
+        std::fprintf(stderr, "Shader recipes: no shader programs found in '%s' (checked dvdroot_ps4/shader and eboot.bin)\n", game_dir);
         return 1;
     }
     std::map<u64, std::map<u64, BbShaderCapture::Input>> records;
@@ -734,11 +737,14 @@ int ImportRecipes(const char* cache_dir, const char* pack, const char* game_dir,
     const fs::path dir{cache_dir};
     std::error_code ec;
     if (fs::exists(dir / "import", ec)) {
+        std::printf("Shader recipes: previous import folder exists in %s, skipping\n", dir.string().c_str());
         return 0; // the last import is still to be merged (the pipeline cache does it)
     }
     const auto header = ReadFile(dir / "profile.bin");
     if (header.size() != HeaderWords * 4 + sizeof(Shader::Profile)) {
-        return 0;
+        std::fprintf(stderr, "Shader recipes: missing or invalid profile.bin in %s (size %zu)\n",
+                     dir.string().c_str(), header.size());
+        return 1;
     }
     u32 versions[HeaderWords];
     std::memcpy(versions, header.data(), sizeof(versions));
@@ -746,7 +752,10 @@ int ImportRecipes(const char* cache_dir, const char* pack, const char* game_dir,
         versions[1] != Vulkan::PipelineStore::ShaderBinaryVersion ||
         versions[2] != Vulkan::PipelineStore::ShaderMetaVersion ||
         versions[3] != Vulkan::PipelineStore::PipelineKeyVersion) {
-        return 0;
+        std::fprintf(stderr, "Shader recipes: version mismatch in %s/profile.bin (expected binary %u, meta %u, key %u)\n",
+                     dir.string().c_str(), Vulkan::PipelineStore::ShaderBinaryVersion,
+                     Vulkan::PipelineStore::ShaderMetaVersion, Vulkan::PipelineStore::PipelineKeyVersion);
+        return 1;
     }
     Shader::Profile profile{};
     std::memcpy(&profile, header.data() + HeaderWords * 4, sizeof(profile));
