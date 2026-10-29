@@ -587,6 +587,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             }
             if (role == Motion::BufferRole::Skeleton) {
                 gated = false;
+                break;
             } else if (gated) {
                 palette = XXH3_64bits_withSeed(data, size, palette);
             }

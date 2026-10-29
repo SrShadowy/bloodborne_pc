@@ -241,6 +241,14 @@ struct Anchor {
         const float dx = x - other.x, dy = y - other.y, dz = z - other.z;
         return dx * dx + dy * dy + dz * dz <= MaxStep * MaxStep;
     }
+    bool Moved(const Anchor& other) const {
+        if (!valid || !other.valid) {
+            return false;
+        }
+        const float dx = x - other.x, dy = y - other.y, dz = z - other.z;
+        const float dist2 = dx * dx + dy * dy + dz * dz;
+        return dist2 > 1e-6f && dist2 <= MaxStep * MaxStep;
+    }
 };
 
 // CPU bookkeeping shared with the regression test. Draw identity includes topology and
@@ -269,7 +277,8 @@ public:
         key.occurrence = 0;
         key.occurrence = gate_occurrences[key]++;
         const auto* prev = gate_previous.find(key);
-        const bool moving = prev && prev->palette != palette && prev->anchor.Near(anchor);
+        const bool moving = prev && (prev->palette != palette || prev->anchor.Moved(anchor)) &&
+                            prev->anchor.Near(anchor);
         gate_current.emplace(key, {palette, anchor});
         stats.still += moving ? 0 : 1;
         return moving;

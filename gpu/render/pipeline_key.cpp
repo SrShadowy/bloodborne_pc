@@ -343,9 +343,11 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
     // Only potentially animated G-buffer draws may use the extra motion attachment. The
     // ordinary stage variant is needed first to inspect the vertex shader's resources.
     // Not for FSR 1 (spatial: no motion vectors).
+    const auto upscaler = BbSettings::Get().upscaler.load(std::memory_order_relaxed);
+    const auto fg = BbSettings::Get().frame_generation.load(std::memory_order_relaxed);
     const bool motion_possible =
         Shader::MotionVectors::positions_address != 0 && num_bound >= 5 &&
-        !BbSettings::IsSpatial(BbSettings::Get().upscaler.load(std::memory_order_relaxed)) &&
+        (!BbSettings::IsSpatial(upscaler) || fg != BbSettings::FrameGenOff) &&
         !regs.color_buffers[Shader::MotionVectors::Output] && db.DepthValid() &&
         db.NumSamples() == 1 && !regs.IsClipDisabled() &&
         regs.stage_enable.raw == Gcn::ShaderStageEnable::VgtStages::Vs;
