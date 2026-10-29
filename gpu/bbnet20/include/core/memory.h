@@ -12,6 +12,8 @@
 #include "extra/hooks.h" // [extra]
 
 extern "C" int runtime_memory_vma_info(uintptr_t address, int* prot, int* type, uintptr_t* end);
+// The low region (the game's image, stacks): its static pointers live there (#282).
+extern "C" int runtime_memory_low_info(uintptr_t address, int* prot, uintptr_t* end);
 
 namespace Core {
 
@@ -56,7 +58,8 @@ public:
         }
         int p = 0, type = -1;
         uintptr_t mapping_end = 0;
-        if (!runtime_memory_vma_info(address, &p, &type, &mapping_end)) {
+        if (!runtime_memory_vma_info(address, &p, &type, &mapping_end) &&
+            !runtime_memory_low_info(address, &p, &mapping_end)) {
             if (extra_query_memory_protection(address, start, end, prot)) { // [extra]
                 auto& slot = cache[next++ % cache.size()]; // [extra]
                 slot = {reinterpret_cast<u64>(*start), reinterpret_cast<u64>(*end), *prot, now}; // [extra]

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright 2026 bbport contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Co-op addresses (BB_ONLINE=1): the game's own server, the shadNet server and its WebAPI.
 
@@ -102,7 +103,7 @@ def write_overrides(user_dir, community, webapi, plain=False):
     overrides = {GAME_SERVER: game_target}
     backend = os.environ.get('BB_ONLINE_BACKEND', '').strip().lower()
     if plain or backend in ('bbhost', 'hosts', 'thehuntersdream', 'hd'):
-        # The shadPS4 0.20 module (BB_NET_GEN=20): the game server only; summons stay on shadNet.
+        # The shadPS4 0.20 module: the game server only; summons stay on shadNet.
         print(f'Co-op: game server {game_target}', file=sys.stderr)
     else:
         # Reference summon redirects from Seamless Hunt (thehuntersdream.com:18671 -> webapi)

@@ -1,4 +1,7 @@
+// SPDX-FileCopyrightText: Copyright 2026 bbport contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "bbport_map_near.h"
+#include "shim/bb_env.h"
 #include "common/types.h"
 #include "bbport_game_menu.h"
 
@@ -18,6 +21,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <SDL3/SDL_events.h>
 
 #include <SDL3/SDL.h>
 #include "bbport_guest_hooks.h"
@@ -197,7 +201,7 @@ const char16_t* TextOf(u32 id) {
 
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
-    Aspect, OutputRes, Upscaler, Preset, Sharpness, ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
+    Aspect, OutputRes, Upscaler, Preset, Sharpness, ModelLod, TextureQuality, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
 u8 bytes[FieldCount];    // the same for toggle and slider rows (they bind bytes)
@@ -254,6 +258,7 @@ void Fill(const BbSettings::Values& s, int* values) {
     for (int i = 0; i < 4; ++i) {
         if (LodValues[i] == s.model_lod) values[ModelLod] = i;
     }
+    values[TextureQuality] = std::clamp(int(s.texture_quality), 0, BbSettings::TqCount - 1);
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         values[FirstEffect + e] = s.effects[e];
     }
@@ -291,6 +296,9 @@ struct Page {
 std::vector<Page> pages;
 u32 exit_title_text = 0;
 u32 exit_help_text = 0;
+// "Exit to desktop" in the System menu (the title screen's too): a Quit Game to the desktop, as PC
+// games have (Discord requests 2026-10-21; the Nexus mod "Just Exit Game" did it until now).
+u32 exit_name = 0, exit_help = 0;
 
 void DefineTexts() {
     exit_title_text = AddText("Exit Game", "Sair do Jogo", "Выйти из игры");
@@ -305,8 +313,8 @@ void DefineTexts() {
         pages.push_back({name, AddText(help_en, help_pt, help_ru), &layout, {}});
     };
     const auto row = [](Field f, const char* en, const char* pt, const char* ru, const char* help_en,
-                        const char* help_pt, const char* help_ru, std::vector<u32> choices,
-                        Kind kind = Kind::List) {
+                         const char* help_pt, const char* help_ru, std::vector<u32> choices,
+                         Kind kind = Kind::List) {
         if (kind == Kind::List && choices.size() == 2) {
             kind = Kind::Toggle; // left/right in place, as the game's own on/off rows
         }
@@ -346,7 +354,9 @@ void DefineTexts() {
         "Upscaler temporal e anti-aliasing", "Временной апскейлер и сглаживание",
         {off, AddText("FSR 3.1", "FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4", "FSR 4"),
          AddText("FSR 4.1.1", "FSR 4.1.1", "FSR 4.1.1"), AddText("TAA", "TAA", "TAA"),
-         AddText("DLSS", "DLSS", "DLSS")},
+         AddText("DLSS", "DLSS", "DLSS"), AddText("FSR 1", "FSR 1", "FSR 1"),
+         AddText("FSR 4 (AMD DLL)", "FSR 4 (DLL da AMD)", "FSR 4 (DLL AMD)")},
+        Kind::Select);
         Kind::Select);
     row(Preset, "Quality preset", "Predefinição de qualidade", "Пресет",
         "Scene resolution relative to the output",
@@ -367,9 +377,19 @@ void DefineTexts() {
          AddText("Game default", "Padrão do jogo", "Как в игре"),
          AddText("Lower", "Menor", "Ниже"), AddText("Lowest", "Mínima", "Минимальная")},
         Kind::Select);
+    row(TextureQuality, "Texture quality", "Качество текстур",
+        "Large textures in VRAM: half or a quarter of their size (from the next area); auto: half "
+        "with 3 GB of VRAM or less",
+        "Крупные текстуры в видеопамяти: половина или четверть размера (со следующей локации); "
+        "авто: половина при 3 ГБ видеопамяти и меньше",
+        {AddText("Auto", "Auto", "Авто"), AddText("Full", "Completo", "Полное"),
+         AddText("Half", "Metade", "Половина"), AddText("Quarter", "Um Quarto", "Четверть")},
+        Kind::Select);
 
-    page("Effects", "Efeitos", "Эффекты", "The game's effects (bbport; the first seven at once)",
-         "Os efeitos do jogo (bbport; os primeiros sete de uma vez)", "Эффекты игры (bbport; первые семь сразу)",
+    page("Effects", "Efeitos", "Эффекты",
+         "The game's effects (bbport): aberration and DoF at once, the rest at the next load",
+         "Os efeitos do jogo (bbport): aberração e DoF de imediato, os demais no próximo carregamento",
+         "Эффекты игры (bbport): аберрация и DoF сразу, остальные — со следующей загрузки",
          ControlsLayout);
 
     // Short names for the game's narrow name column (BbSettings::Effects order); the help line
@@ -387,17 +407,20 @@ void DefineTexts() {
          "Desfoque de objetos distantes e próximos (DoF)",
          "Размытие дальних и близких объектов (DoF)"},
         {"effect_motion_blur", "Motion blur", "Desfoque de movimento", "Размытие в движении",
-         "Blur when the camera turns", "Desfoque ao girar a câmerа",
-         "Размытие при повороте камеры"},
+         "Blur when the camera turns (from the next load)",
+         "Desfoque ao girar a câmera (no próximo carregamento)",
+         "Размытие при повороте камеры (со следующей загрузки)"},
         {"effect_ssao", "Ambient occlusion", "Oclusão de ambiente", "Затенение SSAO",
-         "Shading in corners and contacts (SSAO)", "Sombreamento em cantos e contatos (SSAO)",
-         "Затенение в углах и местах касания (SSAO)"},
+         "Shading in corners and contacts (SSAO; from the next load)",
+         "Sombreamento em cantos e contatos (SSAO; no próximo carregamento)",
+         "Затенение в углах и местах касания (SSAO; со следующей загрузки)"},
         {"effect_game_aa", "Game's own AA", "Anti-aliasing do jogo", "Сглаживание игры",
          "The game's own anti-aliasing", "O próprio anti-aliasing do jogo",
          "Собственное сглаживание игры", false},
         {"effect_dynamic_shadows", "Dynamic shadows", "Sombras dinâmicas", "Динамические тени",
-         "Shadows from dynamic lights", "Sombras de fontes de luz dinâmicas",
-         "Тени от динамических источников света"},
+         "Shadows from dynamic lights (from the next load)",
+         "Sombras de fontes de luz dinâmicas (no próximo carregamento)",
+         "Тени от динамических источников света (со следующей загрузки)"},
         {"effect_ssr", "SSR reflections", "Reflexos SSR", "Отражения SSR",
          "Screen-space reflections (not in the original)",
          "Reflexos em espaço de tela (não existia no original)",
@@ -436,6 +459,10 @@ void DefineTexts() {
             name ? name->ru : effect.label_ru, help_en.c_str(), help_pt.c_str(), help_ru.c_str(),
             toggle);
     }
+    exit_name = AddText("Exit to desktop", "Sair para a área de trabalho", "Выйти на рабочий стол");
+    exit_help = AddText("Closes the game, as its window's close button does",
+                        "Fecha o jogo, como o botão de fechar da janela",
+                        "Закрывает игру, как кнопка закрытия окна");
 }
 
 // ---- The game's structures, as its own code builds them. ----
@@ -493,6 +520,7 @@ bool UpscalerAvailable(int i) {
     return i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
            : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
            : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
+           : i == BbSettings::UpscalerFsrAmd ? s.fsr_amd_supported.load()
                                              : true;
 }
 
@@ -619,6 +647,15 @@ template <int P>
 void* PS4_SYSV_ABI PageFactory(void* out, void* arg) {
     return Factory(out, arg, reinterpret_cast<void*>(&Content<P>), P);
 }
+/// "Exit to desktop": the window's quit (gpu/shim/window.cpp ends the game), and a page for the
+/// menu meanwhile (it expects one).
+void* PS4_SYSV_ABI QuitFactory(void* out, void* arg) {
+    std::printf("Game menu: exit to desktop\n");
+    SDL_Event event{};
+    event.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&event);
+    return Factory(out, arg, reinterpret_cast<void*>(&Content<0>), 0);
+}
 constexpr std::size_t MaxPages = 6;
 void* const factories[MaxPages] = {
     reinterpret_cast<void*>(&PageFactory<0>), reinterpret_cast<void*>(&PageFactory<1>),
@@ -646,10 +683,7 @@ std::atomic<const void*> screen_sound_text{nullptr};
 const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 category, u32 id) {
     if (OurText(id)) {
         // BB_GAME_MENU_TRACE=1: how often the game asks for our texts (per 2 s).
-        static const bool count = [] {
-            const char* env = std::getenv("BB_GAME_MENU_TRACE");
-            return env && env[0] == '1';
-        }();
+        static const bool count = bb_env_on("BB_GAME_MENU_TRACE");
         if (count) {
             static std::atomic<u64> lookups{0};
             static std::atomic<long long> printed{0};
@@ -675,10 +709,7 @@ const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 categor
     const char16_t* text = lookup_original(repository, table, category, id);
     // BB_MSG_TRACE=1 (diagnostics): the game's text lookups per 2 s by category, with an example
     // id and caller and its text (which menu is on screen, issue #255).
-    static const bool msg_trace = [] {
-        const char* env = std::getenv("BB_MSG_TRACE");
-        return env && env[0] == '1';
-    }();
+    static const bool msg_trace = bb_env_on("BB_MSG_TRACE");
     if (msg_trace) {
         struct Seen {
             u64 count = 0;
@@ -712,10 +743,7 @@ const char16_t* PS4_SYSV_ABI LookupHook(void* repository, u32 table, u32 categor
             seen.clear();
         }
     }
-    static const bool trace = [] {
-        const char* env = std::getenv("BB_GAME_MENU_TRACE");
-        return env && env[0] == '1';
-    }();
+    static const bool trace = bb_env_on("BB_GAME_MENU_TRACE");
     if (trace && id >= 110000 && id < 120000) {
         std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, building_page >= 0 ? " (our page)" : "",
                     (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));
@@ -768,6 +796,9 @@ void* PS4_SYSV_ABI AddHook(void* menu, void* pair, void* function, void* out) {
         for (std::size_t i = 0; i < pages.size() && i < MaxPages; ++i) {
             AddItem(menu, pages[i].name, pages[i].help, factories[i]);
         }
+        if (exit_name) {
+            AddItem(menu, exit_name, exit_help, reinterpret_cast<void*>(&QuitFactory));
+        }
     }
     return result;
 }
@@ -815,16 +846,8 @@ bool Detour(unsigned char* image, u64 va, const u8* prologue, std::size_t length
 /// A mapping within +-2 GiB of the image, for rel32 jumps both ways.
 u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
     const u64 base = reinterpret_cast<u64>(image);
-    for (u64 k = 1; k <= 64; ++k) {
-        for (const u64 hint : {base - k * (24ull << 20), base + image_size + k * (24ull << 20)}) {
-            void* p = mmap(reinterpret_cast<void*>(hint), size, PROT_READ | PROT_WRITE,
-                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-            if (p != MAP_FAILED) {
-                return static_cast<u8*>(p);
-            }
-        }
-    }
-    return nullptr;
+    return static_cast<u8*>(BbMapNear::Map(base, base + image_size, size, PROT_READ | PROT_WRITE,
+                                           24ull << 20, "Game menu"));
 }
 
 extern "C" void PS4_SYSV_ABI TitleExitCallback(void* /*action_arg*/) {
@@ -904,7 +927,7 @@ void PatchTitleExit(unsigned char* image) {
 } // namespace
 
 void PatchImage(unsigned char* image, std::uint64_t size) {
-    if (const char* env = std::getenv("BB_GAME_MENU"); env && env[0] == '0') {
+    if (bb_env_off("BB_GAME_MENU")) {
         return;
     }
     image_base = reinterpret_cast<u64>(image);
@@ -984,9 +1007,11 @@ void Poll() {
         // aspect ratio's sizes, RefreshOutputRow).
         const int aspect = std::clamp(now_values[Aspect], 0, BbSettings::AspectCount - 1);
         s.output_res = BbSettings::PackSize(MenuOutput(aspect, now_values[OutputRes]));
+        s.output_auto = false;
         s.aspect = aspect;
     } else if (now_values[OutputRes] != applied[OutputRes]) {
         s.output_res = BbSettings::PackSize(MenuOutput(s.aspect, now_values[OutputRes]));
+        s.output_auto = false;
     }
     const int upscaler = std::clamp(now_values[Upscaler], 0, BbSettings::UpscalerCount - 1);
     s.upscaler = UpscalerAvailable(upscaler) ? upscaler : int(BbSettings::UpscalerFsr3);
@@ -996,8 +1021,14 @@ void Poll() {
         s.sharpness = std::clamp(now_values[Sharpness], 0, SharpnessSteps - 1) * SharpnessStep;
     }
     s.model_lod = LodValues[std::clamp(now_values[ModelLod], 0, 3)];
+    s.texture_quality = std::clamp(now_values[TextureQuality], 0, BbSettings::TqCount - 1);
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         s.effects[e] = now_values[FirstEffect + e] != 0;
+    }
+    // The game's AA switch here sets the anti-aliasing choice (the overlay has all of them).
+    const int game_aa = FirstEffect + BbSettings::GameAaEffect;
+    if (now_values[game_aa] != applied[game_aa]) {
+        s.anti_aliasing = now_values[game_aa] ? int(BbSettings::AaGame) : int(BbSettings::AaOff);
     }
     BbGuestHooks::ApplyGameEffects();
     std::memcpy(applied, now_values, sizeof(now_values));

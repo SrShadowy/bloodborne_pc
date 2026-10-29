@@ -200,7 +200,6 @@ void ProcessSignalingPacket(const void* data, u32 len, u32 from_addr, u16 from_p
         Core::Bloodborne::OnBbscScalePacket(percent);
         return;
     }
-
     // BBSC (2026-10-19): the host's progress ("SHAD" 0x26 + u8 count + count x u32 flags it has
     // on) and the boss on its boss bar ("SHAD" 0x27 + s32). The mod's relay took them all along;
     // this receive dropped them as unexpected, so a guest on the emulator build never got the

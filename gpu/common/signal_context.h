@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Copyright 2026 bbport contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport: what a SIGSEGV handler needs from its ucontext (x86-64 Linux).
 #pragma once

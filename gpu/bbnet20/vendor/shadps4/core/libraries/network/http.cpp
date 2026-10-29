@@ -368,7 +368,7 @@ static const HostOverrideState& GetHostOverrideState() {
     return s;
 }
 
-// bbport: The Hunter's Dream backend (gpu/bbnet/thd).
+// bbport: The Hunter's Dream backend (gpu/bbnet20/thd).
 extern "C" bool bbthd_enabled();
 extern "C" void bbthd_add_game_headers(std::vector<std::pair<std::string, std::string>>* headers);
 
@@ -1108,8 +1108,23 @@ static bool HeaderNameMatches(std::string_view a, std::string_view b) {
 }
 
 static bool IsCredentialHeader(std::string_view name) {
-    return HeaderNameMatches(name, "Authorization") ||
-           HeaderNameMatches(name, "Proxy-Authorization") || HeaderNameMatches(name, "Cookie");
+    if (HeaderNameMatches(name, "Authorization") ||
+        HeaderNameMatches(name, "Proxy-Authorization") || HeaderNameMatches(name, "Cookie")) {
+        return true;
+    }
+    // bbport: any other header that can carry an account's secret (tokens, session ids, keys)
+    // never reaches a log either.
+    std::string lower(name);
+    for (char& c : lower) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    for (const std::string_view secret :
+         {"cookie", "token", "password", "secret", "session", "ticket", "key"}) {
+        if (lower.find(secret) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static std::string GetLibhttpSystemVersionString() {

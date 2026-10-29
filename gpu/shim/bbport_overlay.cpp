@@ -1,5 +1,10 @@
+// SPDX-FileCopyrightText: Copyright 2026 bbport contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_overlay.h"
+#include "bbport_overlay_internal.h"
+#include "shim/bb_env.h"
+
+#include "bbport_toggles.h"
 
 #include <algorithm>
 #include <array>
@@ -9,27 +14,34 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <filesystem>
+#include <unordered_map>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include <fmt/format.h>
 #include "bbport_overlay_sections.h"
+#include "extra/management/hud/bbport_fps_hud.h"
 #include "bbport_discord_rpc.h"
 #include "bbport_info_hud.h"
-#include "extra/management/hud/bbport_fps_hud.h"
-#include "bbport_guest_hooks.h"
-#include "bbport_frame_rate.h"
-#include "bbport_settings.h"
 #include "rpc/bbport_game_data.h"
 #include "bbport_strings.h"
 #include "ui_manager.h"
 #include "ui_strings.h"
 #include "bbport_shader_tracker.h"
+#include "extra/ui/keyboard/bbport_keyboard.h"
+#include "bbport_guest_hooks.h"
+#include "bbport_frame_rate.h"
+#include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
+#include "imgui_internal.h" // RegisterUserTexture: the trophy icons
 #include "vulkan/instance.h"
+#include "render/compile_log.h"
 #include "render/scheduler.h"
 
 // DejaVu Sans (Cyrillic), embedded (third_party/fonts, Bitstream Vera license).
@@ -56,18 +68,30 @@ extern "C" const unsigned char bb_font_ttf[];
 extern "C" const unsigned char bb_font_ttf_end[];
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
-extern "C" __attribute__((weak)) void runtime_toypad_lights(uint32_t out[3]); // runtime_toypad.c
+
 
 namespace BbOverlay {
 
 namespace {
 
+using namespace detail;
+
 std::mutex imgui_mutex; // the ImGui context: window thread (input) and present thread
 bool initialized = false;
 std::atomic<bool> menu_open{false};
 bool l3_down = false, r3_down = false;
-bool dirty = false; // settings changed while open: saved on close
-float base_scale = 1.0f;
+// Issue #304: L3+R3 opens the menu only when held (OpenHoldMs), not when both sticks are pressed in
+// a fight (lock-on and camera reset); closing is immediate. The hold starts at `l3r3_since`
+// (steady clock ns, 0: not held) and is checked at each present (Visible); `open_requested` opens
+// it in Render, under the ImGui lock.
+constexpr long long OpenHoldMs = 800;
+std::atomic<long long> l3r3_since{0};
+std::atomic<bool> open_requested{false};
+long long NowNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 // The game's text dialog (ImeDialog, the character name), typed on the keyboard: drawn while it
 // is open. In fullscreen the window title that showed it is not visible (issues #17, #19).
 std::mutex prompt_mutex;
@@ -77,18 +101,52 @@ std::atomic<bool> prompt_active{false};
 std::mutex banner_mutex;
 std::string banner_text;
 std::atomic<bool> banner_active{false};
-std::chrono::steady_clock::time_point banner_expire{};
 std::string prompt_title, prompt_text;
+/// Trophies to announce, oldest first; the front one is on screen (as shadPS4's trophy_ui.cpp:
+/// slides in from the right, stays, fades out over the last second).
+struct TrophyToast {
+    char grade;
+    std::string name;
+    float elapsed = 0.0f;
+    std::filesystem::path icon;
+};
+// The trophy icons (TROPnnn.PNG, 240x240), decoded once and handed to the Vulkan backend as user
+// textures (it uploads them with the font atlas); kept for the session (40 at most). null: none.
+std::unordered_map<std::string, ImTextureData*> trophy_icons;
+std::mutex trophy_mutex;
+std::deque<TrophyToast> trophy_queue;
+std::atomic<bool> trophy_active{false};
+constexpr float TrophySeconds = 6.0f, TrophySlide = 0.4f;
 
 // Present rate for the FPS counter: original frames vs total presented frames.
+std::chrono::steady_clock::time_point last_present{};
 std::chrono::steady_clock::time_point last_present_total{};
 std::chrono::steady_clock::time_point last_present_orig{};
 float total_ms_avg = 0.0f;
 float orig_ms_avg = 0.0f;
 float frame_ms_avg = 0.0f;
 std::chrono::steady_clock::time_point last_generated_time{};
+std::chrono::steady_clock::time_point banner_expire{};
 
 float PixelDensity(SDL_WindowID id);
+
+/// The size the menu is drawn at (the swapchain's, Draw), for the mouse's position in it.
+std::atomic<u32> display_width{0}, display_height{0};
+
+/// A mouse position in the window to the menu's pixels. The swapchain may be another size than the
+/// window, which shows it scaled: on Windows a window of 1920x1080 on a 2560x1080 monitor kept the
+/// monitor's size, the mouse's x was a quarter short of the drawn menu and clicks missed the
+/// checkboxes while rows still lit up (2026-10-27). Without a size yet: the pixel density.
+ImVec2 ToDisplay(SDL_WindowID id, float x, float y) {
+    SDL_Window* window = SDL_GetWindowFromID(id);
+    int w = 0, h = 0;
+    const u32 dw = display_width.load(std::memory_order_relaxed), dh = display_height.load(std::memory_order_relaxed);
+    if (window && dw && dh && SDL_GetWindowSize(window, &w, &h) && w > 0 && h > 0) {
+        return {x * float(dw) / float(w), y * float(dh) / float(h)};
+    }
+    const float density = PixelDensity(id);
+    return {x * density, y * density};
+}
 
 void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
@@ -100,8 +158,8 @@ void SetOpen(bool value) {
         if (SDL_Window* window = SDL_GetMouseFocus()) {
             float x = 0.0f, y = 0.0f;
             SDL_GetMouseState(&x, &y);
-            const float density = PixelDensity(SDL_GetWindowID(window));
-            ImGui::GetIO().AddMousePosEvent(x * density, y * density);
+            const ImVec2 at = ToDisplay(SDL_GetWindowID(window), x, y);
+            ImGui::GetIO().AddMousePosEvent(at.x, at.y);
         }
     }
     if (!value && dirty) {
@@ -110,36 +168,7 @@ void SetOpen(bool value) {
     }
 }
 
-ImGuiKey KeyFromSdl(SDL_Keycode key, SDL_Scancode scancode) {
-    if (key >= SDLK_A && key <= SDLK_Z) {
-        return static_cast<ImGuiKey>(ImGuiKey_A + (key - SDLK_A));
-    }
-    if (key >= 'a' && key <= 'z') {
-        return static_cast<ImGuiKey>(ImGuiKey_A + (key - 'a'));
-    }
-    if (key >= SDLK_0 && key <= SDLK_9) {
-        return static_cast<ImGuiKey>(ImGuiKey_0 + (key - SDLK_0));
-    }
-    switch (scancode) {
-    case SDL_SCANCODE_KP_0: return ImGuiKey_Keypad0;
-    case SDL_SCANCODE_KP_1: return ImGuiKey_Keypad1;
-    case SDL_SCANCODE_KP_2: return ImGuiKey_Keypad2;
-    case SDL_SCANCODE_KP_3: return ImGuiKey_Keypad3;
-    case SDL_SCANCODE_KP_4: return ImGuiKey_Keypad4;
-    case SDL_SCANCODE_KP_5: return ImGuiKey_Keypad5;
-    case SDL_SCANCODE_KP_6: return ImGuiKey_Keypad6;
-    case SDL_SCANCODE_KP_7: return ImGuiKey_Keypad7;
-    case SDL_SCANCODE_KP_8: return ImGuiKey_Keypad8;
-    case SDL_SCANCODE_KP_9: return ImGuiKey_Keypad9;
-    case SDL_SCANCODE_KP_PERIOD: return ImGuiKey_KeypadDecimal;
-    case SDL_SCANCODE_KP_DIVIDE: return ImGuiKey_KeypadDivide;
-    case SDL_SCANCODE_KP_MULTIPLY: return ImGuiKey_KeypadMultiply;
-    case SDL_SCANCODE_KP_MINUS: return ImGuiKey_KeypadSubtract;
-    case SDL_SCANCODE_KP_PLUS: return ImGuiKey_KeypadAdd;
-    case SDL_SCANCODE_KP_ENTER: return ImGuiKey_KeypadEnter;
-    case SDL_SCANCODE_KP_EQUALS: return ImGuiKey_KeypadEqual;
-    default: break;
-    }
+ImGuiKey KeyFromSdl(SDL_Keycode key) {
     switch (key) {
     case SDLK_TAB: return ImGuiKey_Tab;
     case SDLK_LEFT: return ImGuiKey_LeftArrow;
@@ -150,7 +179,6 @@ ImGuiKey KeyFromSdl(SDL_Keycode key, SDL_Scancode scancode) {
     case SDLK_PAGEDOWN: return ImGuiKey_PageDown;
     case SDLK_HOME: return ImGuiKey_Home;
     case SDLK_END: return ImGuiKey_End;
-    case SDLK_INSERT: return ImGuiKey_Insert;
     case SDLK_DELETE: return ImGuiKey_Delete;
     case SDLK_BACKSPACE: return ImGuiKey_Backspace;
     case SDLK_SPACE: return ImGuiKey_Space;
@@ -163,14 +191,6 @@ ImGuiKey KeyFromSdl(SDL_Keycode key, SDL_Scancode scancode) {
     case SDLK_RSHIFT: return ImGuiKey_RightShift;
     case SDLK_LALT: return ImGuiKey_LeftAlt;
     case SDLK_RALT: return ImGuiKey_RightAlt;
-    case SDLK_LGUI: return ImGuiKey_LeftSuper;
-    case SDLK_RGUI: return ImGuiKey_RightSuper;
-    case SDLK_COMMA: return ImGuiKey_Comma;
-    case SDLK_PERIOD: return ImGuiKey_Period;
-    case SDLK_SEMICOLON: return ImGuiKey_Semicolon;
-    case SDLK_CAPSLOCK: return ImGuiKey_CapsLock;
-    case SDLK_PRINTSCREEN: return ImGuiKey_PrintScreen;
-    case SDLK_PAUSE: return ImGuiKey_Pause;
     default: return ImGuiKey_None;
     }
 }
@@ -199,23 +219,54 @@ float PixelDensity(SDL_WindowID id) {
     return density > 0.0f ? density : 1.0f;
 }
 
-// Marks the settings dirty when a widget changed them.
-template <typename T>
-void Store(std::atomic<T>& target, T value, bool changed) {
-    if (changed) {
-        target = value;
-        dirty = true;
+/// The FPS readout: the frames shown and their interval; with frame generation the multiplier
+/// in between ("240 FPS  FG 4x  4.2 ms"), from the generated frames shown per game frame.
+std::string FpsText() {
+    const auto& s = BbSettings::Get();
+    const float shown = frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f;
+    const int generated = s.frame_generation.load(std::memory_order_relaxed) != BbSettings::FrameGenOff
+                              ? s.frame_gen_now.load(std::memory_order_relaxed)
+                              : 0;
+    char text[192];
+    if (generated > 0) {
+        std::snprintf(text, sizeof(text),
+                      BbSettings::MenuText("%.0f FPS  FG %dx  %.1f ms", "%.0f FPS  FG %dx  %.1f мс"),
+                      shown, generated + 1, frame_ms_avg);
+    } else {
+        std::snprintf(text, sizeof(text), BbSettings::MenuText("%.0f FPS  %.1f ms", "%.0f FPS  %.1f мс"),
+                      shown, frame_ms_avg);
     }
+    // Other programs took video memory from the game (BufferCache::VramPromotionsPaused).
+    if (const u32 lost = BbStats::vram_budget_lost_mb.load(std::memory_order_relaxed); lost >= 150) {
+        const size_t used = std::strlen(text);
+        std::snprintf(text + used, sizeof(text) - used,
+                      BbSettings::MenuText("  VRAM -%u MB (other apps)", "  VRAM −%u МБ (другие программы)"),
+                      lost);
+    }
+    return text;
+}
+
+} // namespace
+
+namespace detail {
+
+/// BB_OVERLAY_TRACE=1 (diagnostics): the menu's mouse buttons as SDL gives them and as ImGui
+/// takes them (Windows: items highlight but clicks do not change them).
+bool OverlayTrace() {
+    static const bool on = bb_env_on("BB_OVERLAY_TRACE");
+    return on;
 }
 
 void Checkbox(const char* label, std::atomic<bool>& value) {
-    if (!label) label = ""; // [extra]
     bool v = value;
-    Store(value, v, ImGui::Checkbox(label, &v));
+    const bool changed = ImGui::Checkbox(label, &v);
+    if (changed && OverlayTrace()) {
+        std::printf("Overlay trace: checkbox \"%s\" -> %d (id %#x)\n", label, int(v), unsigned(ImGui::GetItemID()));
+    }
+    Store(value, v, changed);
 }
 
 void Slider(const char* label, std::atomic<float>& value, float lo, float hi) {
-    if (!label) label = ""; // [extra]
     float v = value;
     Store(value, v, ImGui::SliderFloat(label, &v, lo, hi, "%.2f"));
 }
@@ -231,577 +282,17 @@ void Hint(const char* text) {
     }
 }
 
-#define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
+} // namespace detail
 
-void RenderLanguageSection(BbSettings::Values& s, int lang) {
-    ImGui::SeparatorText(S(SectionLanguage));
-    int cur_lang = s.menu_language.load();
-    if (ImGui::BeginCombo(S(LanguageInterface), BbSettings::LanguageName(cur_lang))) {
-        for (int i = 0; i < BbSettings::LangCount; ++i) {
-            if (ImGui::Selectable(BbSettings::LanguageName(i), i == cur_lang)) {
-                Store(s.menu_language, i, true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-}
-
-// The USB toy pad: the figures on the emulated pad, put on and lifted off from
-// the menu with the gamepad. The runtime names the figures file (BB_TOYPAD_FILE) once the game
-// opens the pad and reads it again when it changes; this section edits that file.
-struct ToyPadFigure {
-    int zone;
-    unsigned id;
-};
-struct ToyPadName {
-    unsigned id;
-    std::string name;
-};
-
-std::vector<ToyPadFigure> ReadToyPad(const char* path) {
-    std::vector<ToyPadFigure> figures;
-    FILE* file = std::fopen(path, "r");
-    char line[256];
-    while (file && std::fgets(line, sizeof(line), file)) {
-        if (char* hash = std::strchr(line, '#')) {
-            *hash = 0;
-        }
-        int zone;
-        unsigned id;
-        if (std::sscanf(line, "%d %u", &zone, &id) == 2 && zone >= 1 && zone <= 3 && id) {
-            figures.push_back({zone, id});
-        }
-    }
-    if (file) {
-        std::fclose(file);
-    }
-    return figures;
-}
-
-// Figure names: "<id> <name>" lines in figure_ids.txt next to the figures file (BB_TOYPAD_NAMES
-// names another one); without it the ids are shown.
-const std::vector<ToyPadName>& ToyPadNames(const char* figures_path) {
-    static std::vector<ToyPadName> names;
-    static bool loaded;
-    if (!loaded) {
-        loaded = true;
-        std::string path;
-        if (const char* env = std::getenv("BB_TOYPAD_NAMES"); env && *env) {
-            path = env;
-        } else {
-            path = figures_path;
-            const size_t slash = path.rfind('/');
-            path = (slash == std::string::npos ? std::string{} : path.substr(0, slash + 1)) + "figure_ids.txt";
-        }
-        FILE* file = std::fopen(path.c_str(), "r");
-        char line[256];
-        while (file && std::fgets(line, sizeof(line), file)) {
-            unsigned id;
-            int used = 0;
-            if (std::sscanf(line, "%u %n", &id, &used) == 1 && id) {
-                std::string name = line + used;
-                while (!name.empty() && (name.back() == '\n' || name.back() == '\r' || name.back() == ' ')) {
-                    name.pop_back();
-                }
-                names.push_back({id, name});
-            }
-        }
-        if (file) {
-            std::fclose(file);
-        }
-    }
-    return names;
-}
-
-std::string ToyPadLabel(const std::vector<ToyPadName>& names, unsigned id) {
-    for (const auto& n : names) {
-        if (n.id == id) {
-            return n.name + " (" + std::to_string(id) + ")";
-        }
-    }
-    return "#" + std::to_string(id);
-}
-
-void WriteToyPad(const char* path, const std::vector<ToyPadFigure>& figures,
-                 const std::vector<ToyPadName>& names) {
-    const std::string temp = std::string{path} + ".tmp";
-    FILE* file = std::fopen(temp.c_str(), "w");
-    if (!file) {
-        return;
-    }
-    std::fputs("# Figures on the virtual Toy Pad: \"<zone> <figure id>\", one per line.\n"
-               "# Zone 1: centre (1 figure), 2: left (3), 3: right (3). Also edited from the menu "
-               "(Insert / L3+R3).\n", file);
-    for (const auto& f : figures) {
-        std::fprintf(file, "%d %u  # %s\n", f.zone, f.id, ToyPadLabel(names, f.id).c_str());
-    }
-    std::fclose(file);
-    std::rename(temp.c_str(), path);
-}
-
-void ToyPadSection() {
-    const char* path = std::getenv("BB_TOYPAD_FILE");
-    if (!path || !*path) {
-        return;
-    }
-    const auto& names = ToyPadNames(path);
-    auto figures = ReadToyPad(path);
-    bool changed = false;
-    u32 lights[3] = {};
-    if (runtime_toypad_lights) {
-        runtime_toypad_lights(lights);
-    }
-    static unsigned pick_id = 1; // the figure to put on
-    ImGui::SeparatorText(UI::L("Toy Pad", "Toy Pad", "Toy Pad (фигурки)"));
-    // Choosing a figure: characters, then vehicles and gadgets (ids from 1000).
-    const std::string current = ToyPadLabel(names, pick_id);
-    if (ImGui::BeginCombo(UI::L("Figure", "Figura", "Фигурка"), current.c_str(),
-                          ImGuiComboFlags_HeightLarge)) {
-        for (int vehicles = 0; vehicles < 2; ++vehicles) {
-            ImGui::SeparatorText(vehicles ? UI::L("Vehicles and gadgets", "Veículos e gadgets", "Техника")
-                                          : UI::L("Characters", "Personagens", "Персонажи"));
-            for (const auto& n : names) {
-                if ((n.id >= 1000) != bool(vehicles)) {
-                    continue;
-                }
-                const std::string label = ToyPadLabel(names, n.id);
-                if (ImGui::Selectable(label.c_str(), n.id == pick_id)) {
-                    pick_id = n.id;
-                }
-                if (n.id == pick_id && ImGui::IsWindowAppearing()) {
-                    ImGui::SetScrollHereY();
-                }
-            }
-        }
-        ImGui::EndCombo();
-    }
-    // The zones in the pad's order (left, centre, right), each lit as the game lights it: the
-    // zone it wants a figure on glows.
-    static const int order[] = {2, 1, 3};
-    static const char* zone_en[] = {"Centre", "Left", "Right"};
-    static const char* zone_pt[] = {"Centro", "Esquerda", "Direita"};
-    static const char* zone_ru[] = {"Центр", "Левая", "Правая"};
-    for (const int zone : order) {
-        ImGui::PushID(zone);
-        const u32 c = lights[zone - 1];
-        const ImVec4 colour = c ? ImVec4(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f,
-                                         (c & 255) / 255.0f, 1.0f)
-                                : ImVec4(0.35f, 0.35f, 0.35f, 1.0f);
-        ImGui::TextColored(colour, "%s", c ? "●" : "○");
-        ImGui::SameLine();
-        ImGui::TextUnformatted(UI::L(zone_en[zone - 1], zone_pt[zone - 1], zone_ru[zone - 1]));
-        int count = 0;
-        for (size_t i = 0; i < figures.size(); ++i) {
-            if (figures[i].zone != zone) {
-                continue;
-            }
-            ++count;
-            ImGui::PushID(int(i));
-            ImGui::SameLine();
-            const std::string label = ToyPadLabel(names, figures[i].id) + "  ×";
-            if (ImGui::SmallButton(label.c_str())) {
-                figures.erase(figures.begin() + long(i));
-                changed = true;
-                ImGui::PopID();
-                break;
-            }
-            ImGui::PopID();
-        }
-        const bool full = count >= (zone == 1 ? 1 : 3) || figures.size() >= 7;
-        if (!full) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton(UI::L("+ put here", "+ colocar aqui", "+ поставить сюда"))) {
-                figures.push_back({zone, pick_id});
-                changed = true;
-            }
-        }
-        ImGui::PopID();
-    }
-    Hint(UI::L("Choose a figure, then \"+ put here\" on a zone; press a figure to lift it. The dot is the "
-               "zone's light: when the game asks for a figure it lights the zone to put it on. If the "
-               "game misses a figure, lift it and put it on again.",
-               "Escolha uma figurinha e toque em \"+ colocar aqui\" numa zona; toque numa figurinha "
-               "para retirá-la. O ponto é a luz da zona: quando o jogo pede uma figurinha, ele acende "
-               "a zona onde colocá-la. Se o jogo não notar a figurinha, retire e coloque novamente.",
-               "Выберите фигурку и нажмите «+ поставить сюда» у зоны; нажатие на фигурку снимает её. "
-               "Кружок — подсветка зоны: когда игра просит фигурку, она подсвечивает зону, куда её "
-               "ставить. Если игра не заметила фигурку — снимите и поставьте снова."));
-    if (changed) {
-        WriteToyPad(path, figures, names);
-    }
-}
-
-void RenderUpscalerSection(BbSettings::Values& s, int lang) {
-    ImGui::SeparatorText(S(SectionUpscaler));
-    std::string fsr411_label = "FSR 4.1.1";
-    if (s.fsr411_fp8.load()) {
-        fsr411_label += " (FP8 / Float)";
-    } else if (s.fsr411_fp8emu.load()) {
-        fsr411_label += " (FP8 emulado)";
-    } else {
-        fsr411_label += " (INT8)";
-    }
-    const char* upscalers[] = {
-        S(UpscalerOff),
-        "FSR 3.1",
-        "FSR 4 (INT8)",
-        fsr411_label.c_str(),
-        S(UpscalerTaa),
-        "DLSS (NVIDIA RTX)"
-    };
-    static_assert(sizeof(upscalers) / sizeof(upscalers[0]) == BbSettings::UpscalerCount);
-    static const char* later[] = {"XeSS"};
-    int upscaler = s.upscaler;
-    if (ImGui::BeginCombo(S(UpscalerCombo), upscalers[upscaler])) {
-        for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
-            const bool supported = i == BbSettings::UpscalerFsr4 ? s.fsr4_supported.load()
-                : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
-                : i == BbSettings::UpscalerDlss ? s.dlss_supported.load()
-                : true;
-            ImGui::BeginDisabled(!supported);
-            if (ImGui::Selectable(upscalers[i], i == upscaler)) {
-                Store(s.upscaler, i, true);
-            }
-            ImGui::EndDisabled();
-            if (!supported) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", S(UpscalerNotSupported));
-            }
-        }
-        for (const char* name : later) {
-            ImGui::BeginDisabled();
-            ImGui::Selectable(name, false);
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", S(UpscalerWorkInProgress));
-        }
-        ImGui::EndCombo();
-    }
-    if (const char* problem = s.dlss_problem.load(); problem && s.upscaler == BbSettings::UpscalerDlss) {
-        ImGui::PushTextWrapPos();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "DLSS: %s", problem);
-        ImGui::PopTextWrapPos();
-    }
-    if (const char* problem = s.fsr4_problem.load()) {
-        ImGui::PushTextWrapPos();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%s: %s",
-                           S(Fsr4Unavailable), problem);
-        if (!BbSettings::IsFsr4(s.upscaler))
-            ImGui::TextUnformatted(S(Fsr4ActiveModeSelected));
-        ImGui::PopTextWrapPos();
-    }
-    if (s.upscaler == BbSettings::UpscalerDlss) {
-        Hint(UI::L(
-            "NVIDIA DLSS Super Resolution (RTX GPUs; Native AA is DLAA). Needs the DLSS bridge "
-            "and NVIDIA's library next to the game; otherwise FSR 3.1 is used.",
-            "NVIDIA DLSS Super Resolution (GPUs RTX; Native AA é DLAA). Requer a ponte DLSS "
-            "e a biblioteca da NVIDIA junto ao jogo; caso contrário, usa o FSR 3.1.",
-            "NVIDIA DLSS Super Resolution (видеокарты RTX; Native AA — это DLAA). Нужны мост DLSS "
-            "и библиотека NVIDIA рядом с игрой; без них используется FSR 3.1."));
-    }
-    if (BbSettings::IsFsr4(s.upscaler)) {
-        if (s.upscaler == BbSettings::UpscalerFsr411) {
-            if (s.fsr411_fp8.load()) {
-                Hint(S(HintFsr411Fp8));
-            } else {
-                Hint(S(HintFsr411));
-            }
-        } else {
-            Hint(S(HintFsr4));
-        }
-        Checkbox(S(Fsr4AutoExposure), s.fsr4_auto_exposure);
-        Checkbox(S(Fsr4InvertJitter), s.fsr4_invert_jitter);
-        Hint(S(HintFsr4Ghosting));
-    }
-}
-
-void RenderPresetSection(BbSettings::Values& s, int lang) {
-    const bool upscaler_on = s.upscaler != BbSettings::UpscalerOff;
-    const bool taa = s.upscaler == BbSettings::UpscalerTaa;
-    ImGui::BeginDisabled(!upscaler_on);
-    ImGui::BeginDisabled(taa);
-    int preset = taa ? BbSettings::NativeAA : s.preset.load();
-    char preset_label[64];
-    std::snprintf(preset_label, sizeof(preset_label), "%s (x%.1f)", BbSettings::PresetName(preset),
-                  BbSettings::PresetScale(preset));
-    if (ImGui::BeginCombo(S(PresetCombo), preset_label)) {
-        const BbSettings::OutputSize out = BbSettings::CurrentOutput();
-        for (int i = 0; i < BbSettings::PresetCount; ++i) {
-            char label[64];
-            const float scale = BbSettings::PresetScale(i);
-            std::snprintf(label, sizeof(label), "%s (x%.1f, %s %dx%d)",
-                          BbSettings::PresetName(i), scale,
-                          S(PresetRenderWord),
-                          int(std::lround(out.width / scale / 2) * 2),
-                          int(std::lround(out.height / scale / 2) * 2));
-            if (ImGui::Selectable(label, i == preset)) {
-                Store(s.preset, i, true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::EndDisabled();
-    if (taa) {
-        ImGui::TextWrapped("%s", S(HintTaa));
-    }
-    ImGui::Text("%s: %d x %d", S(ActiveSceneRender),
-                s.active_render_width.load(), s.active_render_height.load());
-    if (BbSettings::FixedRenderSession()) {
-        ImGui::Text("%s: %s", S(StartupPreset), BbSettings::PresetName(s.startup_preset));
-        if (const char* automatic = std::getenv("BB_AUTO_RENDER_RES");
-            automatic && automatic[0] == '1') {
-            Hint(S(HintRenderResAuto));
-        } else {
-            Hint(S(HintRenderResManual));
-        }
-    } else {
-        Hint(S(HintRenderResLive));
-    }
-    Checkbox(S(SharpeningRcas), s.sharpen);
-    ImGui::BeginDisabled(!s.sharpen);
-    Slider(S(SharpnessIntensity), s.sharpness, 0.0f, 2.0f);
-    Hint(S(HintSharpness));
-    ImGui::EndDisabled();
-    Checkbox(S(SubpixelJitter), s.jitter);
-    Hint(S(HintJitter));
-}
-
-void RenderReactivitySection(BbSettings::Values& s, int lang) {
-    const bool taa = s.upscaler == BbSettings::UpscalerTaa;
-    ImGui::SeparatorText(S(SectionReactivity));
-    ImGui::BeginDisabled(taa);
-    Checkbox(S(ReactivityEnable), s.reactive);
-    Hint(S(HintReactivity));
-    ImGui::BeginDisabled(!s.reactive);
-    Slider(S(ReactivityScale), s.reactive_scale, 0.0f, 4.0f);
-    Slider(S(ReactivityThreshold), s.reactive_threshold, 0.0f, 1.0f);
-    Slider(S(ReactivityMax), s.reactive_max, 0.0f, 1.0f);
-    bool show_mask = s.debug_view == BbSettings::DebugReactive;
-    if (ImGui::Checkbox(S(ReactivityShowMask), &show_mask)) {
-        s.debug_view = show_mask ? BbSettings::DebugReactive : BbSettings::DebugNone;
-    }
-    ImGui::EndDisabled();
-    ImGui::EndDisabled();
-    Checkbox(S(ObjectMotionVectors), s.object_motion);
-    Hint(S(HintObjectMotion));
-    bool show_motion = s.debug_view == BbSettings::DebugMotion;
-    if (ImGui::Checkbox(S(ObjectMotionShowDebug), &show_motion)) {
-        s.debug_view = show_motion ? BbSettings::DebugMotion : BbSettings::DebugNone;
-    }
-    Hint(S(HintObjectMotionColors));
-    ImGui::EndDisabled(); // upscaler off
-}
-
-void RenderFrameGenSection(BbSettings::Values& s, int lang) {
-    ImGui::SeparatorText(S(SectionFrameGeneration));
-    bool fg = s.frame_generation.load();
-    if (ImGui::Checkbox(S(FrameGenerationEnable), &fg)) {
-        Store(s.frame_generation, fg, true);
-        if (fg && s.upscaler == BbSettings::UpscalerOff) {
-            Store(s.upscaler, int(BbSettings::UpscalerFsr3), true);
-        }
-    }
-    Hint(S(HintFrameGeneration));
-    if (const char* fg_prob = s.frame_generation_problem.load()) {
-        ImGui::PushTextWrapPos();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%s", fg_prob);
-        ImGui::PopTextWrapPos();
-    }
-}
-
-void RenderResolutionSection(BbSettings::Values& s, int lang) {
-    ImGui::SeparatorText(S(SectionOutputResolution));
-    // The aspect ratio first; its resolutions follow (another one keeps the height).
-    const auto aspect_label = [](int a) {
-        if (a != BbSettings::AspectAuto) return std::string(BbSettings::AspectKey(a));
-        return std::string(UI::L("Auto", "Auto", "Авто")) + " (" +
-               BbSettings::AspectKey(BbSettings::ResolvedAspect(a)) + ")";
-    };
-    const int aspect = s.aspect;
-    if (ImGui::BeginCombo(UI::L("Aspect ratio", "Relação de aspecto", "Соотношение сторон"),
-                          aspect_label(aspect).c_str())) {
-        for (int a = 0; a < BbSettings::AspectCount; ++a) {
-            if (ImGui::Selectable(aspect_label(a).c_str(), a == aspect)) {
-                Store(s.output_res, BbSettings::PackSize(BbSettings::NearestOutput(a, BbSettings::CurrentOutput())),
-                      true);
-                Store(s.aspect, a, true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    const auto size_label = [](BbSettings::OutputSize o) {
-        return std::to_string(o.width) + " x " + std::to_string(o.height);
-    };
-    const auto current = BbSettings::CurrentOutput();
-    if (ImGui::BeginCombo(S(OutputResolutionCombo), size_label(current).c_str())) {
-        for (const auto& o : BbSettings::Outputs(s.aspect)) {
-            if (ImGui::Selectable(size_label(o).c_str(), o == current)) {
-                Store(s.output_res, BbSettings::PackSize(o), true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    if (BbSettings::FixedRenderSession()) {
-        Hint(S(HintOutputResolutionFixed));
-    } else {
-        Hint(S(HintOutputResolutionLive));
-    }
-    const char* live_modes[] = {
-        S(LiveModeAuto),
-        S(LiveModeDisabled),
-        S(LiveModeEnabled)
-    };
-    int live = s.live_resolution + 1;
-    if (ImGui::BeginCombo(S(DynamicResolutionChange), live_modes[live])) {
-        for (int i = 0; i < 3; ++i) {
-            if (ImGui::Selectable(live_modes[i], i == live)) {
-                Store(s.live_resolution, i - 1, true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    if (BbSettings::FixedRenderSession() && s.startup_live_resolution != 0) {
-        // Started with a fixed render size (BB_LIVE_RES=0 or BB_RENDER_RES): the setting is
-        // not what this session runs.
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s",
-                           UI::L("This session started with a fixed resolution: changes apply after a restart",
-                                 "Esta sessão iniciou com resolução fixa: mudanças se aplicam após reiniciar",
-                                 "Эта сессия запущена с фиксированным разрешением: смена — после перезапуска"));
-    }
-    Hint(S(HintLiveResolution));
-}
-
-void RenderEffectsSection(BbSettings::Values& s, int lang) {
-    ImGui::SeparatorText(S(SectionGameEffects));
-    const char* lods[] = {
-        S(LodMax),
-        S(LodDefault),
-        S(LodLower),
-        S(LodMin)
-    };
-    static constexpr int lod_values[] = {-2, 0, 1, 2};
-    int lod_index = 1;
-    for (int i = 0; i < 4; ++i) {
-        if (lod_values[i] == s.model_lod) lod_index = i;
-    }
-    if (ImGui::BeginCombo(S(LodCombo), lods[lod_index])) {
-        for (int i = 0; i < 4; ++i) {
-            if (ImGui::Selectable(lods[i], i == lod_index)) {
-                Store(s.model_lod, lod_values[i], true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    for (int e = 0; e < BbSettings::EffectCount; ++e) {
-        const auto& effect = BbSettings::Effects[e];
-        Checkbox(BbSettings::EffectLabel(e, lang), s.effects[e]);
-        if (std::string_view(effect.key) == "debug_camera") {
-            Hint(UI::L("Hold Cross and press L3 (keyboard: F + Left Ctrl).",
-                       "Segure Cross e aperte L3 (teclado: F + Left Ctrl).",
-                       "Удерживайте Cross и нажмите L3 (клавиатура: F + Left Ctrl)."));
-        } else if (std::string_view(effect.key) == "debug_menu") {
-            Hint(UI::L("Left side of the touchpad (Tab); right side: Backspace. Needs the adhoc folder from Nexus mod #253 (the fonts in adhoc/font).",
-                       "Lado esquerdo do touchpad (Tab); lado direito: Backspace. Requer a pasta adhoc do mod #253 do Nexus (fontes em adhoc/font).",
-                       "Левая сторона тачпада (Tab), правая — Backspace. Нужна папка adhoc из мода Nexus #253 (шрифты в adhoc/font)."));
-        }
-    }
-    Checkbox(S(PuddleReflections), s.puddle_reflections);
-    Hint(S(HintPuddleReflections));
-    BbGuestHooks::ApplyGameEffects();
-    Hint(UI::L("SSR reflections, intros, free camera and debug menu apply after a restart. Other effects "
-               "switch immediately. Motion blur and shadows from dynamic lights place a significant load on the GPU.",
-               "Reflexos SSR, aberturas, câmera livre e menu de depuração aplicam após reiniciar. Outros efeitos "
-               "mudam imediatamente. Desfoque de movimento e sombras dinâmicas aumentam a carga na GPU.",
-               "Отражения SSR, заставки, свободная камера и debug menu применяются после перезапуска. "
-               "Остальные эффекты переключаются сразу. Размытие в движении и тени от динамических источников заметно нагружают GPU."));
-
-    bool restart = s.object_motion != s.startup_object_motion ||
-                   s.model_lod != s.startup_model_lod ||
-                   s.live_resolution != s.startup_live_resolution ||
-                   (s.startup_draw_pipe == BbSettings::DrawPipeOff && s.draw_pipe != BbSettings::DrawPipeOff) ||
-                   BbSettings::ResolutionNeedsRestart();
-    for (int e = 0; e < BbSettings::EffectCount; ++e) {
-        restart |= !BbSettings::IsHotEffect(e) && s.effects[e] != s.startup_effects[e];
-    }
-    if (restart) {
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", S(RestartWarning));
-        if (ImGui::Button(S(ApplyAndRestart))) {
-            BbSettings::Save();
-            runtime_restart();
-        }
-    }
-}
-
-void RenderPerformanceSection(BbSettings::Values& s, int lang) {
-    ImGui::SeparatorText(UI::L("Frame rate limit (now)", "Limite de taxa de quadros (agora)", "Лимит кадров (сейчас)"));
-    {
-        static const int steps[] = {0, 30, 60, 90, 120, 144, 240};
-        static const char* labels[] = {"As launched", "30", "60", "90", "120", "144", "240"};
-        static const char* labels_pt[] = {"Como iniciado", "30", "60", "90", "120", "144", "240"};
-        static const char* labels_ru[] = {"Как при запуске", "30", "60", "90", "120", "144", "240"};
-        int index = 0;
-        for (int i = 0; i < 7; ++i) {
-            if (steps[i] == BbFrameRate::Limit()) index = i;
-        }
-        if (ImGui::BeginCombo(UI::L("Limit (F3: 30 FPS on/off)", "Limite (F3: 30 FPS lig/desl)", "Лимит (F3: 30 FPS вкл/выкл)"),
-                              UI::L(labels[index], labels_pt[index], labels_ru[index]))) {
-            for (int i = 0; i < 7; ++i) {
-                if (ImGui::Selectable(UI::L(labels[i], labels_pt[i], labels_ru[i]), i == index)) {
-                    BbFrameRate::SetLimit(steps[i]);
-                }
-            }
-            ImGui::EndCombo();
-        }
-        Hint(UI::L("Not saved. At 30 FPS the cinematic of Laurence (optional boss) does not hang, as it can above 30.",
-                   "Não salvo. Em 30 FPS a cinemática de Laurence não trava, como pode ocorrer acima de 30.",
-                   "Не сохраняется. На 30 FPS кинематика Лоуренса не зависает, как может выше 30."));
-    }
-    BbOverlaySections::RenderFpsOverlaySection(s, lang, dirty); // [extra]
-    BbOverlaySections::RenderLightGridCheckbox(s, lang, dirty);
-    const char* pipe_modes[] = {
-        S(DrawPipeModeOff),
-        S(DrawPipeModeOn),
-        S(DrawPipeModeHybrid)
-    };
-    int current_pipe = std::clamp(s.draw_pipe.load(), 0, 2);
-    if (ImGui::BeginCombo(S(DrawPipe), pipe_modes[current_pipe])) {
-        for (int i = 0; i < 3; ++i) {
-            if (ImGui::Selectable(pipe_modes[i], i == current_pipe)) {
-                Store(s.draw_pipe, i, true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-}
-
-void RenderControlsSection(BbSettings::Values& s, int lang) {
-    ImGui::Spacing();
-    ImGui::SeparatorText(UI::L("Mouse & Controls", "Mouse e Controles", "Мышь и управление"));
-    BbOverlaySections::RenderRawMouseCameraControls(s, lang, dirty);
-    Slider(UI::L("Mouse Sensitivity", "Sensibilidade do Mouse", "Чувствительность мыши"), s.mouse_sensitivity, 0.1f, 5.0f);
-    Checkbox(UI::L("Invert Mouse Y", "Inverter Eixo Y do Mouse", "Инвертировать мышь по Y"), s.mouse_invert_y);
-    Checkbox(UI::L("Invert Mouse X", "Inverter Eixo X do Mouse", "Инвертировать мышь по X"), s.mouse_invert_x);
-    Checkbox(UI::L("Capture Mouse Cursor", "Capturar Cursor no Jogo", "Захватывать курсор в игре"), s.mouse_capture);
-    Checkbox(UI::L("Disable Controller Gyro", "Desativar Giroscópio do Controle", "Отключить гироскоп"), s.disable_gyro);
-
-    BbOverlaySections::RenderPromptLayoutSection(s, lang, dirty);
-    Hint(UI::L("Locks cursor inside the game window during gameplay. Press F9 or Insert to release.",
-               "Trava o cursor na janela do jogo durante a partida. Pressione F9 ou Insert para liberar.",
-               "Блокирует курсор в окне игры во время игры. Нажмите F9 или Insert для освобождения."));
-}
-
-#undef S
+namespace {
 
 // The settings menu as in 0.3 and 0.4: one window (moved with the mouse, its place kept in
 // bbport.ini), sections one under the other, ImGui's own widgets and keyboard/gamepad navigation.
 void Menu() {
     auto& s = BbSettings::Get();
-    const int lang = s.menu_language.load();
-    #define S(id) BbStrings::Get(BbStrings::StringId::id, lang)
-
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     // Where it was moved last (bbport.ini menu_pos, a fraction of the screen), kept on screen.
-    ImVec2 pos(viewport->WorkPos.x + 30.0f * base_scale, viewport->WorkPos.y + 30.0f * base_scale);
+    ImVec2 pos(viewport->WorkPos.x + 40.0f * base_scale, viewport->WorkPos.y + 40.0f * base_scale);
     if (s.menu_x >= 0.0f && s.menu_y >= 0.0f) {
         const float margin = 80.0f * base_scale;
         pos.x = viewport->WorkPos.x +
@@ -810,11 +301,12 @@ void Menu() {
                 std::clamp(s.menu_y * viewport->WorkSize.y, 0.0f, std::max(viewport->WorkSize.y - margin, 0.0f));
     }
     ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(560.0f * base_scale, 620.0f * base_scale), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
     bool keep_open = true;
-    char title[128];
-    std::snprintf(title, sizeof(title), "%s  (Insert / L3+R3)###bbport_settings", S(WindowTitle));
-    if (!ImGui::Begin(title, &keep_open, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(
+            BbSettings::MenuText("Bloodborne - Graphics  (Insert / hold L3+R3)###bbport_settings",
+                                 "Bloodborne — настройки  (Insert / удерживать L3+R3)###bbport_settings"),
+            &keep_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
     }
@@ -829,27 +321,48 @@ void Menu() {
             dirty = true;
         }
     }
-    const float orig_fps = orig_ms_avg > 0.0f ? 1000.0f / orig_ms_avg : 0.0f;
-    const float total_fps = total_ms_avg > 0.0f ? 1000.0f / total_ms_avg : orig_fps;
-    const float display_ms = total_ms_avg > 0.0f ? total_ms_avg : orig_ms_avg;
-    if (s.frame_generation.load()) {
-        ImGui::Text("%.0f \ %.0f FPS  (%.1f %s)", orig_fps, total_fps, display_ms, S(FpsMs));
-    } else {
-        ImGui::Text("%.0f FPS  (%.1f %s)", total_fps, display_ms, S(FpsMs));
+    // Languages: English, Portuguese (Brazil), Russian
+    static const char* languages[] = {"English", "Português (Brasil)", "Русский"};
+    int language = s.menu_language;
+    if (ImGui::Combo("Language", &language, languages, 3)) {
+        s.menu_language = language;
+        s.menu_language_chosen = true;
+        BbSettings::Save();
     }
+    ImGui::TextUnformatted(FpsText().c_str());
 
-    RenderGraphicsSettings();
+    const bool taa = UpscalerSection(s);
+    ReactiveMaskSection(s, taa);
+    OutputSection(s);
+    GameEffectsSection(s);
+    FrameRateLimitSection(s);
+    ImGui::SeparatorText(BbSettings::MenuText("Camera (right stick)", "Камера (правый стик)"));
+    Slider(BbSettings::MenuText("Horizontal speed", "Скорость по горизонтали"), s.camera_speed[1], 0.25f, 2.0f);
+    Slider(BbSettings::MenuText("Vertical speed", "Скорость по вертикали"), s.camera_speed[0], 0.25f, 2.0f);
+
+    BbOverlaySections::RenderPhotoModeSection(s, s.menu_language, dirty);
+    BbOverlaySections::RenderPostProcessingAndLightingSection(s, s.menu_language, dirty);
+    BbOverlaySections::RenderCameraSection(s, s.menu_language, dirty);
+    BbOverlaySections::RenderFpsOverlaySection(s, s.menu_language, dirty);
+    BbOverlaySections::RenderInfoHudSection(s, s.menu_language, dirty);
+    BbOverlaySections::RenderDiscordRpcSection(s, s.menu_language, dirty);
+    BbOverlaySections::RenderRawMouseCameraControls(s, s.menu_language, dirty);
+    BbOverlaySections::RenderMemoryToolsSection(base_scale);
+
+    ImGui::SeparatorText(BbSettings::MenuText("Other", "Прочее"));
+    Checkbox(BbSettings::MenuText("FPS counter in corner", "Счётчик FPS в углу"), s.show_fps);
+    ShadersSection();
 
     ImGui::Spacing();
-    if (ImGui::Button(S(CloseButton))) {
+    if (ImGui::Button(BbSettings::MenuText("Close", "Закрыть"))) {
         keep_open = false;
     }
     // Issues #74, #116: leaving the game from the pad (this menu opens with L3+R3). A second
     // press confirms; the window thread then closes like the window's own close button.
     static bool quit_armed;
     ImGui::SameLine();
-    if (ImGui::Button(quit_armed ? UI::L("Press again to quit", "Pressione novamente para sair", "Нажмите ещё раз для выхода")
-                                 : UI::L("Quit game", "Sair do jogo", "Выйти из игры"))) {
+    if (ImGui::Button(quit_armed ? BbSettings::MenuText("Press again to quit", "Нажмите ещё раз для выхода")
+                                 : BbSettings::MenuText("Quit game", "Выйти из игры"))) {
         if (quit_armed) {
             SDL_Event quit{};
             quit.type = SDL_EVENT_QUIT;
@@ -860,10 +373,9 @@ void Menu() {
     if (quit_armed && !ImGui::IsItemFocused() && !ImGui::IsItemHovered()) {
         quit_armed = false;
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", S(SavedToIni));
+    ImGui::TextDisabled("%s", BbSettings::MenuText("Settings are saved to bbport.ini",
+                                             "Настройки сохраняются в bbport.ini"));
     ImGui::End();
-    #undef S
     if (!keep_open) {
         SetOpen(false);
     }
@@ -872,10 +384,10 @@ void Menu() {
     UI::UiManager::Render();
 
     // Render the separate Discord Rich Presence configuration window
-    BbOverlaySections::RenderDiscordRpcWindow(s, lang, dirty);
+    BbOverlaySections::RenderDiscordRpcWindow(s, s.menu_language, dirty);
 
     // Render the separate FPS & Performance Overlay configuration window
-    BbOverlaySections::RenderFpsOverlayWindow(s, lang, dirty); // [extra]
+    BbOverlaySections::RenderFpsOverlayWindow(s, s.menu_language, dirty);
 }
 
 void FpsCounter() {
@@ -885,6 +397,190 @@ void FpsCounter() {
         .last_generated_time = last_generated_time,
         .base_scale = base_scale,
     });
+}
+
+/// "Compiling shaders": pipelines made in the background (the cache's preload, imported recipes)
+/// as done / queued, the recipe import, and the game's own compiles of the last 1.5 s (idea from
+/// the SrShadowy fork's precompile splash; here a line in the corner while it lasts).
+/// BB_SHADER_PROGRESS=0 hides it.
+struct ShaderProgress {
+    u32 done = 0, total = 0, recent = 0;
+    bool importing = false;
+};
+ShaderProgress CurrentShaderProgress() {
+    static const bool enabled = !bb_env_off("BB_SHADER_PROGRESS");
+    ShaderProgress p;
+    if (!enabled) {
+        return p;
+    }
+    p.total = g_bb_background_pipelines_total.load(std::memory_order_relaxed);
+    p.done = g_bb_background_pipelines_done.load(std::memory_order_relaxed);
+    // An import longer than 3 minutes is not shown (a stuck child must not keep the line up).
+    static const long long start = NowNs();
+    p.importing = g_bb_shader_import_active.load(std::memory_order_relaxed) &&
+                  NowNs() - start < 180'000'000'000ll;
+    static u32 last_compiles = 0;
+    static long long last_change = 0;
+    static u32 window_start_compiles = 0;
+    const u32 compiles = g_bb_compiles_total.load(std::memory_order_relaxed);
+    const long long now = NowNs();
+    if (compiles != last_compiles) {
+        if (now - last_change > 1'500'000'000ll) {
+            window_start_compiles = last_compiles;
+        }
+        last_compiles = compiles;
+        last_change = now;
+    }
+    if (last_change != 0 && now - last_change <= 1'500'000'000ll) {
+        p.recent = compiles - window_start_compiles;
+    }
+    return p;
+}
+bool ShaderProgressShown() {
+    const ShaderProgress p = CurrentShaderProgress();
+    const bool shown = p.done < p.total || p.importing || p.recent != 0;
+    static bool was_shown = false;
+    if (shown != was_shown) {
+        was_shown = shown;
+        std::printf("Overlay: \"Compiling shaders\" %s (%u of %u in the background%s, %u just now)\n",
+                    shown ? "shown" : "hidden", p.done, p.total,
+                    p.importing ? ", recipes importing" : "", p.recent);
+    }
+    return shown;
+}
+void ShaderProgressLine() {
+    const ShaderProgress p = CurrentShaderProgress();
+    std::string text;
+    if (p.done < p.total) {
+        text = fmt::format("{} {} / {}",
+                           BbSettings::MenuText("Compiling shaders", "Компиляция шейдеров"), p.done,
+                           p.total);
+    } else if (p.importing) {
+        text = BbSettings::MenuText("Preparing shaders...", "Подготовка шейдеров...");
+    } else if (p.recent != 0) {
+        text = fmt::format("{} ({})",
+                           BbSettings::MenuText("Compiling shaders", "Компиляция шейдеров"),
+                           p.recent);
+    } else {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float pad = 12.0f * base_scale;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + pad,
+                                   viewport->WorkPos.y + viewport->WorkSize.y - pad),
+                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.5f);
+    ImGui::Begin("##shader_progress", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::End();
+}
+
+// A trophy icon as an ImGui texture (present thread, under imgui_mutex); null when it cannot be
+// read or SDL is older than 3.4 (no PNG loader).
+ImTextureData* TrophyIcon(const std::filesystem::path& path) {
+    if (path.empty()) {
+        return nullptr;
+    }
+    const auto [it, added] = trophy_icons.try_emplace(path.string(), nullptr);
+    if (!added) {
+        return it->second;
+    }
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    // UTF-8 for SDL (on Windows path::c_str() is wide, string() the ANSI code page).
+    const std::u8string utf8 = path.u8string();
+    const char* name = reinterpret_cast<const char*>(utf8.c_str());
+    SDL_Surface* loaded = SDL_LoadPNG(name);
+    SDL_Surface* rgba = loaded ? SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32) : nullptr;
+    SDL_DestroySurface(loaded);
+    if (!rgba) {
+        std::printf("Overlay: trophy icon %s not loaded: %s\n", name, SDL_GetError());
+        return nullptr;
+    }
+    auto* tex = IM_NEW(ImTextureData)();
+    tex->Create(ImTextureFormat_RGBA32, rgba->w, rgba->h);
+    for (int y = 0; y < rgba->h; ++y) {
+        std::memcpy(tex->GetPixelsAt(0, y), static_cast<const unsigned char*>(rgba->pixels) + y * rgba->pitch,
+                    std::size_t(rgba->w) * 4);
+    }
+    SDL_DestroySurface(rgba);
+    ImGui::RegisterUserTexture(tex);
+    it->second = tex;
+#endif
+    return it->second;
+}
+
+// The front trophy of the queue: a dark panel at the top centre (the game's HUD has its health at
+// the top left, its echoes and insight at the top right), sliding down, with a badge in the
+// grade's colour, "Trophy earned" and the name.
+void TrophyWindow(float dt) {
+    TrophyToast toast;
+    {
+        std::scoped_lock lock{trophy_mutex};
+        if (trophy_queue.empty()) {
+            trophy_active = false;
+            return;
+        }
+        auto& front = trophy_queue.front();
+        if (front.elapsed <= 0.0f && front.elapsed + dt > 0.0f) {
+            std::printf("Overlay: trophy shown: %s\n", front.name.c_str());
+        }
+        front.elapsed += dt;
+        if (front.elapsed > TrophySeconds) {
+            trophy_queue.pop_front();
+            trophy_active = !trophy_queue.empty();
+            return;
+        }
+        toast = front;
+    }
+    if (toast.elapsed < 0.0f) {
+        return; // a delayed one (BB_TROPHY_TEST)
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float s = base_scale;
+    const ImVec2 size{380.0f * s, 76.0f * s};
+    const float slide = std::min(toast.elapsed / TrophySlide, 1.0f);
+    const float eased = 1.0f - (1.0f - slide) * (1.0f - slide);
+    const float x = viewport->WorkPos.x + (viewport->WorkSize.x - size.x) * 0.5f;
+    const float y = viewport->WorkPos.y - size.y + (size.y + 24.0f * s) * eased;
+    const float alpha = std::clamp(std::min(slide, TrophySeconds - toast.elapsed), 0.0f, 1.0f);
+    auto* draw = ImGui::GetForegroundDrawList();
+    const auto a = [alpha](int r, int g, int b, int base) { return IM_COL32(r, g, b, int(base * alpha)); };
+    draw->AddRectFilled({x, y}, {x + size.x, y + size.y}, a(12, 10, 8, 220), 8.0f * s);
+    draw->AddRect({x, y}, {x + size.x, y + size.y}, a(150, 130, 100, 200), 8.0f * s, 0, 1.5f * s);
+    // The badge: the grade's colour (platinum, gold, silver, bronze; grey unknown) and its letter.
+    const ImU32 badge = toast.grade == 'P'   ? a(200, 215, 235, 255)
+                        : toast.grade == 'G' ? a(222, 180, 60, 255)
+                        : toast.grade == 'S' ? a(185, 190, 196, 255)
+                        : toast.grade == 'B' ? a(176, 112, 64, 255)
+                                             : a(120, 120, 120, 255);
+    const ImVec2 centre{x + 38.0f * s, y + size.y * 0.5f};
+    const char letter[2] = {toast.grade == '?' ? 'T' : toast.grade, 0};
+    const ImVec2 letter_size = ImGui::CalcTextSize(letter);
+    if (ImTextureData* icon = TrophyIcon(toast.icon)) {
+        // The game's icon, the grade as a small badge on its corner.
+        const float half = 26.0f * s;
+        draw->AddImageRounded(icon->GetTexRef(), {centre.x - half, centre.y - half}, {centre.x + half, centre.y + half},
+                              {0, 0}, {1, 1}, a(255, 255, 255, 255), 4.0f * s);
+        const ImVec2 dot{centre.x + half - 2.0f * s, centre.y + half - 2.0f * s};
+        draw->AddCircleFilled(dot, 9.0f * s, badge);
+        draw->AddCircle(dot, 9.0f * s, a(30, 25, 20, 255), 0, 1.5f * s);
+    } else {
+        draw->AddCircleFilled(centre, 24.0f * s, badge);
+        draw->AddCircle(centre, 24.0f * s, a(30, 25, 20, 255), 0, 2.0f * s);
+        draw->AddText({centre.x - letter_size.x * 0.5f, centre.y - letter_size.y * 0.5f}, a(30, 25, 20, 255), letter);
+    }
+    const float text_x = x + 76.0f * s, wrap = size.x - 88.0f * s;
+    // In the game's language, as the name (BB_LANGUAGE, the PS4 number: 8 Russian).
+    static const bool russian = [] {
+        const char* env = bb_env("BB_LANGUAGE");
+        return env && std::atoi(env) == 8;
+    }();
+    draw->AddText({text_x, y + 12.0f * s}, a(200, 185, 150, 255), russian ? "Получен трофей" : "Trophy earned");
+    draw->AddText(nullptr, 0.0f, {text_x, y + 12.0f * s + ImGui::GetTextLineHeightWithSpacing()},
+                  a(240, 232, 215, 255), toast.name.c_str(), nullptr, wrap);
 }
 
 void TextPrompt() {
@@ -904,10 +600,10 @@ void TextPrompt() {
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
 /// consumed when the file appears (it is removed), one key press per frame.
 void ScriptedKeys() {
-    static const char* path = std::getenv("BB_MENU_KEYS_FILE");
+    static const char* path = bb_env("BB_MENU_KEYS_FILE");
     static std::chrono::steady_clock::time_point last_check{};
     static std::vector<std::string> queue;
-    static bool release = false;
+    static bool release = false, mouse_release = false;
     static ImGuiKey held = ImGuiKey_None;
     if (!path) {
         return;
@@ -916,6 +612,11 @@ void ScriptedKeys() {
     if (release) {
         io.AddKeyEvent(held, false);
         release = false;
+        return;
+    }
+    if (mouse_release) {
+        io.AddMouseButtonEvent(0, false);
+        mouse_release = false;
         return;
     }
     const auto now = std::chrono::steady_clock::now();
@@ -939,6 +640,15 @@ void ScriptedKeys() {
         SetOpen(!menu_open);
         return;
     }
+    // "click X Y": the left button pressed at display pixel X, Y and released the frame after.
+    if (token == "click" && queue.size() >= 2) {
+        const float x = std::strtof(queue[0].c_str(), nullptr), y = std::strtof(queue[1].c_str(), nullptr);
+        queue.erase(queue.begin(), queue.begin() + 2);
+        io.AddMousePosEvent(x, y);
+        io.AddMouseButtonEvent(0, true);
+        mouse_release = true;
+        return;
+    }
     held = token == "up" ? ImGuiKey_GamepadDpadUp : token == "down" ? ImGuiKey_GamepadDpadDown
          : token == "left" ? ImGuiKey_GamepadDpadLeft : token == "right" ? ImGuiKey_GamepadDpadRight
          : token == "enter" ? ImGuiKey_GamepadFaceDown : token == "l1" ? ImGuiKey_GamepadL1
@@ -956,28 +666,6 @@ void ScriptedKeys() {
 
 } // namespace
 
-void RenderGraphicsSettings() {
-    auto& s = BbSettings::Get();
-    const int lang = s.menu_language.load();
-
-    RenderLanguageSection(s, lang);
-    BbOverlaySections::RenderPhotoModeSection(s, lang, dirty);
-    ToyPadSection();
-    RenderUpscalerSection(s, lang);
-    RenderPresetSection(s, lang);
-    RenderReactivitySection(s, lang);
-    RenderFrameGenSection(s, lang);
-    RenderResolutionSection(s, lang);
-    RenderEffectsSection(s, lang);
-    BbOverlaySections::RenderPostProcessingAndLightingSection(s, lang, dirty);
-    BbOverlaySections::RenderCameraSection(s, lang, dirty);
-    RenderPerformanceSection(s, lang);
-    BbOverlaySections::RenderInfoHudSection(s, lang, dirty);
-    BbOverlaySections::RenderDiscordRpcSection(s, lang, dirty);
-    RenderControlsSection(s, lang);
-    BbOverlaySections::RenderMemoryToolsSection(base_scale);
-}
-
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text,
                    const BbVirtualKeyboard::Callbacks& callbacks) {
     {
@@ -994,30 +682,21 @@ void SetTextPrompt(bool active, const std::string& prompt, const std::string& te
     prompt_active = active;
 }
 
-static const char* OverlayGetClipboardText(ImGuiContext*) {
-    static char* clipboard_buf = nullptr;
-    if (clipboard_buf) {
-        SDL_free(clipboard_buf);
-        clipboard_buf = nullptr;
-    }
-    if (SDL_HasClipboardText()) {
-        clipboard_buf = SDL_GetClipboardText();
-    }
-    return clipboard_buf;
-}
-
-static void OverlaySetClipboardText(ImGuiContext*, const char* text) {
-    if (text) {
-        SDL_SetClipboardText(text);
-        SDL_SetPrimarySelectionText(text);
-#if !defined(_WIN32)
-        FILE* pipe = popen("wl-copy 2>/dev/null || xclip -selection clipboard 2>/dev/null", "w");
-        if (pipe) {
-            fputs(text, pipe);
-            pclose(pipe);
-        }
-#endif
-    }
+void RenderGraphicsSettings() {
+    auto& s = BbSettings::Get();
+    const bool taa = detail::UpscalerSection(s);
+    detail::ReactiveMaskSection(s, taa);
+    detail::OutputSection(s);
+    detail::GameEffectsSection(s);
+    detail::FrameRateLimitSection(s);
+    BbOverlaySections::RenderPhotoModeSection(s, s.menu_language, detail::dirty);
+    BbOverlaySections::RenderPostProcessingAndLightingSection(s, s.menu_language, detail::dirty);
+    BbOverlaySections::RenderCameraSection(s, s.menu_language, detail::dirty);
+    BbOverlaySections::RenderFpsOverlaySection(s, s.menu_language, detail::dirty);
+    BbOverlaySections::RenderInfoHudSection(s, s.menu_language, detail::dirty);
+    BbOverlaySections::RenderDiscordRpcSection(s, s.menu_language, detail::dirty);
+    BbOverlaySections::RenderRawMouseCameraControls(s, s.menu_language, detail::dirty);
+    BbOverlaySections::RenderMemoryToolsSection(detail::base_scale);
 }
 
 void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) {
@@ -1033,26 +712,17 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     io.BackendPlatformName = "bbport";
 
-    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    platform_io.Platform_GetClipboardTextFn = OverlayGetClipboardText;
-    platform_io.Platform_SetClipboardTextFn = OverlaySetClipboardText;
-    io.GetClipboardTextFn = [](void*) -> const char* {
-        return OverlayGetClipboardText(nullptr);
-    };
-    io.SetClipboardTextFn = [](void*, const char* text) {
-        OverlaySetClipboardText(nullptr, text);
-    };
-
     ImGui::StyleColorsDark();
-    UI::UiManager::InitStyle();
-    BbInfoHud::Init();
-    BbDiscordRpc::Init();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 6.0f;
+    style.FrameRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.Colors[ImGuiCol_WindowBg].w = 0.92f;
 
     ImFontConfig font_config;
     font_config.FontDataOwnedByAtlas = false;
     io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_font_ttf),
-                                   int(bb_font_ttf_end - bb_font_ttf), 18.0f, &font_config,
-                                   io.Fonts->GetGlyphRangesCyrillic());
+                                   int(bb_font_ttf_end - bb_font_ttf), 18.0f, &font_config);
 
     const vk::Instance vk_instance = instance.GetInstance();
     ImGui_ImplVulkan_LoadFunctions(
@@ -1086,7 +756,9 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
         return;
     }
     initialized = true;
-    std::printf("Overlay: menu ready (Insert or L3+R3)\n");
+    std::printf("Overlay: menu ready (Insert, or hold L3+R3)\n");
+    UI::UiManager::InitStyle();
+    BbInfoHud::Init();
 }
 
 void UpdateTextInput(SDL_Window* window) {
@@ -1111,7 +783,6 @@ bool HandleEvent(const SDL_Event& event) {
     }
     ImGuiIO& io = ImGui::GetIO();
     const bool is_open = menu_open;
-    const bool is_prompt = prompt_active;
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
@@ -1143,13 +814,14 @@ bool HandleEvent(const SDL_Event& event) {
         io.AddKeyEvent(ImGuiMod_Ctrl, (event.key.mod & SDL_KMOD_CTRL) != 0);
         io.AddKeyEvent(ImGuiMod_Shift, (event.key.mod & SDL_KMOD_SHIFT) != 0);
         io.AddKeyEvent(ImGuiMod_Alt, (event.key.mod & SDL_KMOD_ALT) != 0);
-        if (const ImGuiKey key = KeyFromSdl(event.key.key, event.key.scancode); key != ImGuiKey_None) {
+        if (const ImGuiKey key = KeyFromSdl(event.key.key); key != ImGuiKey_None) {
             io.AddKeyEvent(key, down);
         }
         return true;
     }
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP: {
+        const bool is_prompt = prompt_active.load(std::memory_order_relaxed);
         if (is_prompt && BbVirtualKeyboard::HandleGamepadEvent(event)) {
             return true;
         }
@@ -1160,9 +832,16 @@ bool HandleEvent(const SDL_Event& event) {
         } else if (button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {
             r3_down = down;
         }
-        if (down && l3_down && r3_down) {
-            SetOpen(!is_open);
-            return true;
+        if (l3_down && r3_down) {
+            if (down && is_open) {
+                SetOpen(false);
+                return true;
+            }
+            if (down && l3r3_since.load() == 0) {
+                l3r3_since = NowNs(); // the game sees the press too (a fight goes on)
+            }
+        } else {
+            l3r3_since = 0;
         }
         if (!is_open) {
             return false;
@@ -1173,6 +852,7 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        const bool is_prompt = prompt_active.load(std::memory_order_relaxed);
         if (is_prompt && BbVirtualKeyboard::HandleGamepadEvent(event)) {
             return true;
         }
@@ -1188,16 +868,16 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_MOUSE_MOTION: {
-        if (!is_open && !is_prompt) {
+        if (!is_open) {
             return false;
         }
-        const float density = PixelDensity(event.motion.windowID);
-        io.AddMousePosEvent(event.motion.x * density, event.motion.y * density);
+        const ImVec2 at = ToDisplay(event.motion.windowID, event.motion.x, event.motion.y);
+        io.AddMousePosEvent(at.x, at.y);
         return true;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        if (!is_open && !is_prompt) {
+        if (!is_open) {
             return false;
         }
         const int button = event.button.button == SDL_BUTTON_LEFT    ? 0
@@ -1207,10 +887,15 @@ bool HandleEvent(const SDL_Event& event) {
         if (button >= 0) {
             io.AddMouseButtonEvent(button, event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
         }
+        if (OverlayTrace()) {
+            std::printf("Overlay trace: SDL button %d %s at %.0f,%.0f (mouse id %u, clicks %d)\n",
+                        int(event.button.button), event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? "down" : "up",
+                        event.button.x, event.button.y, unsigned(event.button.which), int(event.button.clicks));
+        }
         return true;
     }
     case SDL_EVENT_MOUSE_WHEEL:
-        if (!is_open && !is_prompt) {
+        if (!is_open) {
             return false;
         }
         io.AddMouseWheelEvent(event.wheel.x, event.wheel.y);
@@ -1218,7 +903,6 @@ bool HandleEvent(const SDL_Event& event) {
     default:
         return false;
     }
-    return false;
 }
 
 void SetBanner(const char* text, float duration_seconds) {
@@ -1235,6 +919,12 @@ void SetBanner(const char* text, float duration_seconds) {
     banner_active = text != nullptr && text[0] != 0;
 }
 
+void ShowTrophy(char grade, const std::string& name, const std::filesystem::path& icon, float delay) {
+    std::scoped_lock lock{trophy_mutex};
+    trophy_queue.push_back({grade, name, -delay, icon});
+    trophy_active = true;
+}
+
 bool Visible() {
     if (banner_active.load(std::memory_order_relaxed)) {
         std::scoped_lock lock{banner_mutex};
@@ -1243,9 +933,21 @@ bool Visible() {
             banner_active = false;
         }
     }
-    return initialized && (menu_open || prompt_active || banner_active ||
-                           BbSettings::Get().show_fps || BbShaderTracker::IsCompiling() ||
-                           (BbSettings::Get().show_info_hud && !BbSettings::Get().hide_hud));
+    // BB_OVERLAY_OPEN=1 (tests): the menu open from the start, its sections unfolded.
+    static bool open_at_start = bb_env_on("BB_OVERLAY_OPEN");
+    if (open_at_start && initialized) {
+        open_at_start = false;
+        open_requested = true;
+    }
+    if (const long long since = l3r3_since.load();
+        since != 0 && !menu_open && NowNs() - since >= OpenHoldMs * 1'000'000) {
+        l3r3_since = 0;
+        open_requested = true;
+    }
+    const bool shader_progress = ShaderProgressShown();
+    return initialized && (menu_open || open_requested || prompt_active || banner_active ||
+                           trophy_active || BbSettings::Get().show_fps || shader_progress ||
+                           UI::UiManager::IsOpen() || BbSettings::Get().show_info_hud);
 }
 
 bool MenuOpen() {
@@ -1258,45 +960,36 @@ bool CapturesInput() {
 }
 
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool is_generated) {
+
     // Present interval for the FPS readout (measured also while nothing is drawn).
     const auto now = std::chrono::steady_clock::now();
-
-    // Pacing of all presented frames (real + generated)
     if (last_present_total.time_since_epoch().count() != 0) {
         const float ms = std::chrono::duration<float, std::milli>(now - last_present_total).count();
         if (ms > 0.0f && ms < 1000.0f) {
             total_ms_avg = total_ms_avg == 0.0f ? ms : total_ms_avg * 0.95f + ms * 0.05f;
-            frame_ms_avg = total_ms_avg;
         }
     }
     last_present_total = now;
 
-    // Pacing of original game frames (real frames only)
     if (is_generated) {
         last_generated_time = now;
     } else {
         if (last_present_orig.time_since_epoch().count() != 0) {
-            const float orig_ms = std::chrono::duration<float, std::milli>(now - last_present_orig).count();
-            if (orig_ms > 0.0f && orig_ms < 1000.0f) {
-                orig_ms_avg = orig_ms_avg == 0.0f ? orig_ms : orig_ms_avg * 0.95f + orig_ms * 0.05f;
+            const float ms = std::chrono::duration<float, std::milli>(now - last_present_orig).count();
+            if (ms > 0.0f && ms < 1000.0f) {
+                orig_ms_avg = orig_ms_avg == 0.0f ? ms : orig_ms_avg * 0.95f + ms * 0.05f;
             }
         }
         last_present_orig = now;
     }
-
-    if (orig_ms_avg == 0.0f) {
-        orig_ms_avg = total_ms_avg;
-    }
     if (total_ms_avg == 0.0f) {
         total_ms_avg = orig_ms_avg;
     }
+    frame_ms_avg = total_ms_avg;
 
     // BB_FPS_PRINT=1: the present rate every 5 s on stdout, without the cost of BB_FRAME_STATS
     // (its timers are in the draw path): to measure as players run the game.
-    static const bool fps_print = [] {
-        const char* env = std::getenv("BB_FPS_PRINT");
-        return env && env[0] == '1';
-    }();
+    static const bool fps_print = bb_env_on("BB_FPS_PRINT");
     if (fps_print) {
         static auto window_start = now;
         static std::uint64_t presents = 0;
@@ -1308,18 +1001,22 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
             presents = 0;
         }
     }
-    if (std::getenv("BB_MENU_KEYS_FILE") && initialized) {
+    if (bb_env("BB_MENU_KEYS_FILE") && initialized) {
         std::scoped_lock lock{imgui_mutex};
         ScriptedKeys();
     }
-
     UI::UiManager::Tick();
     if (!Visible()) {
         return;
     }
     std::scoped_lock lock{imgui_mutex};
+    if (open_requested.exchange(false)) {
+        SetOpen(true);
+    }
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
+    display_width.store(extent.width, std::memory_order_relaxed);
+    display_height.store(extent.height, std::memory_order_relaxed);
     const float dt_ms = total_ms_avg > 0.0f ? total_ms_avg : 16.666f;
     io.DeltaTime = dt_ms > 0.0f && dt_ms < 1000.0f ? dt_ms / 1000.0f : 1.0f / 60.0f;
     // UI scale follows the display height (1080p = 1).
@@ -1335,6 +1032,12 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
 
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
+    if (OverlayTrace() && menu_open && (io.MouseClicked[0] || io.MouseReleased[0])) {
+        const ImGuiContext& g = *ImGui::GetCurrentContext();
+        std::printf("Overlay trace: ImGui left %s at %.0f,%.0f, display %.0fx%.0f, hovered id %#x, active id %#x\n",
+                    io.MouseClicked[0] ? "clicked" : "released", io.MousePos.x, io.MousePos.y,
+                    io.DisplaySize.x, io.DisplaySize.y, unsigned(g.HoveredIdPreviousFrame), unsigned(g.ActiveId));
+    }
     if (menu_open) {
         Menu();
     }
@@ -1347,27 +1050,24 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
     if (prompt_active && !menu_open) {
         TextPrompt();
     }
+    if (!menu_open) {
+        ShaderProgressLine();
+    }
+    if (trophy_active) {
+        TrophyWindow(io.DeltaTime);
+    }
     if (banner_active) {
         std::string text;
-        bool expired = false;
         {
             std::scoped_lock banner_lock{banner_mutex};
-            if (banner_expire.time_since_epoch().count() != 0 && now >= banner_expire) {
-                expired = true;
-            } else {
-                text = banner_text;
-            }
+            text = banner_text;
         }
-        if (expired) {
-            banner_active = false;
-        } else if (!text.empty()) {
-            const ImVec2 size = ImGui::CalcTextSize(text.c_str());
-            auto* draw = ImGui::GetForegroundDrawList();
-            const ImVec2 at{(io.DisplaySize.x - size.x) * 0.5f, io.DisplaySize.y * 0.82f};
-            draw->AddRectFilled({at.x - 24.0f, at.y - 12.0f}, {at.x + size.x + 24.0f, at.y + size.y + 12.0f},
-                                IM_COL32(0, 0, 0, 170), 6.0f);
-            draw->AddText(at, IM_COL32(230, 220, 200, 255), text.c_str());
-        }
+        const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+        auto* draw = ImGui::GetForegroundDrawList();
+        const ImVec2 at{(io.DisplaySize.x - size.x) * 0.5f, io.DisplaySize.y * 0.82f};
+        draw->AddRectFilled({at.x - 24.0f, at.y - 12.0f}, {at.x + size.x + 24.0f, at.y + size.y + 12.0f},
+                            IM_COL32(0, 0, 0, 170), 6.0f);
+        draw->AddText(at, IM_COL32(230, 220, 200, 255), text.c_str());
     }
     ImGui::Render();
 

@@ -13,7 +13,7 @@
 #ifndef _WIN32
 #include <sys/uio.h>
 #include <unistd.h>
-#include "extra/core/bbsc/bbport_bbsc_kit.h" // [extra: Teefpyre]
+#include "core/bbport_bbsc_kit.h" // Teefpyre (SrShadowy fork)
 #endif
 
 namespace Core::Bbsc {
@@ -22,12 +22,26 @@ namespace {
 
 #ifdef _WIN32
 // One region. The emulator changes page protection all the time (GPU tracking), so a page that was
-// readable a moment ago may fault now: the search runs under SEH and a fault just ends the region.
+// readable a moment ago may fault now. bbport: clang/mingw has no __try, so the region is read in
+// chunks with ReadProcessMemory (a chunk that no longer reads ends the region, no fault); chunks
+// overlap by length - 1 bytes so a match across a boundary is found once.
 void SearchRegion(const std::uint8_t* start, std::size_t size, const std::uint8_t* needle,
                   std::size_t length, std::vector<std::uint64_t>& hits, std::size_t max_hits) {
-    __try {
-        const std::uint8_t* end = start + size;
-        const std::uint8_t* at = start;
+    constexpr std::size_t Chunk = 1u << 20;
+    if (size < length) {
+        return;
+    }
+    std::vector<std::uint8_t> buffer(std::min(size, Chunk + length - 1));
+    std::size_t offset = 0;
+    while (hits.size() < max_hits && size - offset >= length) {
+        const std::size_t want = std::min(buffer.size(), size - offset);
+        SIZE_T read = 0;
+        if (!ReadProcessMemory(GetCurrentProcess(), start + offset, buffer.data(), want, &read) ||
+            read != want) {
+            return;
+        }
+        const std::uint8_t* end = buffer.data() + want;
+        const std::uint8_t* at = buffer.data();
         while (hits.size() < max_hits && end - at >= static_cast<std::ptrdiff_t>(length)) {
             at = static_cast<const std::uint8_t*>(
                 std::memchr(at, needle[0], static_cast<std::size_t>(end - at) - length + 1));
@@ -35,11 +49,14 @@ void SearchRegion(const std::uint8_t* start, std::size_t size, const std::uint8_
                 break;
             }
             if (std::memcmp(at, needle, length) == 0) {
-                hits.push_back(reinterpret_cast<std::uint64_t>(at));
+                hits.push_back(reinterpret_cast<std::uint64_t>(start + offset + (at - buffer.data())));
             }
             ++at;
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (want < buffer.size()) {
+            break;
+        }
+        offset += want - (length - 1);
     }
 }
 #endif
