@@ -39,10 +39,3 @@ bool Skip() {
 
 } // namespace BbVideoTrack
 
-extern "C" int bbgpu_video_active(void) {
-    return BbVideoTrack::IsActive() ? 1 : 0;
-}
-
-extern "C" int bbgpu_video_skip(void) {
-    return BbVideoTrack::Skip() ? 1 : 0;
-}

@@ -75,7 +75,7 @@ static void bind_defaults(void) {
         {IN_L2,PAD_LEFT_TRIGGER}, {IN_R2,PAD_RIGHT_TRIGGER},
         {IN_L3,SDL_GAMEPAD_BUTTON_LEFT_STICK}, {IN_R3,SDL_GAMEPAD_BUTTON_RIGHT_STICK},
         {IN_OPTIONS,SDL_GAMEPAD_BUTTON_START},
-        {IN_TOUCHPAD,SDL_GAMEPAD_BUTTON_BACK}, {IN_TOUCHPAD,SDL_GAMEPAD_BUTTON_TOUCHPAD},
+        {IN_TOUCHPAD,SDL_GAMEPAD_BUTTON_TOUCHPAD},
         {IN_UP,SDL_GAMEPAD_BUTTON_DPAD_UP}, {IN_DOWN,SDL_GAMEPAD_BUTTON_DPAD_DOWN},
         {IN_LEFT,SDL_GAMEPAD_BUTTON_DPAD_LEFT}, {IN_RIGHT,SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
     };
@@ -111,6 +111,7 @@ static float mouse_sensitivity=1.0f;
 static int motion_enabled = -1;
 static void load_bindings(void) {
     bind_defaults();
+    extra_pad_set_has_custom_touchpad(0);
     mouse_look=1; mouse_invert_y=0; mouse_invert_x=0; mouse_sensitivity=1.0f; prompt_forced=-1;
     const char *path=bb_env("BB_CONFIG");
     FILE *f=path ? fopen(path,"r") : NULL;
@@ -141,7 +142,11 @@ static void load_bindings(void) {
         for (int i=0;i<IN_COUNT;++i) if (!strcmp(line+4,input_names[i])) input=i;
         if (input<0 || (pad && input>=IN_MOVE_UP)) { printf("Runtime: controls: unknown input %s\n",line); continue; }
         Binding *b=&bindings[input];
-        if (keyboard) b->key_count=0; else b->pad_count=0;
+        if (keyboard) b->key_count=0;
+        else {
+            b->pad_count=0;
+            if (input == IN_TOUCHPAD) extra_pad_set_has_custom_touchpad(1);
+        }
         for (char *name=strtok(eq+1,",\r\n"); name; name=strtok(NULL,",\r\n")) {
             while (*name==' ') ++name;
             for (char *end=name+strlen(name); end>name && end[-1]==' ';) *--end=0;
@@ -355,14 +360,19 @@ static void apply_keyboard(PadData *d, const bool *k) {
     /* A gamepad's stick is kept while no key moves it. */
     key_stick(&move_stick,d->timestamp,key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT),
               key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN),&d->left_x,&d->left_y);
-    /* Walk (default Left Alt, held): the left stick at 40%, the game's walking pace, from the move
-     * keys or a gamepad's stick (FromSoftware's PC ports bind it the same way). */
-    if (key_down(k,IN_WALK)) {
+    const int walk_mod = k && (k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT] ||
+                               k[SDL_SCANCODE_LCTRL] || k[SDL_SCANCODE_RCTRL]);
+    if (walk_mod) {
+        extra_pad_apply_walk_modifier(&d->left_x, &d->left_y, k,
+                                      key_down(k, IN_MOVE_LEFT), key_down(k, IN_MOVE_RIGHT),
+                                      key_down(k, IN_MOVE_UP), key_down(k, IN_MOVE_DOWN));
+    } else if (key_down(k, IN_WALK)) {
         d->left_x=(uint8_t)(128+((int)d->left_x-128)*2/5);
         d->left_y=(uint8_t)(128+((int)d->left_y-128)*2/5);
     }
     key_stick(&look_stick,d->timestamp,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT),
               key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN),&d->right_x,&d->right_y);
+    extra_pad_apply_cutscene_skip(&d->buttons, k);
     memset((void *)key_latch,0,sizeof(key_latch));
 }
 

@@ -3,8 +3,12 @@
 // bbport: fixes to the game's own code (play time at high frame rates, hit collector cap, save
 // character id guard). BB_FIX_PLAY_TIME / BB_FIX_HIT_COLLECTOR / BB_FIX_CHARA_ID=0 turn one off.
 #pragma once
+#include <cstdint>
 
 namespace BbEngineFixes {
 /// Installs the hooks; once, after the game's image is loaded.
 void Install();
+/// Installs high-FPS play-time fractional accumulator, 30 Hz player durability/fall-height
+/// step limiter, and 2x engine heap/menu pool headroom patches.
+void PatchImage(unsigned char* image, std::uint64_t size);
 }

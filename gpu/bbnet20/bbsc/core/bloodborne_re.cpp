@@ -48,8 +48,8 @@
 #include "core/libraries/np/np_matching2/np_matching2_mm.h"
 #include "core/libraries/np/np_signaling/np_signaling_helpers.h"
 #include "core/libraries/np/np_signaling/np_signaling_bbsc.h"
+#include "core/memory.h"
 #include "core/bbport_bbsc_kit.h" // Teefpyre (SrShadowy fork)
-#include "extra/hooks.h" // [extra]
 
 namespace Core::Bloodborne {
 namespace {

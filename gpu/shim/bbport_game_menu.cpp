@@ -357,7 +357,6 @@ void DefineTexts() {
          AddText("DLSS", "DLSS", "DLSS"), AddText("FSR 1", "FSR 1", "FSR 1"),
          AddText("FSR 4 (AMD DLL)", "FSR 4 (DLL da AMD)", "FSR 4 (DLL AMD)")},
         Kind::Select);
-        Kind::Select);
     row(Preset, "Quality preset", "Predefinição de qualidade", "Пресет",
         "Scene resolution relative to the output",
         "Resolução da cena em relação à saída", "Разрешение сцены относительно вывода",
@@ -377,9 +376,11 @@ void DefineTexts() {
          AddText("Game default", "Padrão do jogo", "Как в игре"),
          AddText("Lower", "Menor", "Ниже"), AddText("Lowest", "Mínima", "Минимальная")},
         Kind::Select);
-    row(TextureQuality, "Texture quality", "Качество текстур",
+    row(TextureQuality, "Texture quality", "Qualidade das texturas", "Качество текстур",
         "Large textures in VRAM: half or a quarter of their size (from the next area); auto: half "
         "with 3 GB of VRAM or less",
+        "Texturas grandes na VRAM: metade ou um quarto do tamanho (na próxima área); auto: metade "
+        "com 3 GB de VRAM ou menos",
         "Крупные текстуры в видеопамяти: половина или четверть размера (со следующей локации); "
         "авто: половина при 3 ГБ видеопамяти и меньше",
         {AddText("Auto", "Auto", "Авто"), AddText("Full", "Completo", "Полное"),

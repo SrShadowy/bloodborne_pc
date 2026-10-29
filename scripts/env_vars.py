@@ -28,7 +28,7 @@ KINDS = {
 }
 
 # The code: C/C++ string literals, and the scripts' own lines (not their comments).
-CODE_DIRS = ('src', 'gpu')
+CODE_DIRS = ('src', 'gpu', 'extra')
 CODE_SKIP = ('third_party', 'vendor')
 SCRIPT_FILES = ('run.py', 'run.sh', 'build.sh')
 SCRIPT_DIRS = ('launcher', 'scripts', 'tools', 'packaging')

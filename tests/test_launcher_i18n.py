@@ -38,6 +38,10 @@ class LauncherI18nTests(unittest.TestCase):
                                     and isinstance(node.args[0].value, str)):
                                 cls.tr_strings.add(node.args[0].value)
 
+    @classmethod
+    def tearDownClass(cls):
+        bbport_i18n.set_language("")
+
     def test_pt_br_has_no_untranslated_russian_strings(self):
         bbport_i18n.set_language("pt_BR")
         untranslated = []

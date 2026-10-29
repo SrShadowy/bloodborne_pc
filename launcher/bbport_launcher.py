@@ -24,14 +24,88 @@ try:
 except OSError:
     pass
 
+# [Diagnostics & Logging Bootstrap — Phase 0]
+_LAUNCHER_DIR = Path(__file__).resolve().parent
+if str(_LAUNCHER_DIR) not in sys.path:
+    sys.path.insert(0, str(_LAUNCHER_DIR))
+
+from diagnostics import (
+    LOG,
+    setup_logging,
+    get_log_dir,
+    get_log_file,
+    get_runtime_backend,
+    detect_audio_server,
+    check_gpu_diagnostics,
+    collect_diagnostics_report,
+)
+
+_LOG_DIR = setup_logging()
+_LAUNCHER_LOG = get_log_file() or (Path.home() / ".config" / "bbport-launcher" / "launcher.log")
+
+
+def _launcher_log(line):
+    LOG.info(line)
+
+
+# Detect or configure launcher window backend (X11 vs Wayland).
+# Priority:
+# 1. CLI flags (--x11, --wayland)
+# 2. Environment variable BB_LAUNCHER_BACKEND
+# 3. Persistent user preference saved in settings.json ("video_backend": "x11" | "wayland")
+# 4. Default: Let GTK negotiate dynamically (native Wayland or X11)
 if "--x11" in sys.argv:
     os.environ["GDK_BACKEND"] = "x11"
     os.environ.setdefault("GSK_RENDERER", "gl")
 elif "--wayland" in sys.argv:
     os.environ["GDK_BACKEND"] = "wayland"
     os.environ.setdefault("GSK_RENDERER", "gl")
+else:
+    _launcher_backend = os.environ.get("BB_LAUNCHER_BACKEND", "").lower()
+    if not _launcher_backend:
+        try:
+            _cfg_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
+            _cfg_file = _cfg_dir / "settings.json"
+            if _cfg_file.is_file():
+                import json
+                _saved_cfg = json.loads(_cfg_file.read_text(encoding="utf-8"))
+                _saved_backend = _saved_cfg.get("video_backend", "").lower()
+                if _saved_backend in ("x11", "wayland"):
+                    _launcher_backend = _saved_backend
+        except Exception:
+            pass
+
+    if _launcher_backend == "x11":
+        os.environ["GDK_BACKEND"] = "x11"
+        os.environ.setdefault("GSK_RENDERER", "gl")
+    elif _launcher_backend == "wayland":
+        os.environ["GDK_BACKEND"] = "wayland"
+        os.environ.setdefault("GSK_RENDERER", "gl")
+    else:
+        os.environ.setdefault("GSK_RENDERER", "gl")
+
+_HAS_GTK = True
+_GTK_ERR = None
+try:
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
+except Exception as _err:
+    _HAS_GTK = False
+    _GTK_ERR = _err
+    class _DummyGtk:
+        def __getattr__(self, name):
+            return object
+    Adw = _DummyGtk()
+    Gdk = _DummyGtk()
+    Gio = _DummyGtk()
+    GLib = _DummyGtk()
+    Gtk = _DummyGtk()
+    Pango = _DummyGtk()
 
 from bbport_launcher_common import *  # noqa: F401,F403
+from bbport_config import LOG_LEVELS
 from bbport_launcher_content import ContentPages
 from bbport_launcher_log import LogPage
 from bbport_launcher_online import OnlinePage
@@ -602,6 +676,53 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
                 else:
                     row.set_subtitle(text)
 
+    def build_dev_page(self):
+        page = Adw.PreferencesPage()
+
+        log_opt = Adw.PreferencesGroup(title=tr("Оптимизация журнала и ввода-вывода"))
+        self.log_level_row = combo_row(
+            tr("Уровень журнала"),
+            None,
+            LOG_LEVELS,
+            self.settings.get("log_level", "verbose"),
+        )
+        self.log_level_row.connect("notify::selected", lambda *_: self.store())
+        log_opt.add(self.log_level_row)
+        page.add(log_opt)
+
+        dev = Adw.PreferencesGroup(title=tr("Для разработчика"))
+        self.mangohud_row = Adw.SwitchRow(title="MangoHud", active=self.settings.get("mangohud", False))
+        dev.add(self.mangohud_row)
+        self.stats_row = Adw.SwitchRow(title=tr("Статистика кадров в журнале"),
+                                       active=self.settings.get("stats_in_title", False))
+        dev.add(self.stats_row)
+        self.save_log_row = Adw.SwitchRow(title=tr("Сохранять журнал и статистику в файл"),
+                                          active=self.settings.get("save_log", False))
+        dev.add(self.save_log_row)
+        self.crash_diag_row = Adw.SwitchRow(title=tr("Диагностика вылетов"),
+                                            active=self.settings.get("crash_diag", False))
+        dev.add(self.crash_diag_row)
+        self.as_0_3_row = Adw.SwitchRow(title="BB_AS_0_3",
+                                        subtitle="0.3.x compatibility",
+                                        active=self.settings.get("as_0_3", False))
+        dev.add(self.as_0_3_row)
+        self.profile_row = Adw.SwitchRow(title=tr("Профиль GPU в журнале"),
+                                         active=self.settings.get("gpu_profile", False))
+        dev.add(self.profile_row)
+        self.validation_row = Adw.SwitchRow(title=tr("Слои валидации Vulkan"),
+                                            active=self.settings.get("vk_validation", False))
+        dev.add(self.validation_row)
+        self.extra_row = Adw.EntryRow(title=tr("Доп. переменные (ИМЯ=значение через пробел)"))
+        self.extra_row.set_text(self.settings.get("extra_env", ""))
+        dev.add(self.extra_row)
+        page.add(dev)
+
+        for r in (self.mangohud_row, self.stats_row, self.save_log_row, self.crash_diag_row,
+                  self.as_0_3_row, self.profile_row, self.validation_row):
+            r.connect("notify::active", lambda *_: self.store())
+        self.extra_row.connect("changed", lambda *_: self.store())
+        return page
+
     def on_ui_language(self, row, _param):
         choice = combo_value(row)
         if choice == self.settings.get("ui_language", ""):
@@ -1067,14 +1188,43 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
 
 
 
-class LauncherApp(Adw.Application):
+_AdwAppBase = Adw.Application if _HAS_GTK and isinstance(getattr(Adw, "Application", None), type) else object
+
+
+class LauncherApp(_AdwAppBase):
     def __init__(self):
-        super().__init__(application_id="io.github.bbport.Launcher",
-                         flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        if not _HAS_GTK:
+            return
+        flags = getattr(Gio.ApplicationFlags, "NON_UNIQUE", 0)
+        super().__init__(application_id="io.github.bbport.Launcher", flags=flags)
+        self.startup_t0 = time.monotonic()
 
     def do_activate(self):
         window = self.get_active_window() or LauncherWindow(self)
         window.present()
+        t_total = (time.monotonic() - getattr(self, "startup_t0", time.monotonic())) * 1000.0
+        LOG.info("startup.completed: total_elapsed=%.1fms", t_total)
+
+
+def get_launcher_version():
+    for cand in [PORT_DIR / "VERSION", Path(__file__).resolve().parent / "VERSION"]:
+        if cand.is_file():
+            try:
+                v = cand.read_text(encoding="utf-8").strip()
+                if v:
+                    return v
+            except OSError:
+                pass
+    try:
+        res = subprocess.run(["git", "describe", "--tags", "--always"],
+                             cwd=Path(__file__).resolve().parent.parent,
+                             capture_output=True, text=True, timeout=1.0)
+        if res.returncode == 0 and res.stdout.strip():
+            ver = res.stdout.strip()
+            return ver[1:] if ver.startswith("v") else ver
+    except Exception:
+        pass
+    return "0.7.0"
 
 
 def play():
@@ -1099,9 +1249,169 @@ def build_fsr411(arguments):
     return subprocess.call(command, env=env, cwd=PORT_DIR)
 
 
-if __name__ == "__main__":
+def ensure_display():
+    """Verifies display availability with graceful Wayland-to-X11 and X11-to-Wayland fallback.
+
+    Returns the active Gdk.Display or None if no display could be opened.
+    """
+    if not _HAS_GTK:
+        return None
+
+    if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+        return None
+
+    if os.environ.get("GDK_BACKEND") == "wayland" and not os.environ.get("WAYLAND_DISPLAY"):
+        if os.environ.get("DISPLAY"):
+            LOG.warning("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.")
+            print("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "x11"
+        else:
+            return None
+
+    if os.environ.get("GDK_BACKEND") == "x11" and not os.environ.get("DISPLAY"):
+        if os.environ.get("WAYLAND_DISPLAY"):
+            LOG.warning("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.")
+            print("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "wayland"
+        else:
+            return None
+
+    try:
+        Gtk.init_check()
+    except Exception as e:
+        LOG.warning("Gtk.init_check() exception: %s", e)
+
+    disp = Gdk.Display.get_default()
+    if disp is None:
+        if os.environ.get("GDK_BACKEND") == "wayland" and os.environ.get("DISPLAY"):
+            LOG.warning("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.")
+            print("WARNING: Sessão Wayland solicitada, mas não disponível. Usando X11.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "x11"
+            try:
+                disp_x11 = Gdk.Display.open(os.environ["DISPLAY"])
+                if disp_x11:
+                    Gdk.DisplayManager.get().set_default_display(disp_x11)
+                    disp = disp_x11
+            except Exception as e:
+                LOG.error("Failed to open X11 fallback display: %s", e)
+        elif os.environ.get("GDK_BACKEND") == "x11" and os.environ.get("WAYLAND_DISPLAY"):
+            LOG.warning("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.")
+            print("WARNING: Sessão X11 solicitada, mas não disponível. Usando Wayland.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "wayland"
+            try:
+                disp_wl = Gdk.Display.open(os.environ["WAYLAND_DISPLAY"])
+                if disp_wl:
+                    Gdk.DisplayManager.get().set_default_display(disp_wl)
+                    disp = disp_wl
+            except Exception as e:
+                LOG.error("Failed to open Wayland fallback display: %s", e)
+        elif os.environ.get("DISPLAY"):
+            LOG.warning("WARNING: Sessão padrão falhou. Usando X11.")
+            print("WARNING: Sessão padrão falhou. Usando X11.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "x11"
+            try:
+                disp_x11 = Gdk.Display.open(os.environ["DISPLAY"])
+                if disp_x11:
+                    Gdk.DisplayManager.get().set_default_display(disp_x11)
+                    disp = disp_x11
+            except Exception as e:
+                LOG.error("Failed to open fallback X11 display: %s", e)
+        elif os.environ.get("WAYLAND_DISPLAY"):
+            LOG.warning("WARNING: Sessão padrão falhou. Usando Wayland.")
+            print("WARNING: Sessão padrão falhou. Usando Wayland.", file=sys.stderr)
+            os.environ["GDK_BACKEND"] = "wayland"
+            try:
+                disp_wl = Gdk.Display.open(os.environ["WAYLAND_DISPLAY"])
+                if disp_wl:
+                    Gdk.DisplayManager.get().set_default_display(disp_wl)
+                    disp = disp_wl
+            except Exception as e:
+                LOG.error("Failed to open fallback Wayland display: %s", e)
+
+    return Gdk.Display.get_default()
+
+
+def main():
+    if "--debug" in sys.argv[1:] or "--verbose" in sys.argv[1:]:
+        os.environ["LAUNCHER_DEBUG"] = "1"
+        import logging
+        LOG.setLevel(logging.DEBUG)
+        for h in LOG.handlers:
+            h.setLevel(logging.DEBUG)
+        LOG.debug("Verbose debug logging enabled via CLI flag")
     if "--play" in sys.argv[1:]:
-        sys.exit(play())
+        return play()
+    if "--precompile-shaders" in sys.argv[1:]:
+        run_sh = PORT_DIR / "run.sh"
+        cmd = ["bash", str(run_sh), "--precompile-shaders"]
+        settings = load_settings()
+        env = game_environment(settings)
+        return subprocess.call(cmd, cwd=str(PORT_DIR), env=env)
     if "--build-fsr411" in sys.argv[1:]:
-        sys.exit(build_fsr411(sys.argv[sys.argv.index("--build-fsr411") + 1:]))
-    sys.exit(LauncherApp().run(sys.argv))
+        return build_fsr411(sys.argv[sys.argv.index("--build-fsr411") + 1:])
+    if "--diagnostics" in sys.argv[1:]:
+        print(collect_diagnostics_report())
+        return 0
+    if "--version" in sys.argv[1:] or "-v" in sys.argv[1:]:
+        print(f"BBPort Launcher {get_launcher_version()}")
+        return 0
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(f"BBPort Launcher {get_launcher_version()} - Bloodborne PC Port Launcher")
+        print("\nUso:")
+        print("  bbport-launcher [opções]\n")
+        print("Opções:")
+        print("  --play               Inicia o jogo diretamente com as configurações salvas (Steam Deck / Game Mode)")
+        print("  --precompile-shaders Reconstrói pipelines e consolida o Grimório offline")
+        print("  --diagnostics        Gera e exibe relatório de diagnóstico do sistema e encerra")
+        print("  --version, -v        Exibe a versão do launcher e encerra")
+        print("  --help, -h           Exibe esta mensagem de ajuda e encerra")
+        print("  --debug, --verbose   Ativa modo de log detalhado (debug)")
+        print("  --x11                Força o uso do backend X11/XWayland")
+        print("  --wayland            Força o uso do backend Wayland nativo")
+        print("  --build-fsr411       Compila os shaders FSR 4.1.1 em segundo plano")
+        return 0
+
+    LOG.info("startup.preflight.begin")
+    if sys.version_info < (3, 9):
+        LOG.error("startup.preflight.failed: Python >= 3.9 required, found %s", sys.version)
+        print("Error: Python >= 3.9 is required to run BBPort Launcher.", file=sys.stderr)
+        return 1
+
+    if not _HAS_GTK:
+        LOG.critical("[E-GTK-001] GTK 4 or Libadwaita unavailable: %s", _GTK_ERR)
+        print("=" * 70, file=sys.stderr)
+        print(" [E-GTK-001] Erro: GTK 4 ou Libadwaita não estão instalados no sistema.", file=sys.stderr)
+        print(f" Detalhes: {_GTK_ERR}\n", file=sys.stderr)
+        print(" Para instalar as dependências necessárias:", file=sys.stderr)
+        print("   • Ubuntu/Debian: sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1", file=sys.stderr)
+        print("   • Fedora:        sudo dnf install python3-gobject gtk4 libadwaita", file=sys.stderr)
+        print("   • Arch/CachyOS:  sudo pacman -S python-gobject gtk4 libadwaita", file=sys.stderr)
+        if _LAUNCHER_LOG:
+            print(f"\n Log gravado em: {_LAUNCHER_LOG}", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        return 1
+
+    display = ensure_display()
+    if not display:
+        err_msg = "[E-DISP-001] Nenhum display gráfico disponível (servidores Wayland e X11 inacessíveis). Execute em uma sessão gráfica ou use --diagnostics / --play."
+        LOG.error("startup.preflight.failed: %s", err_msg)
+        print("=" * 70, file=sys.stderr)
+        print(f" {err_msg}", file=sys.stderr)
+        if _LAUNCHER_LOG:
+            print(f"\n Log gravado em: {_LAUNCHER_LOG}", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        return 1
+
+    LOG.info("startup.preflight.ok: active_display=%s", get_runtime_backend(display))
+
+    gtk_args = [sys.argv[0]] + [arg for arg in sys.argv[1:] if arg.startswith("--g-") or arg.startswith("--gtk-")]
+    app = LauncherApp()
+    return app.run(gtk_args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        LOG.exception("startup.fatal: unrecoverable exception")
+        sys.exit(1)

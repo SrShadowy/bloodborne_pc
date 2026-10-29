@@ -94,6 +94,27 @@ static void sample_host(PadData *d) {
             if (type==SDL_GAMEPAD_TYPE_PS4 || type==SDL_GAMEPAD_TYPE_PS5) evdev_touchpad(d,d->timestamp);
         }
 #endif
+        if (SDL_GamepadSensorEnabled(g, SDL_SENSOR_ACCEL)) {
+            float accel[3] = {0};
+            if (SDL_GetGamepadSensorData(g, SDL_SENSOR_ACCEL, accel, 3)) {
+                d->acceleration[0] = accel[0] / 9.80665f;
+                d->acceleration[1] = accel[1] / 9.80665f;
+                d->acceleration[2] = accel[2] / 9.80665f;
+            }
+        }
+        if (SDL_GamepadSensorEnabled(g, SDL_SENSOR_GYRO)) {
+            float gyro[3] = {0};
+            if (SDL_GetGamepadSensorData(g, SDL_SENSOR_GYRO, gyro, 3)) {
+                d->angular_velocity[0] = gyro[0] * (180.0f / 3.141592653589793f);
+                d->angular_velocity[1] = gyro[1] * (180.0f / 3.141592653589793f);
+                d->angular_velocity[2] = gyro[2] * (180.0f / 3.141592653589793f);
+            }
+        }
+        const char *no_gyro = bb_env("BB_DISABLE_GYRO");
+        if (no_gyro && no_gyro[0] == '1') {
+            d->acceleration[0] = 0.0f; d->acceleration[1] = 1.0f; d->acceleration[2] = 0.0f;
+            d->angular_velocity[0] = d->angular_velocity[1] = d->angular_velocity[2] = 0.0f;
+        }
         if (motion_on()) motion_from_pad(d,g,motion_dt);
         // Back/Select on pads without a touch surface is a left-side click.
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);

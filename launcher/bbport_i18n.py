@@ -395,6 +395,9 @@ EN = {
     "Введите код {} на странице входа": "Enter the code {} on the sign-in page",
     "Сервис кооператива": "Co-op service",
     "Эта сборка без модуля онлайна (libbbnet20.so): игра только офлайн": "This build has no online module (libbbnet20.so): offline play only",
+    "Эта сборка без модуля онлайна (libbbnet.so): игра только офлайн": "This build has no online module (libbbnet.so): offline play only",
+    "Качество текстур": "Texture Quality",
+    "Крупные текстуры в видеопамяти": "Large textures in VRAM",
     'Online ID — это имя учётной записи (NPID), зарегистрированное на сервере, а не адрес email': 'The Online ID is the account name (NPID) you registered on the server, not your email address',
     'UPnP (открыть порт на роутере автоматически)': 'UPnP (open a port on the router automatically)',
     'Резервный P2P-реле (BBR1)': 'P2P fallback relay (BBR1)',
@@ -1738,6 +1741,8 @@ PT_BR = {
         "Os arquivos do jogo foram corrompidos durante a extração: os shaders não descompactam e o jogo travará no carregamento. Extraia o jogo e a atualização 1.09 novamente com uma ferramenta corrigida (issue #81)",
     "Эта сборка без модуля онлайна (libbbnet.so): игра только офлайн":
         "Esta compilação não possui o módulo online (libbbnet.so): jogo somente offline",
+    "Качество текстур": "Qualidade das texturas",
+    "Крупные текстуры в видеопамяти": "Texturas grandes na VRAM",
     "Эта сборка без моста DLSS (libbbport_dlss.so): DLSS работать не будет":
         "Esta compilação não possui a ponte DLSS (libbbport_dlss.so): o DLSS não funcionará",
     "Это не библиотека DLSS": "Isto não é uma biblioteca DLSS",

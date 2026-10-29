@@ -23,6 +23,7 @@ public:
     static void RequestTab(TabId id);
     static void SetStatus(const std::string& msg);
 
+    static bool IsOpen();
     static bool IsMemoryWindowOpen();
     static void SetMemoryWindowOpen(bool open);
     static void ToggleMemoryWindow();

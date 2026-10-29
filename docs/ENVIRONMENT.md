@@ -7,7 +7,7 @@ at its start (`Environment:` in the log) and warns about `BB_*` names it does no
 `=1: ...` / `=0: ...` / `=N: ...` say what that value does; `set: ...` means any value
 turns it on (even `0`).
 
-## Settings (85)
+## Settings (106)
 
 What players and the launchers set. The menu, bbport.ini and the launcher write most of them; set one by hand to override them.
 
@@ -24,10 +24,17 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_CONTENT_SKU` | =full / ...: the content profile run.py prepares |
 | `BB_CURSOR` | =0: the system's mouse cursor instead of the port's |
 | `BB_DECK_DESKTOP_INPUT` | =1: keep keyboard and mouse on a Steam Deck in game mode |
+| `BB_DISABLE_GYRO` | =1: disable gamepad motion and gyro sensors |
 | `BB_DISPLAY` | =N: the monitor to open the window on |
 | `BB_DLSS` | =0: no DLSS even on NVIDIA RTX |
 | `BB_DMEM_EXTRA_MB` | =N (0-2048, default 512): direct memory beyond the PS4's for the port's extras |
 | `BB_DMEM_MB` | =N: the game's direct memory size in MiB (PS4: 5056; raised for high resolutions and large heaps) |
+| `BB_EFFECT_BLOOM` | =0 / 1: bloom post-processing toggle |
+| `BB_EFFECT_DOF` | =0 / 1: depth of field post-processing toggle |
+| `BB_EFFECT_DYNAMIC_SHADOWS` | =0 / 1: dynamic shadows toggle |
+| `BB_EFFECT_MOTION_BLUR` | =0 / 1: motion blur post-processing toggle |
+| `BB_EFFECT_SSAO` | =0 / 1: screen space ambient occlusion toggle |
+| `BB_EFFECT_SSR` | =0 / 1: screen space reflections toggle |
 | `BB_EVDEV_TOUCHPAD` | =0: no DualSense/DualShock touchpad through evdev |
 | `BB_FFX_DIR` | the folder with AMD's FSR DLLs for Vulkan, amd_fidelityfx_loader_vk.dll and amd_fidelityfx_upscaler_vk.dll (upscaler fsr_amd; default <user>/fsr, then beside the game) |
 | `BB_FFX_FG_ML` | =1: AMD's ML frame generation (4.0.x) accepts any GPU (AMD ships it for RDNA4); =0: refuses it (FSR 3.1) |
@@ -49,6 +56,8 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_GPU_ID` | =N: the GPU to use, by Vulkan index (the launcher's) |
 | `BB_GPU_PROFILE` | =1: GPU profiler: time per labelled pass in the log (the launcher's) |
 | `BB_HDR` | =1: HDR output allowed |
+| `BB_HD_ONLINE_ID` | The Hunter's Dream online account ID |
+| `BB_HD_TOKEN` | The Hunter's Dream online auth token |
 | `BB_HUD_ANCHOR` | =0: on wide screens the HUD stays in the 16:9 middle |
 | `BB_INTEL_TONEMAP_FIX` | =0 / 1: Intel CPU tone mapping fix patch off / on (default on on Intel) |
 | `BB_JITTER` | =0 / 1: upscaler camera jitter (the menu's) |
@@ -59,22 +68,31 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_KEY_TURN_DPS` | =N (default 1100): keyboard stick turn speed in degrees a second |
 | `BB_LANGUAGE` | =N: the game's language, PS4 number (1 English, 8 Russian; the launcher's) |
 | `BB_LARGE_HEAPS` | =1 / 0: larger graphics heaps for texture packs on / off (default: detected) |
+| `BB_LAUNCHER_BACKEND` | =x11 / wayland: launcher window backend override |
 | `BB_LAYER_MEMORY` | =1 / 0: the layer's memory module (default on non-AMD GPUs) |
+| `BB_LOG_LEVEL` | =minimal / error / warning / verbose / none: launcher and game log verbosity |
 | `BB_LOW_LATENCY` | =off / on / boost: NVIDIA Reflex / AMD Anti-Lag (the menu's) |
+| `BB_MEMORY_PRESET` | =low / medium / high / apu: memory preset |
 | `BB_MENU_LANGUAGE` | =ru / en / ...: the port's menu language (default: the launcher's, else the system's) |
 | `BB_MENU_POINTER` | =0: no mouse pointer in the game's menus |
+| `BB_MODEL_LOD` | model level of detail bias |
 | `BB_MODS_ENABLED` | =0: no mods |
 | `BB_MOUSE_AUTO_ROTATE` | =1: the game's camera auto rotation also with the mouse |
 | `BB_MOUSE_DEADZONE` | =N (default 16 of 127): mouse look dead zone |
 | `BB_NATIVE_MOUSE` | =0: mouse look through the right stick instead of the camera hook |
 | `BB_NET_BACKEND` | =thd: The Hunter's Dream online pool (the launcher's online pool) |
+| `BB_NET_GEN` | =19 / 20: network protocol generation |
 | `BB_OBJECT_MOTION` | =0 / 1: motion vectors of moving objects (the menu's) |
 | `BB_ONLINE` | =1: online play (the launcher's) |
+| `BB_ONLINE_BACKEND` | =shadnet / bbhost: online backend |
+| `BB_ONLINE_POOL` | =seamless / huntersdream: online matchmaking pool |
 | `BB_P2P_PORT` | =N: the UDP port for P2P online traffic (default 3658, 0: any) |
+| `BB_P2P_RELAY` | =1 / 0: fallback P2P relay server |
 | `BB_PAD_DEADZONE` | =N (default 5): stick inner dead zone |
 | `BB_PAD_DEADZONE_OUTER` | =N (default 127): stick outer limit |
 | `BB_PAD_MOTION` | =0 / 1: motion sensor emulation (over bbport.ini pad_motion) |
 | `BB_PATCHES` | =name,...: extra patches by name (patches.py) |
+| `BB_PREUPLOAD` | =1: preupload assets before gameplay |
 | `BB_PROCESS_PRIORITY` | =normal / above / high: process priority on Windows (default above) |
 | `BB_REACTIVE` | =1: FSR reactive mask (the menu's) |
 | `BB_REACTIVE_MAX` | reactive mask maximum (the menu's) |
@@ -88,6 +106,7 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_SHADNET_SERVER` | the shadNet server |
 | `BB_SHADNET_TOKEN` | the shadNet account token (the launcher's) |
 | `BB_SHADNET_WEBAPI` | the shadNet web API server |
+| `BB_SHADOW_DISTANCE` | =N: shadow draw distance scale |
 | `BB_SKIP_CPU_CHECK` | =1: skip the check of the CPU's bsr/bsf behaviour before the game starts |
 | `BB_SKIP_GAME_CHECK` | =1: start with game files that did not pass the check |
 | `BB_TEXTURE_QUALITY` | texture quality over bbport.ini's texture_quality |
@@ -98,8 +117,10 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_UPSCALER` | =none / fsr3 / fsr4 / dlss / ...: the upscaler over the menu's (scripts, A/B) |
 | `BB_UPSCALE_PRESET` | the upscaler quality preset (the menu's) |
 | `BB_USER_NAME` | the PS4 user name (default Hunter) |
+| `BB_VIDEO_BACKEND` | =x11 / wayland: forced video backend for game window |
+| `BB_VRAM_LIMIT` | VRAM memory limit in MiB |
 
-## Tuning (230)
+## Tuning (239)
 
 Defaults to change on a machine where they misbehave, workarounds, and switches that turn a fix off for comparison.
 
@@ -110,7 +131,9 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_APP0_ADB` | =serial: the game's files fetched from a phone over adb on first open |
 | `BB_ASYNC_PIPELINE_THREADS` | =N: threads compiling pipelines in the background |
 | `BB_ASYNC_SUBMIT` | =0: the presenter submits the frame itself instead of a submit thread |
+| `BB_AS_0_3` | =1: legacy 0.3.x memory model (no dma-buf) |
 | `BB_AUDIO` | =none: no audio device (headless runs) |
+| `BB_AUTO_MIP_CLAMP` | =1: automatic clamp of mip levels for low VRAM |
 | `BB_AUTO_NOHIZ` | =0 (run.sh): no automatic RADV_DEBUG=nohiz on the GPUs that need it |
 | `BB_AVPLAYER_ASYNC_READY` | =1: movie StateReady on the controller thread, as before (crashed at 200+ FPS) |
 | `BB_BDA_DEDICATED_MB` | =N: buffers with GPU addresses get dedicated memory from N MiB |
@@ -134,6 +157,8 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_COPY_SKIP_SAME` | =0: off (default on): of the game's copy shader calls only the copies that change their destinations run (checked on thread bb:CopyFilter) |
 | `BB_COPY_THREADS` | =N (0-16): threads for large guest memory copies |
 | `BB_CORE_RESERVE` | =0 / 1: keep the game's threads off a reserved core (Linux, SMT CPUs with 6+ cores) |
+| `BB_CPU_AFFINITY` | =performance / efficient / all: CPU core affinity |
+| `BB_CPU_PRIORITY` | =1: elevate process priority and thread scheduling |
 | `BB_DEAD_IMAGES` | =0: images of freed memory left to the collector instead of dropped on the GPU thread |
 | `BB_DEAD_IMAGES_LATE` | set: dead images dropped at the frame's end only, as before |
 | `BB_DETILE_SKIPPED` | =1: texture levels the quality setting leaves out are still detiled and read |
@@ -175,6 +200,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_GPU_WRITES_IN_PLACE` | =1: GPU-written buffers in place with write tracking, as before |
 | `BB_GPU_WRITE_TWINS` | =1: VRAM twins of GPU-written guest pages |
 | `BB_GPU_WRITE_TWINS_MAX` | =N: pages with at most N GPU-written ranges get twins (default 1024) |
+| `BB_GUEST_GPU_MEMORY` | =1: guest GPU memory mapping |
 | `BB_GUEST_HOOKS` | =0: no guest code hooks at all (aspect ratio, HUD, mouse, fixes) |
 | `BB_GUEST_LAZY` | =1: lazy guest memory with the layer's memory module (off: broke buffers) |
 | `BB_GUEST_MEMORY` | =dmabuf / host / private: how guest memory is shared with the GPU (default per vendor) |
@@ -248,6 +274,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_MIRROR_UNBOUND_SECONDS` | =N (0 never): blocks no binding named for N seconds leave VRAM |
 | `BB_MIRROR_VRAM_ONLY` | =1: mirrors in VRAM or not at all |
 | `BB_MOTION_VERTICES_MI` | =N (1-8): object motion vertex buffer in Mi vertices |
+| `BB_MUTEX_ADAPTIVE` | =1: use adaptive spin mutex in runtime |
 | `BB_NET_MODULE` | =path: the online module to load (default gpu/libbbnet20.so beside bb-probe) |
 | `BB_NP_COUNTRY` | =code: the online user's country (default us) |
 | `BB_NP_LANGUAGE` | =code: the online user's language (default en) |
@@ -267,6 +294,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_PAGED_FORMATTED` | =0: formatted buffers never paged |
 | `BB_PAGED_HOLES` | =1 (experiment): paged reads skip memory the game never wrote |
 | `BB_PAGED_MIN_MB` | =N (default 64): bindings from this size are paged |
+| `BB_PC_MODEL` | =1: PC direct memory model; 0: old model |
 | `BB_PENDING_SUMMARY` | =0: pending checks without the summary level |
 | `BB_PIPELINE_CACHE` | =0: no pipeline cache on disk |
 | `BB_PIPE_SIGNALS` | =0: the frame's cache work on the GPU thread instead of the recording thread |
@@ -279,6 +307,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_PRESENT_MODE` | =Mailbox / Fifo / Immediate: swapchain present mode (default Mailbox) |
 | `BB_PRESENT_THREAD` | =0: present on the vblank thread instead of its own |
 | `BB_PROMOTE_MB_PER_FRAME` | =N (0 none; default 32 on cards up to 4 GiB, else 256): VRAM copies per frame |
+| `BB_PRUNE_STALE_CACHE` | =1: prune stale cached pipelines |
 | `BB_READBACKS` | =0 / 1 / 2: GPU readbacks off / relaxed (default) / precise |
 | `BB_READBACK_LINEAR` | =1: linear images read back to guest memory |
 | `BB_READBACK_QUEUE` | =0: no separate queue for readbacks |
@@ -314,6 +343,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_THD_VERIFY_TLS` | =0: The Hunter's Dream TLS certificates not checked |
 | `BB_TILE_BIND_VRAM` | =0: tiled data read in place over the bus instead of from a VRAM copy |
 | `BB_TIMELINE_POLL_US` | =N (default 50): timeline semaphore poll interval |
+| `BB_TITLE_EXIT` | =1: exit to desktop when choosing exit from title screen |
 | `BB_UNIFIED_MEMORY` | =1 / 0: treat the GPU as unified memory or not (over the device type) |
 | `BB_VBAO_BLUR` | =N (default 2, 0: raw): VBAO denoise taps per side |
 | `BB_VBAO_BLUR_DEPTH` | =f (default 0.05): relative depth difference that stops the VBAO blur |
@@ -336,7 +366,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_VULKANINFO` | path of vulkaninfo for the launcher |
 | `BB_WORK_RETIRED` | =0: the recording thread and fences do not wait for retired work |
 
-## Diagnostics (274)
+## Diagnostics (278)
 
 Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame time; none is meant for playing.
 
@@ -569,6 +599,10 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_SEQUENCE_DUMP_COUNT` | =N (default 16): images per BB_SEQUENCE_DUMP_TRIGGER |
 | `BB_SEQUENCE_DUMP_TRIGGER` | =file: creating it saves the next images shown (frame generation checks) |
 | `BB_SHADER_CAPTURE` | =dir: shader inputs captured there |
+| `BB_SHADER_COLD_RUN` | =1: simulate first cold run without pipeline cache |
+| `BB_SHADER_DISCOVERY` | =1: discover and collect shaders during gameplay |
+| `BB_SHADER_DISCOVERY_DUMP` | path to dump discovered shaders |
+| `BB_SHADER_INVENTORY` | path to shader inventory json |
 | `BB_SKIP_PS` | =hash,...: draws with these pixel shaders left out |
 | `BB_SLOW_BIND_LOG` | =microseconds: image memory binds slower than this |
 | `BB_SPEC_MATCH_CHECK` | set: the built specialization must find the same one |
@@ -617,7 +651,7 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_WRITE_VERIFY` | =1: page protection to catch writes nothing announced |
 | `BB_ZERO_SCAN` | =seconds: that long after the first mapping, how much direct memory is zero |
 
-## Internal (30)
+## Internal (38)
 
 Passed between the launchers, run.py / run.sh and the game. Not meant to be set by hand.
 
@@ -632,6 +666,12 @@ Passed between the launchers, run.py / run.sh and the game. Not meant to be set 
 | `BB_FSR4CAP_TOOLS` | the FSR 4.1.1 build's tools folder (set by the launcher) |
 | `BB_FSR4CAP_WORK` | the FSR 4.1.1 build's work folder (set by the launcher) |
 | `BB_GPU_USER_DIR` | the user folder as the GPU library and the online module see it (set by the runtime) |
+| `BB_HOST_LOCAL_IP` | The Hunter's Dream local IP address |
+| `BB_HOST_ONLINE_ID` | The Hunter's Dream host online ID |
+| `BB_HOST_P2P_PORT` | The Hunter's Dream P2P port override |
+| `BB_HOST_SCHEME` | The Hunter's Dream server URL scheme |
+| `BB_HOST_SERVER` | The Hunter's Dream server hostname |
+| `BB_HOST_TOKEN` | The Hunter's Dream host auth token |
 | `BB_IMAGE_SHAPES` | the package's image shapes list for spare images (set by run.py) |
 | `BB_INTERNAL_HEIGHT` | the game's internal screen height (default 1080; set by run.py) |
 | `BB_INTERNAL_WIDTH` | the game's internal screen width (default 1920; set by run.py) |
@@ -643,6 +683,7 @@ Passed between the launchers, run.py / run.sh and the game. Not meant to be set 
 | `BB_OUTPUT_RES` | =WxH: the output the startup patch was made for (set by run.py) |
 | `BB_PATCHES_CONFIG` | the patch choice file (default <data>/patches.json) |
 | `BB_PATCHES_DIR` | the patches folder (default <data>/patches) |
+| `BB_PORT_DIR` | path to the root bbport directory |
 | `BB_PREBUILT` | =1: packaged build, run.sh builds nothing (set by the AppImage) |
 | `BB_PROBE` | path of bb-probe for run.py |
 | `BB_SHADER_GAME_DIR` | the game's files the shader recipes' programs come from (set by run.py) |
@@ -653,13 +694,15 @@ Passed between the launchers, run.py / run.sh and the game. Not meant to be set 
 | `BB_TIMEOUT` | =seconds: run.py stops the game after this long (tests) |
 | `BB_USER_DIR` | the user folder (saves, settings; set by run.py) |
 | `BB_VBLANK_HZ` | =N (default 60, 0: 480): the guest vblank rate (1000 for uncapped; set by run.py) |
+| `BB_VERSION` | port version string |
 
-## Build (14)
+## Build (19)
 
 Read by the build and packaging scripts only.
 
 | Variable | What it does |
 |---|---|
+| `BB_APPIMAGE_VARIANT` | =appimage variant for packaging |
 | `BB_FSR4CAP_CHECKED` | internal to tools/fsr4cap: the tools were checked |
 | `BB_FSR4CAP_FP8` | =1: also the FP8 FSR 4.1.1 variant through Proton's emulation; 0: never |
 | `BB_FSR4CAP_ON_HOST` | set: the FSR 4.1.1 capture runs without systemd-run |
@@ -671,6 +714,10 @@ Read by the build and packaging scripts only.
 | `BB_FSR4_TIERS` | FSR 4 v07 asset tiers to download (tools/fetch_fsr4_assets.sh) |
 | `BB_IN_NIX_SHELL` | internal to run.sh: already inside the nix shell |
 | `BB_LTO` | =1: link-time optimization (packaging) |
+| `BB_MARCH` | =x86-64-v3 / native / ...: CPU microarchitecture optimization level |
+| `BB_NO_BUILD` | =1: run without rebuilding |
+| `BB_NO_PRECOMPILE` | =1: skip shader precompilation at start |
 | `BB_PACKAGE_FSR411` | =1: the AppImage carries FSR 4.1.1 models (never in public packages) |
 | `BB_PGO` | =generate / use: profile-guided optimization (CMake option) |
 | `BB_PGO_DIR` | the PGO profile folder (CMake option) |
+| `BB_SKIP_VERSION_INC` | =1: skip automatic version bump during build |

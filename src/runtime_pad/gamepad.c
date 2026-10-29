@@ -61,6 +61,10 @@ static SDL_Gamepad *current_gamepad(void) {
             on_preferred=want && gamepad && is_preferred(ids[pick],want);
             if (gamepad) {
                 ++connected_count;
+                if (SDL_GamepadHasSensor(gamepad, SDL_SENSOR_ACCEL))
+                    SDL_SetGamepadSensorEnabled(gamepad, SDL_SENSOR_ACCEL, true);
+                if (SDL_GamepadHasSensor(gamepad, SDL_SENSOR_GYRO))
+                    SDL_SetGamepadSensorEnabled(gamepad, SDL_SENSOR_GYRO, true);
                 printf("Runtime: gamepad connected: %s%s\n",SDL_GetGamepadName(gamepad),
                        !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
             }

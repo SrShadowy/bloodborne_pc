@@ -34,6 +34,10 @@ void UiManager::SetStatus(const std::string& msg) {
     s_status_time = std::chrono::steady_clock::now();
 }
 
+bool UiManager::IsOpen() {
+    return IsMemoryWindowOpen() || IsMemoryViewerOpen();
+}
+
 bool UiManager::IsMemoryWindowOpen() {
     return s_memory_window_open;
 }

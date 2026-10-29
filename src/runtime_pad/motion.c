@@ -78,6 +78,7 @@ static void aim(float dyaw, float dpitch) {
 
 /* The pad's part: View as the modifier, the right stick aiming at up to 120 degrees a second. */
 static void motion_from_pad(PadData *d, SDL_Gamepad *g, float dt) {
+    if (extra_pad_is_playstation(g, SDL_GetGamepadType(g))) return;
     const int view=SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_BACK);
     const int real_touchpad=SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_TOUCHPAD);
     const int a=(d->buttons & BTN_CROSS)!=0, b=(d->buttons & BTN_CIRCLE)!=0;

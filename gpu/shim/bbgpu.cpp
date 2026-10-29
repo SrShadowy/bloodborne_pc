@@ -11,6 +11,7 @@
 #include "bbport_gnm_hooks.h"
 #include "bbport_menu_pointer.h"
 #include "bbport_mouse_camera.h"
+#include "bbport_video.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_guest_hooks.h"

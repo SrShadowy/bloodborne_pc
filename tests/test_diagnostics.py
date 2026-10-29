@@ -161,6 +161,8 @@ class TestDiagnosticsAndLogging(unittest.TestCase):
             import gi
             gi.require_version("Gtk", "4.0")
             gi.require_version("Adw", "1")
+            import bbport_i18n
+            bbport_i18n.set_language("ru")
             from bbport_gamepad_tester import GamepadTesterDialog
             dialog = GamepadTesterDialog()
             self.assertIsNotNone(dialog)

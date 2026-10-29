@@ -48,6 +48,7 @@
 #include <SDL3/SDL.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include "extra/management/prompts/bbport_pad_hook.h"
 
 #define ERR_INVALID_ARG ((int32_t)0x80920001)
 #define ERR_INVALID_HANDLE ((int32_t)0x80920003)

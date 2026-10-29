@@ -283,7 +283,6 @@ struct Values {
     std::atomic<float> fov_scale{1.0f};
     std::atomic<float> cam_distance{1.0f};
     std::atomic<float> cam_height{1.0f};
-    std::atomic<bool> light_grid_opt{false};
 
     /// Photo mode
     std::atomic<bool> photo_pause{false};
