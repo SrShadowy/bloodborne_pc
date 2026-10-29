@@ -267,18 +267,6 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
     }
     // The frame is opaque: alpha would blend it with the overlay.
     view_info.mapping.a = vk::ComponentSwizzle::eOne;
-    // Both real and interpolated frames must use native UNORM image views and software analytical
-    // sRGB Decode() + Encode() in present_encode.frag. On NVIDIA GPUs, sampling a mutable _SRGB
-    // image view invokes the hardware TMU's silicon piecewise sRGB decode approximation, which
-    // deviates in shadow tones from exact sRGB and causes an alternating brightness/luminance
-    // discrepancy between real frames and interpolated frames (especially visible on OLED panels).
-    const bool is_srgb8 = (view_info.format == vk::Format::eR8G8B8A8Srgb ||
-                           view_info.format == vk::Format::eB8G8R8A8Srgb);
-    const vk::Format sample_format = is_srgb8
-        ? (view_info.format == vk::Format::eR8G8B8A8Srgb ? vk::Format::eR8G8B8A8Unorm
-                                                         : vk::Format::eB8G8R8A8Unorm)
-        : view_info.format;
-
     vk::ImageView source{};
     vk::Extent2D source_size{};
     if (upscaled) {
@@ -286,7 +274,7 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
         source = Check(device.createImageView({
             .image = display.image,
             .viewType = vk::ImageViewType::e2D,
-            .format = sample_format,
+            .format = view_info.format,
             .components = view_info.mapping,
             .subresourceRange = ColorRange,
         }));
@@ -307,9 +295,7 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
         });
     } else {
         auto& image = texture_cache.GetImage(image_id);
-        VideoCore::ImageViewInfo sample_view_info = view_info;
-        sample_view_info.format = sample_format;
-        source = *image.FindView(sample_view_info).image_view;
+        source = *image.FindView(view_info).image_view;
         source_size = vk::Extent2D{image.info.size.width, image.info.size.height};
         // BB_PRESENT_DUMP_TRIGGER for the game's own display buffer too.
         if (upscaler.PresentDumpDue()) {
@@ -333,7 +319,7 @@ Frame* Presenter::PrepareFrame(const BbVideoOut::BufferAttributeGroup& attribute
     const EncodePass::Settings encode{
         .gamma = gamma.load(std::memory_order_relaxed),
         .hdr = hdr.load(std::memory_order_relaxed),
-        .srgb_input = is_srgb8 || (attribute.attrib.pixel_format == BbVideoOut::PixelFormat::A2R10G10B10Srgb),
+        .srgb_input = attribute.attrib.pixel_format == BbVideoOut::PixelFormat::A2R10G10B10Srgb,
         // Sharpening without an upscaler (the upscalers sharpen their own output).
         .sharpen = BbSettings::Get().upscaler == BbSettings::UpscalerOff && BbSettings::Get().sharpen
                        ? std::clamp(BbSettings::Get().sharpness.load(), 0.0f, 2.0f)
@@ -520,31 +506,16 @@ void Presenter::EncodeInterpolated(Frame* frame, u32 index, vk::Image image, vk:
             .subresourceRange = ColorRange,
         }));
     }
-    // The frame generation image is written via compute storage writes in scene.color_format
-    // (R8G8B8A8Unorm or B8G8R8A8Unorm) with sRGB-encoded data.
-    // On NVIDIA GPUs, sampling a mutable _SRGB image view over a UNORM storage image causes
-    // hardware TMU decompression/sRGB decoding discrepancies (lifting blacks by ~4-8/255,
-    // which results in severe 60Hz strobing/flickering against real frames).
-    // By keeping the native UNORM view format and setting interp_encode.srgb_input = 1,
-    // present_encode.frag performs exact 32-bit software analytical sRGB Decode() and Encode(),
-    // avoiding all hardware TMU curve divergence and eliminating shadow strobing entirely.
+    // Read as the display buffer is, with its view format: the game's display pass copies the
+    // scene image's bytes as they are into a BGRA buffer, so the scene image (R8G8B8A8 by its
+    // format) holds them in that order too; its own format swapped red and blue. 8-bit images are
+    // made mutable (vk_frame_generation), 32-bit formats view each other.
     const bool rgba8 = format == vk::Format::eR8G8B8A8Unorm || format == vk::Format::eB8G8R8A8Unorm;
     const bool display8 = display_view_format == vk::Format::eB8G8R8A8Srgb ||
-                          display_view_format == vk::Format::eR8G8B8A8Srgb ||
-                          display_view_format == vk::Format::eB8G8R8A8Unorm ||
-                          display_view_format == vk::Format::eR8G8B8A8Unorm;
-    vk::Format view_format = format;
-    EncodePass::Settings interp_encode = encode;
+                          display_view_format == vk::Format::eR8G8B8A8Srgb;
+    const vk::Format view_format = rgba8 && display8 ? display_view_format : format;
     vk::ComponentMapping mapping{};
-    if (rgba8 && display8) {
-        interp_encode.srgb_input = 1;
-        const bool image_is_bgra = (format == vk::Format::eB8G8R8A8Unorm);
-        const bool display_is_bgra = (display_view_format == vk::Format::eB8G8R8A8Srgb ||
-                                      display_view_format == vk::Format::eB8G8R8A8Unorm);
-        if (image_is_bgra != display_is_bgra) {
-            std::swap(mapping.r, mapping.b);
-        }
-    }
+    mapping.a = vk::ComponentSwizzle::eOne;
     const vk::ImageView source = Check(device.createImageView({
         .image = image,
         .viewType = vk::ImageViewType::e2D,
@@ -555,7 +526,7 @@ void Presenter::EncodeInterpolated(Frame* frame, u32 index, vk::Image image, vk:
     // Asynchronous frame generation: into the present thread's command buffer.
     Scheduler& scheduler = present_cmdbuf ? present_scheduler : draw_scheduler;
     scheduler.DeferOperation([device, source] { device.destroyImageView(source); });
-    const auto record = [this, frame, image, source, interp_encode, interp_image,
+    const auto record = [this, frame, image, source, encode, interp_image,
                          interp_view](vk::CommandBuffer cmdbuf) {
         const std::array<vk::ImageMemoryBarrier2, 2> before{{
             {
@@ -579,7 +550,7 @@ void Presenter::EncodeInterpolated(Frame* frame, u32 index, vk::Image image, vk:
             },
         }};
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 2, .pImageMemoryBarriers = before.data()});
-        encode_pass.Render(cmdbuf, source, interp_view, {frame->width, frame->height}, interp_encode);
+        encode_pass.Render(cmdbuf, source, interp_view, {frame->width, frame->height}, encode);
         const std::array<vk::ImageMemoryBarrier2, 2> after{{
             {
                 .srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
