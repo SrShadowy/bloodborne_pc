@@ -70,8 +70,12 @@ class GameRunnerMixin:
         launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
         launcher.set_cwd(str(PORT_DIR))
         try:
-            # setsid: the game and its helpers form one process group, stopped together.
-            self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
+            # On Windows run.py prepares and starts the game; on Linux setsid bash run.sh is used.
+            import sys
+            if sys.platform == "win32":
+                self.process = launcher.spawnv([sys.executable, str(PORT_DIR / "run.py")])
+            else:
+                self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
         except GLib.Error as error:
             self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
             return
@@ -159,18 +163,24 @@ class GameRunnerMixin:
         if not self.process:
             return
         pid = int(self.process.get_identifier())
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except OSError:
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                self.process.force_exit()
+        else:
             self.process.force_exit()
         GLib.timeout_add_seconds(3, self.kill_if_running, pid)
 
     def kill_if_running(self, pid):
         if self.process:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except OSError:
-                pass
+            if hasattr(os, "killpg"):
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            else:
+                self.process.force_exit()
         return False
 
     def on_exit(self, process, result):

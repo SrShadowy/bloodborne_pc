@@ -237,8 +237,11 @@ class CacheMixin:
         def worker():
             import subprocess
             from bbport_config import PORT_DIR, game_environment
-            run_sh = PORT_DIR / "run.sh"
-            cmd = ["bash", str(run_sh), "--precompile-shaders"]
+            if sys.platform == "win32":
+                cmd = [sys.executable, str(PORT_DIR / "run.py"), "--precompile-shaders"]
+            else:
+                run_sh = PORT_DIR / "run.sh"
+                cmd = ["bash", str(run_sh), "--precompile-shaders"]
             settings = getattr(self, "settings", {})
             env = game_environment(settings) if settings else os.environ.copy()
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(PORT_DIR), env=env)

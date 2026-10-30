@@ -12,6 +12,7 @@ Nintendo Switch Pro, Steam Deck, and generic gamepads) through the launcher menu
 - Left / Right Shoulder (LB / RB, L1 / R1): Cycle launcher tabs
 """
 
+from pathlib import Path
 import ctypes
 import ctypes.util
 import time
@@ -30,8 +31,14 @@ def _load_sdl3():
     candidates = [
         "libSDL3.so.0",
         "libSDL3.so",
+        "SDL3.dll",
         ctypes.util.find_library("SDL3"),
     ]
+    for p in [Path(__file__).resolve().parent.parent / "bin" / "SDL3.dll",
+              Path(__file__).resolve().parent.parent / "out" / "SDL3.dll"]:
+        if p.is_file():
+            candidates.append(str(p))
+
     for name in candidates:
         if not name:
             continue
@@ -745,12 +752,26 @@ class GamepadNavigator:
                 adj.set_value(max(adj.get_lower(), min(adj.get_upper() - adj.get_page_size(), adj.get_value() + delta)))
 
     def _cycle_tabs(self, delta):
-        cur_name = self.window.stack.get_visible_child_name()
+        if hasattr(self.window, "sidebar_rows") and self.window.sidebar_rows:
+            sections = list(self.window.sidebar_rows.keys())
+            cur_name = self.window.stack.get_visible_child_name() if hasattr(self.window, "stack") else None
+            if cur_name in sections:
+                idx = sections.index(cur_name)
+                new_idx = (idx + delta) % len(sections)
+                new_name = sections[new_idx]
+            else:
+                new_name = sections[0]
+            if hasattr(self.window, "select_section"):
+                self.window.select_section(new_name)
+            GLib.idle_add(self._focus_first_target)
+            return
+
+        cur_name = self.window.stack.get_visible_child_name() if hasattr(self.window, "stack") else None
         if cur_name in self.TAB_NAMES:
             idx = self.TAB_NAMES.index(cur_name)
             new_idx = (idx + delta) % len(self.TAB_NAMES)
             new_name = self.TAB_NAMES[new_idx]
-            if new_name in self.window.tab_buttons:
+            if hasattr(self.window, "tab_buttons") and new_name in self.window.tab_buttons:
                 self.window.tab_buttons[new_name].set_active(True)
                 GLib.idle_add(self._focus_first_target)
 
@@ -906,8 +927,16 @@ class GamepadNavigator:
                 windows[-1].close()
                 return
 
-        # Return to overview tab if on another page
-        if self.window.stack.get_visible_child_name() != "overview":
-            if "overview" in self.window.tab_buttons:
+        # Return to first tab if on another page
+        if hasattr(self.window, "sidebar_rows") and self.window.sidebar_rows:
+            cur_name = self.window.stack.get_visible_child_name() if hasattr(self.window, "stack") else None
+            first_name = list(self.window.sidebar_rows.keys())[0] if self.window.sidebar_rows else "game"
+            if cur_name != first_name:
+                if hasattr(self.window, "select_section"):
+                    self.window.select_section(first_name)
+                GLib.idle_add(self._focus_first_target)
+                return
+        elif hasattr(self.window, "stack") and self.window.stack.get_visible_child_name() != "overview":
+            if hasattr(self.window, "tab_buttons") and "overview" in self.window.tab_buttons:
                 self.window.tab_buttons["overview"].set_active(True)
                 GLib.idle_add(self._focus_first_target)

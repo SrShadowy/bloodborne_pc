@@ -18,6 +18,8 @@ _UNSPECIFIED = object()
 
 def get_distro_id() -> str:
     """Reads ID from /etc/os-release."""
+    if sys.platform == "win32":
+        return "windows"
     os_release = Path("/etc/os-release")
     if os_release.is_file():
         try:
@@ -33,7 +35,9 @@ def get_distro_id() -> str:
 def get_sdl3_install_command() -> str:
     """Returns the recommended terminal command to install SDL3 on the detected distro."""
     distro = get_distro_id()
-    if distro in ("arch", "cachyos", "manjaro", "endeavouros", "artix"):
+    if distro == "windows":
+        return "pacman -S mingw-w64-clang-x86_64-sdl3"
+    elif distro in ("arch", "cachyos", "manjaro", "endeavouros", "artix"):
         return "sudo pacman -S sdl3"
     elif distro in ("ubuntu", "debian", "pop", "linuxmint", "elementary", "zorin"):
         return "sudo apt install libsdl3-0"
@@ -176,6 +180,8 @@ def get_runtime_backend(display=_UNSPECIFIED) -> str:
     elif "X11" in cls_name:
         is_xwayland = bool(os.environ.get("WAYLAND_DISPLAY"))
         return "X11 (XWayland)" if is_xwayland else "X11 (native Xorg)"
+    elif "Win32" in cls_name:
+        return "Windows (Win32 GDK)"
     return cls_name
 
 

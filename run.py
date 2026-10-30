@@ -345,7 +345,15 @@ def run(extra_args=(), env=None, on_line=None):
             env['BB_IMAGE_SHAPES'] = str(PACKAGE_DIR / 'image_shapes.txt')
         setdefault(env, 'BB_SHADER_GAME_DIR', str(original_game))
         online(env, user, bindir)
-        probe = Path(env.get('BB_PROBE') or bindir / 'bb-probe.exe')
+        probe = Path(env.get('BB_PROBE', ''))
+        if not probe.is_file():
+            for cand in (bindir / 'bb-probe.exe', PACKAGE_DIR / 'out' / 'win' / 'bb-probe.exe',
+                         PACKAGE_DIR / 'out' / 'bb-probe.exe', PACKAGE_DIR / 'bb-probe.exe'):
+                if cand.is_file():
+                    probe = cand
+                    break
+            else:
+                probe = bindir / 'bb-probe.exe'
         args = [str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                 '--patches', str(out / 'patches.bin'), '--app0', str(game), '--user', str(user),
                 '--timeout', env.get('BB_TIMEOUT', '0'), *extra_args]

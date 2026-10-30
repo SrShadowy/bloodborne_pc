@@ -111,6 +111,7 @@ from bbport_launcher_log import LogPage
 from bbport_launcher_online import OnlinePage
 from bbport_launcher_trophies import TrophiesPage
 from bbport_launcher_upscalers import UpscalerFiles
+from bbport_gamepad import GamepadNavigator
 
 
 def setup_icons():
@@ -136,16 +137,102 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
                      Adw.ApplicationWindow):
     def __init__(self, app):
         setup_icons()
+        self.setup_css()
         super().__init__(application=app, title="Bloodborne")
-        self.set_default_size(1000, 760)
+        self.set_default_size(1050, 780)
         self.settings = load_settings()
         set_language(self.settings.get("ui_language", ""))
         self.ini, self.ini_lines = load_ini()
         self.process = None
         self.stream = None
         self.fsr411_build = None  # tools/fsr4cap/build_assets.sh while it runs
+        self.gamepad_nav = None
         self.build()
+        self.gamepad_nav = GamepadNavigator(self)
         self.connect("close-request", self.on_close)
+
+    def setup_css(self):
+        css = """
+        button.suggested-action {
+            background: #a81c1c;
+            color: #ffffff;
+        }
+        button.suggested-action:hover {
+            background: #8e1717;
+        }
+        button.suggested-action:active {
+            background: #731111;
+        }
+        .gamepad-hints-bar {
+            background-color: #171717;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 6px 14px;
+        }
+        .gamepad-badge {
+            background-color: rgba(255, 255, 255, 0.09);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-weight: 700;
+            font-size: 11px;
+            color: #f0f0f0;
+        }
+        .gamepad-label {
+            font-size: 11px;
+            color: #a0a0a0;
+            margin-right: 4px;
+        }
+        .gamepad-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: #d0d0d0;
+            margin-right: 6px;
+        }
+        row:focus, row:focus-visible {
+            outline: 2px solid #e03131;
+            outline-offset: -1px;
+            border-radius: 9px;
+        }
+        button:focus, button:focus-visible {
+            outline: 2px solid #e03131;
+            outline-offset: -1px;
+        }
+        popover listview row:focus, popover listview row:focus-visible, popover listview row:selected {
+            background-color: rgba(224, 49, 49, 0.35);
+            outline: 2px solid #e03131;
+            outline-offset: -1px;
+        }
+        adw-dialog-host button:focus, adw-dialog-host button:focus-visible {
+            outline: 2px solid #e03131;
+            outline-offset: -1px;
+        }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode())
+        display = Gdk.Display.get_default()
+        if display:
+            Gtk.StyleContext.add_provider_for_display(
+                display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def set_gamepad_hints_visible(self, visible, pad_name=""):
+        if hasattr(self, "gamepad_bar"):
+            self.gamepad_bar.set_visible(visible)
+            if hasattr(self, "gamepad_name_label") and pad_name:
+                self.gamepad_bar.set_tooltip_text(pad_name)
+                lower = pad_name.lower()
+                if "xbox" in lower:
+                    short = "Xbox"
+                elif "dualsense" in lower or "ps5" in lower:
+                    short = "DualSense"
+                elif "dualshock" in lower or "ps4" in lower or "playstation" in lower:
+                    short = "PlayStation"
+                elif "switch" in lower or "joy-con" in lower:
+                    short = "Switch"
+                elif "deck" in lower:
+                    short = "Steam Deck"
+                else:
+                    short = pad_name.split()[0] if len(pad_name) > 10 else pad_name
+                self.gamepad_name_label.set_label(short)
 
     def build(self):
         """(Re)creates the window's content in the current launcher language."""
@@ -180,10 +267,12 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         # Sidebar: the sections; content: the section, the launch button in its header bar.
         side_header = Adw.HeaderBar()
         # The port's version (VERSION, issue #307).
-        if (PORT_DIR / "VERSION").is_file():
-            version = Gtk.Label(label="bbport " + (PORT_DIR / "VERSION").read_text().strip())
-            version.add_css_class("dim-label")
-            side_header.pack_start(version)
+        ver_file = PORT_DIR / "VERSION"
+        ver_text = ver_file.read_text().strip() if ver_file.is_file() else ""
+        side_header.set_title_widget(Adw.WindowTitle(
+            title="Bloodborne",
+            subtitle=f"bbport {ver_text}" if ver_text else ""
+        ))
         side = Adw.ToolbarView()
         side.add_top_bar(side_header)
         side.set_content(Gtk.ScrolledWindow(child=self.sidebar,
@@ -198,18 +287,62 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.toasts.set_child(self.stack)
         content.set_content(self.toasts)
 
+        # Gamepad hints bar (pinned at bottom of window, shown when gamepad connected)
+        self.gamepad_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.gamepad_bar.add_css_class("gamepad-hints-bar")
+        self.gamepad_bar.set_visible(False)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        inner.set_halign(Gtk.Align.CENTER)
+        inner.set_hexpand(True)
+        self.gamepad_bar.append(inner)
+
+        pad_info = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        pad_icon = Gtk.Image.new_from_icon_name("input-gaming-symbolic")
+        self.gamepad_name_label = Gtk.Label(label="Gamepad")
+        self.gamepad_name_label.add_css_class("gamepad-name")
+        pad_info.append(pad_icon)
+        pad_info.append(self.gamepad_name_label)
+        inner.append(pad_info)
+
+        def make_hint(keys, text):
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+            for k in keys:
+                b = Gtk.Label(label=k)
+                b.add_css_class("gamepad-badge")
+                box.append(b)
+            lbl = Gtk.Label(label=text)
+            lbl.add_css_class("gamepad-label")
+            box.append(lbl)
+            return box
+
+        inner.append(make_hint(["LB", "RB"], tr("Вкладки")))
+        inner.append(make_hint(["D-Pad"], tr("Навигация")))
+        inner.append(make_hint(["A"], tr("Выбрать")))
+        inner.append(make_hint(["B"], tr("Назад")))
+        inner.append(make_hint(["Start"], tr("Запустить")))
+
         self.split = Adw.NavigationSplitView(min_sidebar_width=200, max_sidebar_width=260)
         self.split.set_sidebar(Adw.NavigationPage(title="Bloodborne", child=side))
         self.content_page = Adw.NavigationPage(title="", child=content)
         self.split.set_content(self.content_page)
         # Narrow windows: one pane at a time (the sidebar first, a section opens over it).
-        breakpoint = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 640sp"))
-        breakpoint.add_setter(self.split, "collapsed", True)
-        for old in list(getattr(self, "breakpoints", [])):
-            self.remove_breakpoint(old)
-        self.breakpoints = [breakpoint]
-        self.add_breakpoint(breakpoint)
-        self.set_content(self.split)
+        if not hasattr(self, "_breakpoint_setup"):
+            self._breakpoint_setup = True
+            bp = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 640sp"))
+            bp.connect("apply", lambda _b: hasattr(self, "split") and self.split.set_collapsed(True))
+            bp.connect("unapply", lambda _b: hasattr(self, "split") and self.split.set_collapsed(False))
+            self.add_breakpoint(bp)
+            self._main_breakpoint = bp
+
+        if getattr(self, "get_current_breakpoint", lambda: None)() == getattr(self, "_main_breakpoint", None):
+            self.split.set_collapsed(True)
+
+        # Outer ToolbarView pins gamepad_bar across the full window bottom (below split view)
+        outer = Adw.ToolbarView()
+        outer.set_content(self.split)
+        outer.add_bottom_bar(self.gamepad_bar)
+        self.set_content(outer)
 
         self.log_view.get_buffer().set_text(log_text)
         self.select_section(selected if selected in self.sidebar_rows else "game")
@@ -217,6 +350,8 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.update_game_status()
         self.update_user_status()
         self.update_upscaler_status()
+        if hasattr(self, "gamepad_nav") and self.gamepad_nav and self.gamepad_nav.pad_handle:
+            self.set_gamepad_hints_visible(True, self.gamepad_nav.pad_name)
 
     def on_section_selected(self, _box, row):
         if row is None:
@@ -243,6 +378,11 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             self.fsr411_button.set_sensitive(not running)
         if hasattr(self, "fsr412_button"):
             self.fsr412_button.set_sensitive(not running)
+        if hasattr(self, "set_gamepad_hints_visible"):
+            if running:
+                self.set_gamepad_hints_visible(False)
+            elif hasattr(self, "gamepad_nav") and self.gamepad_nav and self.gamepad_nav.pad_handle:
+                self.set_gamepad_hints_visible(True, self.gamepad_nav.pad_name)
 
     # --- settings page -------------------------------------------------------------------
 
@@ -1128,8 +1268,11 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
         launcher.set_cwd(str(PORT_DIR))
         try:
-            # setsid: the game and its helpers form one process group, stopped together.
-            self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
+            # On Windows run.py prepares and starts the game; on Linux setsid bash run.sh is used.
+            if sys.platform == "win32":
+                self.process = launcher.spawnv([sys.executable, str(PORT_DIR / "run.py")])
+            else:
+                self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
         except GLib.Error as error:
             self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
             return
@@ -1156,18 +1299,24 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         if not self.process:
             return
         pid = int(self.process.get_identifier())
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except OSError:
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                self.process.force_exit()
+        else:
             self.process.force_exit()
         GLib.timeout_add_seconds(3, self.kill_if_running, pid)
 
     def kill_if_running(self, pid):
         if self.process:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except OSError:
-                pass
+            if hasattr(os, "killpg"):
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            else:
+                self.process.force_exit()
         return False
 
     def on_exit(self, process, result):
@@ -1184,6 +1333,9 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
 
     def on_close(self, _window):
         self.store()
+        if hasattr(self, "gamepad_nav") and self.gamepad_nav:
+            self.gamepad_nav.close()
+            self.gamepad_nav = None
         if self.process:
             self.stop_game()
         if self.fsr411_build:
@@ -1243,6 +1395,10 @@ def play():
         print("bbport: choose the game folder in the launcher first", file=sys.stderr)
         return 1
     os.chdir(PORT_DIR)
+    if sys.platform == "win32":
+        env = os.environ.copy()
+        env.update(game_environment(settings))
+        return subprocess.call([sys.executable, str(PORT_DIR / "run.py")], env=env)
     os.execvpe("bash", ["bash", str(PORT_DIR / "run.sh")], game_environment(settings))
 
 
@@ -1348,8 +1504,11 @@ def main():
     if "--play" in sys.argv[1:]:
         return play()
     if "--precompile-shaders" in sys.argv[1:]:
-        run_sh = PORT_DIR / "run.sh"
-        cmd = ["bash", str(run_sh), "--precompile-shaders"]
+        if sys.platform == "win32":
+            cmd = [sys.executable, str(PORT_DIR / "run.py"), "--precompile-shaders"]
+        else:
+            run_sh = PORT_DIR / "run.sh"
+            cmd = ["bash", str(run_sh), "--precompile-shaders"]
         settings = load_settings()
         env = game_environment(settings)
         return subprocess.call(cmd, cwd=str(PORT_DIR), env=env)
