@@ -28,7 +28,10 @@ import bbport_bbhost as bbhost  # the Hunter's Dream account client (protocol on
 
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
-DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
+DATA_DIR = Path(os.environ.get("BB_DATA_DIR") or (
+    (Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "bbport")
+    if PACKAGED else PORT_DIR
+))
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 ACCOUNT_FILE = CONFIG_DIR / "account.json"  # the Hunter's Dream sign-in (bbport_bbhost)
@@ -427,14 +430,22 @@ def online_module(pool="seamless"):
 
 
 def ini_path():
-    return Path(os.environ.get("BB_CONFIG", DATA_DIR / "bbport.ini"))
+    cfg = os.environ.get("BB_CONFIG")
+    if cfg:
+        p = Path(cfg)
+        if PACKAGED:
+            # Inside a packaged AppImage, avoid relative paths resolving to the read-only SquashFS mount
+            if not p.is_absolute() or str(p).startswith(str(PORT_DIR)) or str(p).startswith("/tmp/.mount_"):
+                return DATA_DIR / "bbport.ini"
+        return p
+    return DATA_DIR / "bbport.ini"
 
 
 def load_ini():
     values = dict(INI_DEFAULTS)
     lines = []
     try:
-        lines = ini_path().read_text().splitlines()
+        lines = ini_path().read_text(encoding='utf-8').splitlines()
     except OSError:
         pass
     for line in lines:
@@ -463,7 +474,14 @@ def save_ini(values, lines):
     for key, value in values.items():
         if key not in written and value is not None:
             out.append(f"{key}={value}")
-    ini_path().write_text("\n".join(out) + "\n")
+    target = ini_path()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    except OSError:
+        fallback = DATA_DIR / "bbport.ini"
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        fallback.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 def patches_dir(settings):

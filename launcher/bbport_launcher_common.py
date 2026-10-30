@@ -33,7 +33,10 @@ import trophy_list  # noqa: E402  (the Trophies page: what the port keeps in the
 from patches import external_patches  # noqa: E402
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
-DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
+DATA_DIR = Path(os.environ.get("BB_DATA_DIR") or (
+    (Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "bbport")
+    if PACKAGED else PORT_DIR
+))
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
@@ -285,7 +288,15 @@ def save_settings(settings):
 
 
 def ini_path():
-    return Path(os.environ.get("BB_CONFIG", DATA_DIR / "bbport.ini"))
+    cfg = os.environ.get("BB_CONFIG")
+    if cfg:
+        p = Path(cfg)
+        if PACKAGED:
+            # Inside a packaged AppImage, avoid relative paths resolving to the read-only SquashFS mount
+            if not p.is_absolute() or str(p).startswith(str(PORT_DIR)) or str(p).startswith("/tmp/.mount_"):
+                return DATA_DIR / "bbport.ini"
+        return p
+    return DATA_DIR / "bbport.ini"
 
 
 def load_ini():
@@ -321,7 +332,14 @@ def save_ini(values, lines):
     for key, value in values.items():
         if key not in written and value is not None:
             out.append(f"{key}={value}")
-    ini_path().write_text("\n".join(out) + "\n", encoding="utf-8")
+    target = ini_path()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    except OSError:
+        fallback = DATA_DIR / "bbport.ini"
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        fallback.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 def patches_dir(settings):
