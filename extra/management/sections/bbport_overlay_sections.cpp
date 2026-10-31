@@ -6,7 +6,9 @@
 #include <string>
 
 #include "bbport_discord_rpc.h"
+#include "bbport_overlay_internal.h"
 #include "bbport_strings.h"
+#include "bbport_trophies.h"
 #include "common/path_util.h"
 #include "rpc/bbport_game_data.h"
 #include "ui_manager.h"
@@ -860,6 +862,223 @@ void RenderMemoryToolsSection(float base_scale) {
                                    "Abre janelas flutuantes separadas para varredura, hex view e desassemblagem em tempo real.",
                                    "Открывает отдельные плавающие окна для сканирования, hex-инспектора и дизассемблера."));
     ImGui::PopStyleColor();
+}
+
+void RenderTrophiesSection(BbSettings::Values& s, int lang, bool& dirty, float base_scale) {
+    const float scale = base_scale;
+
+    // Header controls
+    const char* list_label = (lang == 1) ? "Exibir lista de troféus" :
+                             (lang == 2) ? "Показывать список трофеев" :
+                                           "Show trophy list";
+    const char* toasts_label = (lang == 1) ? "Notificações na tela ao desbloquear" :
+                               (lang == 2) ? "Всплывающие уведомления на экране" :
+                                             "In-game pop-up notifications";
+    const char* hidden_label = (lang == 1) ? "Revelar troféus ocultos (spoilers)" :
+                               (lang == 2) ? "Показывать скрытые трофеи (спойлеры)" :
+                                             "Reveal hidden trophies (spoilers)";
+
+    Checkbox(list_label, s.show_trophy_list, dirty);
+    Checkbox(toasts_label, s.show_trophy_toasts, dirty);
+
+    const bool show_list = s.show_trophy_list.load(std::memory_order_relaxed);
+    if (show_list) {
+        Checkbox(hidden_label, s.show_hidden_trophies, dirty);
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (!show_list) {
+        const char* hidden_msg = (lang == 1) ? "A exibição da lista de troféus está desativada. Marque a opção acima para visualizá-la." :
+                                 (lang == 2) ? "Список трофеев скрыт. Отметьте опцию выше для отображения." :
+                                               "Trophy list display is hidden. Check the option above to view it.";
+        ImGui::TextDisabled("%s", hidden_msg);
+        return;
+    }
+
+    const auto stats = BbTrophy::GetTrophyStats();
+    const auto trophies = BbTrophy::GetTrophyList();
+
+    if (stats.total > 0) {
+        // Progress bar
+        const float fraction = (float)stats.unlocked / (float)stats.total;
+        char prog_text[64];
+        std::snprintf(prog_text, sizeof(prog_text), "%zu / %zu (%.0f%%)",
+                      stats.unlocked, stats.total, fraction * 100.0f);
+
+        ImGui::Text("%s:", (lang == 1) ? "Progresso Total" :
+                           (lang == 2) ? "Общий прогресс" :
+                                         "Total Progress");
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(0, 180, 240, 230));
+        ImGui::ProgressBar(fraction, ImVec2(-1.0f, 18.0f * scale), prog_text);
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+
+        // Grade Counters
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(14.0f * scale, 4.0f * scale));
+
+        // Platinum
+        ImGui::TextColored(ImVec4(0.78f, 0.94f, 1.0f, 1.0f), "[P] %s: %zu/%zu",
+                           (lang == 1) ? "Platina" : (lang == 2) ? "Платина" : "Platinum",
+                           stats.platinum_unlocked, stats.platinum_total);
+        ImGui::SameLine();
+
+        // Gold
+        ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "[G] %s: %zu/%zu",
+                           (lang == 1) ? "Ouro" : (lang == 2) ? "Золото" : "Gold",
+                           stats.gold_unlocked, stats.gold_total);
+        ImGui::SameLine();
+
+        // Silver
+        ImGui::TextColored(ImVec4(0.80f, 0.82f, 0.85f, 1.0f), "[S] %s: %zu/%zu",
+                           (lang == 1) ? "Prata" : (lang == 2) ? "Серебро" : "Silver",
+                           stats.silver_unlocked, stats.silver_total);
+        ImGui::SameLine();
+
+        // Bronze
+        ImGui::TextColored(ImVec4(0.85f, 0.55f, 0.30f, 1.0f), "[B] %s: %zu/%zu",
+                           (lang == 1) ? "Bronze" : (lang == 2) ? "Бронза" : "Bronze",
+                           stats.bronze_unlocked, stats.bronze_total);
+
+        ImGui::PopStyleVar();
+    }
+
+    ImGui::Spacing();
+
+    // Filter Buttons
+    static int filter_mode = 0; // 0=All, 1=Unlocked, 2=Locked
+    char all_btn[64], unl_btn[64], lck_btn[64];
+    std::snprintf(all_btn, sizeof(all_btn), "%s (%zu)",
+                  (lang == 1) ? "Todos" : (lang == 2) ? "Все" : "All", stats.total);
+    std::snprintf(unl_btn, sizeof(unl_btn), "%s (%zu)",
+                  (lang == 1) ? "Conquistados" : (lang == 2) ? "Полученные" : "Unlocked", stats.unlocked);
+    std::snprintf(lck_btn, sizeof(lck_btn), "%s (%zu)",
+                  (lang == 1) ? "Bloqueados" : (lang == 2) ? "Неполученные" : "Locked",
+                  stats.total >= stats.unlocked ? (stats.total - stats.unlocked) : 0);
+
+    auto FilterButton = [&](const char* label, int mode) {
+        const bool active = (filter_mode == mode);
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.38f, 0.52f, 1.0f));
+        }
+        if (ImGui::Button(label)) {
+            filter_mode = mode;
+        }
+        if (active) {
+            ImGui::PopStyleColor();
+        }
+    };
+
+    FilterButton(all_btn, 0);
+    ImGui::SameLine();
+    FilterButton(unl_btn, 1);
+    ImGui::SameLine();
+    FilterButton(lck_btn, 2);
+
+    ImGui::Spacing();
+
+    if (trophies.empty()) {
+        const char* no_trophies_msg =
+            (lang == 1) ? "Nenhum troféu encontrado ou chave de troféu ausente.\nInsira sua chave de troféus (Trophy Key) no inicializador ou no arquivo .env." :
+            (lang == 2) ? "Трофеи не найдены или отсутствует ключ трофеев.\nУкажите ключ трофеев в лаунчере или в файле .env." :
+                          "No trophies found or trophy key is missing.\nEnter your Trophy Key in the launcher or in the .env file.";
+        ImGui::TextDisabled("%s", no_trophies_msg);
+        return;
+    }
+
+    // Scrollable Trophy List
+    if (ImGui::BeginChild("##trophy_scroll_region", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+        const bool reveal_hidden = s.show_hidden_trophies.load(std::memory_order_relaxed);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+        for (const auto& item : trophies) {
+            if (filter_mode == 1 && !item.unlocked) continue;
+            if (filter_mode == 2 && item.unlocked) continue;
+
+            const bool is_hidden = !item.unlocked && item.hidden && !reveal_hidden;
+            const float item_width = ImGui::GetContentRegionAvail().x;
+
+            const ImU32 bg_col = item.unlocked ? IM_COL32(28, 48, 36, 170) : IM_COL32(22, 24, 28, 140);
+            const ImU32 border_col = item.unlocked ? IM_COL32(70, 180, 100, 120) : IM_COL32(255, 255, 255, 18);
+
+            draw_list->ChannelsSplit(2);
+            draw_list->ChannelsSetCurrent(1);
+
+            ImGui::BeginGroup();
+            ImGui::Dummy(ImVec2(item_width, 4.0f * scale));
+
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f * scale);
+            ImGui::BeginGroup();
+
+            // Line 1: Grade tag + Title + Status
+            const char* grade_str = (item.grade == 'P') ? ((lang == 1) ? "[Platina]" : (lang == 2) ? "[Платина]" : "[Platinum]") :
+                                    (item.grade == 'G') ? ((lang == 1) ? "[Ouro]" : (lang == 2) ? "[Золото]" : "[Gold]") :
+                                    (item.grade == 'S') ? ((lang == 1) ? "[Prata]" : (lang == 2) ? "[Серебро]" : "[Silver]") :
+                                    (item.grade == 'B') ? ((lang == 1) ? "[Bronze]" : (lang == 2) ? "[Бронза]" : "[Bronze]") : "[?]";
+            const ImVec4 grade_color = (item.grade == 'P') ? ImVec4(0.70f, 0.92f, 1.0f, 1.0f) :
+                                       (item.grade == 'G') ? ImVec4(1.0f, 0.84f, 0.0f, 1.0f) :
+                                       (item.grade == 'S') ? ImVec4(0.80f, 0.82f, 0.85f, 1.0f) :
+                                       (item.grade == 'B') ? ImVec4(0.85f, 0.55f, 0.30f, 1.0f) :
+                                                             ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+
+            ImGui::TextColored(grade_color, "%s", grade_str);
+            ImGui::SameLine();
+
+            if (is_hidden) {
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 160, 160, 200));
+                ImGui::TextUnformatted((lang == 1) ? "Troféu Oculto" : (lang == 2) ? "Скрытый трофей" : "Hidden Trophy");
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(250, 250, 250, 255));
+                ImGui::TextUnformatted(item.name.c_str());
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::SameLine(0.0f, 16.0f * scale);
+            if (item.unlocked) {
+                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f), "[%s]",
+                                   (lang == 1) ? "Conquistado" : (lang == 2) ? "Получен" : "Unlocked");
+            } else {
+                ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 0.8f), "[%s]",
+                                   (lang == 1) ? "Bloqueado" : (lang == 2) ? "Не получен" : "Locked");
+            }
+
+            // Line 2: Detail / description
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(185, 190, 195, 230));
+            if (is_hidden) {
+                ImGui::TextUnformatted((lang == 1) ? "Continue jogando para revelar este troféu." :
+                                       (lang == 2) ? "Продолжайте играть, чтобы открыть этот трофей." :
+                                                     "Keep playing to unlock this trophy.");
+            } else {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + item_width - 24.0f * scale);
+                ImGui::TextWrapped("%s", item.detail.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::PopStyleColor();
+
+            ImGui::EndGroup();
+
+            ImGui::Dummy(ImVec2(item_width, 6.0f * scale));
+            ImGui::EndGroup();
+
+            const ImVec2 card_min = ImGui::GetItemRectMin();
+            const ImVec2 card_max = ImGui::GetItemRectMax();
+
+            draw_list->ChannelsSetCurrent(0);
+            draw_list->AddRectFilled(card_min, card_max, bg_col, 5.0f * scale);
+            draw_list->AddRect(card_min, card_max, border_col, 5.0f * scale);
+
+            draw_list->ChannelsMerge();
+
+            ImGui::Spacing();
+        }
+
+        ImGui::EndChild();
+    }
 }
 
 #undef S

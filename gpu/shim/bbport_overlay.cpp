@@ -241,60 +241,6 @@ void FpsCounter() {
     });
 }
 
-struct ShaderProgress {
-    u32 done = 0, total = 0, recent = 0;
-    bool importing = false;
-};
-
-ShaderProgress CurrentShaderProgress() {
-    static const bool enabled = !bb_env_off("BB_SHADER_PROGRESS");
-    ShaderProgress p;
-    if (!enabled) return p;
-    p.total = g_bb_background_pipelines_total.load(std::memory_order_relaxed);
-    p.done = g_bb_background_pipelines_done.load(std::memory_order_relaxed);
-    static const long long start = NowNs();
-    p.importing = g_bb_shader_import_active.load(std::memory_order_relaxed) && NowNs() - start < 180'000'000'000ll;
-    static u32 last_compiles = 0, window_start_compiles = 0;
-    static long long last_change = 0;
-    const u32 compiles = g_bb_compiles_total.load(std::memory_order_relaxed);
-    const long long now = NowNs();
-    if (compiles != last_compiles) {
-        if (now - last_change > 1'500'000'000ll) window_start_compiles = last_compiles;
-        last_compiles = compiles;
-        last_change = now;
-    }
-    if (last_change != 0 && now - last_change <= 1'500'000'000ll) p.recent = compiles - window_start_compiles;
-    return p;
-}
-
-bool ShaderProgressShown() {
-    const ShaderProgress p = CurrentShaderProgress();
-    return p.done < p.total || p.importing || p.recent != 0;
-}
-
-void ShaderProgressLine() {
-    const ShaderProgress p = CurrentShaderProgress();
-    std::string text;
-    if (p.done < p.total) {
-        text = fmt::format("{} {} / {}", BbSettings::MenuText("Compiling shaders", "Компиляция шейдеров"), p.done, p.total);
-    } else if (p.importing) {
-        text = BbSettings::MenuText("Preparing shaders...", "Подготовка шейдеров...");
-    } else if (p.recent != 0) {
-        text = fmt::format("{} ({})", BbSettings::MenuText("Compiling shaders", "Компиляция шейдеров"), p.recent);
-    } else {
-        return;
-    }
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float pad = 12.0f * base_scale;
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + vp->WorkSize.y - pad), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
-    ImGui::SetNextWindowBgAlpha(0.5f);
-    ImGui::Begin("##shader_progress", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                 ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-    ImGui::TextUnformatted(text.c_str());
-    ImGui::End();
-}
-
 void TextPrompt() {
     std::string title, text;
     {
@@ -569,7 +515,7 @@ bool Visible() {
         open_requested = true;
     }
     return initialized && (menu_open || open_requested || prompt_active || banner_active ||
-                           BbOverlay::TrophyActive() || BbSettings::Get().show_fps || ShaderProgressShown() ||
+                           BbOverlay::TrophyActive() || BbFpsHud::IsVisible() ||
                            UI::UiManager::IsOpen() || BbSettings::Get().show_info_hud);
 }
 
@@ -644,10 +590,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
     ImGui::NewFrame();
 
     if (menu_open) detail::Menu();
-    if ((BbSettings::Get().show_fps || BbShaderTracker::IsCompiling()) && !menu_open) FpsCounter();
+    if (BbFpsHud::IsVisible() && !menu_open) FpsCounter();
     if (BbSettings::Get().show_info_hud && !menu_open && !BbSettings::Get().hide_hud) BbInfoHud::Render(base_scale);
     if (prompt_active && !menu_open) TextPrompt();
-    if (!menu_open) ShaderProgressLine();
     if (BbOverlay::TrophyActive()) BbOverlay::TrophyWindow(io.DeltaTime);
     if (banner_active) {
         std::string text;

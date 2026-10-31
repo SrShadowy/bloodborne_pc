@@ -176,6 +176,9 @@ struct Values {
     std::atomic<float> fps_hud_graph_thickness{1.5f}; // [extra]
     std::atomic<float> fps_hud_graph_height{32.0f}; // [extra]
     std::atomic<float> fps_hud_graph_width{220.0f}; // [extra]
+    std::atomic<bool> show_trophy_toasts{true};
+    std::atomic<bool> show_trophy_list{true};
+    std::atomic<bool> show_hidden_trophies{false};
     // GT-VBAO ambient occlusion in place of the game's SSAO (needs effect_ssao on)
     std::atomic<bool> vbao{false};
     /// The right stick's camera turn (#208): [0] vertical (the pitch), [1] horizontal (the yaw), as

@@ -116,9 +116,12 @@ export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP
 export __GL_SHADER_DISK_CACHE_SIZE=${__GL_SHADER_DISK_CACHE_SIZE:-10737418240}
 export MESA_SHADER_CACHE_MAX_SIZE=${MESA_SHADER_CACHE_MAX_SIZE:-4G}
 mkdir -p "$BB_GPU_USER_DIR"
-# FSR 4.1.1 assets (tools/fsr4cap/build_assets.sh): next to run.sh or in the data directory.
-if [[ -z ${BB_FSR411_DIR:-} && ! -d fsr4_411 && -d $data/fsr4_411 ]]; then
-    export BB_FSR411_DIR=$data/fsr4_411
+if [[ -z ${BB_FSR411_DIR:-} ]]; then
+    if [[ -d $data/fsr4_411 && ( ! -d fsr4_411 || -d $data/fsr4_411/navi2 || -d $data/fsr4_411/lite ) ]]; then
+        export BB_FSR411_DIR=$data/fsr4_411
+    elif [[ -d fsr4_411 ]]; then
+        export BB_FSR411_DIR=$(realpath fsr4_411)
+    fi
 fi
 # Suppress broken third-party Vulkan layers
 export DISABLE_LSFGVK=${DISABLE_LSFGVK:-1}

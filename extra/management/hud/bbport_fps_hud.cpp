@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "bb_env.h"
 #include "bbport_perf_metrics.h"
 #include "bbport_settings.h"
 #include "bbport_shader_tracker.h"
@@ -24,20 +25,31 @@ struct MetricEntry {
     bool is_standalone = false;
 };
 
-void Render(const Stats& stats) {
+bool IsVisible() {
     const auto& s = BbSettings::Get();
     if (s.hide_hud) {
+        return false;
+    }
+    if (s.show_fps) {
+        return true;
+    }
+    static const bool env_enabled = !bb_env_off("BB_SHADER_PROGRESS");
+    const bool is_compiling = BbShaderTracker::IsCompiling();
+    const bool show_shaders = env_enabled && s.fps_hud_show_shaders.load(std::memory_order_relaxed);
+    return is_compiling && show_shaders;
+}
+
+void Render(const Stats& stats) {
+    if (!IsVisible()) {
         return;
     }
 
+    const auto& s = BbSettings::Get();
     const int lang = s.menu_language.load();
     const bool show_fps = s.show_fps;
     const bool is_compiling = BbShaderTracker::IsCompiling();
-    const bool show_shaders = s.fps_hud_show_shaders.load(std::memory_order_relaxed);
-
-    if (!show_fps && (!is_compiling || !show_shaders)) {
-        return;
-    }
+    static const bool env_enabled = !bb_env_off("BB_SHADER_PROGRESS");
+    const bool show_shaders = env_enabled && s.fps_hud_show_shaders.load(std::memory_order_relaxed);
 
     const float user_scale = std::clamp(s.fps_hud_scale.load(std::memory_order_relaxed), 0.5f, 3.0f);
     const float base_scale = stats.base_scale * user_scale;

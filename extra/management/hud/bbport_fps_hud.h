@@ -12,6 +12,9 @@ struct Stats {
     float base_scale = 1.0f;
 };
 
+// Returns whether the HUD has any active components to display (FPS stats or Shader compiling indicator)
+bool IsVisible();
+
 // Renders the FPS, Frame Generation, and Shader Compilation HUD overlay
 void Render(const Stats& stats);
 

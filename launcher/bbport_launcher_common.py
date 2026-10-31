@@ -410,7 +410,11 @@ def fsr411_dir():
     """Where the FSR 4.1.1 assets are looked up, as run.sh does."""
     if os.environ.get("BB_FSR411_DIR"):
         return Path(os.environ["BB_FSR411_DIR"])
-    return PORT_DIR / "fsr4_411" if (PORT_DIR / "fsr4_411").is_dir() else DATA_DIR / "fsr4_411"
+    data_dir = DATA_DIR / "fsr4_411"
+    port_dir = PORT_DIR / "fsr4_411"
+    if data_dir.is_dir() and (not port_dir.is_dir() or (data_dir / "navi2").is_dir() or (data_dir / "lite").is_dir() or PACKAGED):
+        return data_dir
+    return port_dir if port_dir.is_dir() else data_dir
 
 
 def fsr411_build_command(upscaler, loader=None):

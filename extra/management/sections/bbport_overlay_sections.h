@@ -40,4 +40,7 @@ void RenderPromptLayoutSection(BbSettings::Values& s, int lang, bool& dirty);
 // Renders the Memory Tools and Memory Viewer launcher buttons.
 void RenderMemoryToolsSection(float base_scale);
 
+// Renders the Trophy list, progress, and notification settings section in the overlay menu.
+void RenderTrophiesSection(BbSettings::Values& s, int lang, bool& dirty, float base_scale);
+
 } // namespace BbOverlaySections

@@ -61,6 +61,50 @@ std::string AssetDir() {
     return "fsr4_shaders";
 }
 
+std::string Fsr411Dir() {
+    const char* env = bb_env("BB_FSR411_DIR");
+    if (env && env[0]) {
+        return env;
+    }
+    std::vector<std::filesystem::path> candidates;
+    if (const char* data = bb_env("BB_DATA_DIR"); data && data[0]) {
+        candidates.emplace_back(std::filesystem::path(data) / "fsr4_411");
+    }
+    if (const char* home = std::getenv("HOME"); home && home[0]) {
+        candidates.emplace_back(std::filesystem::path(home) / ".local/share/bbport/fsr4_411");
+    }
+    // Prefer data candidate if it contains driver-built models (navi2 or lite)
+    for (const auto& cand : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(cand / "navi2", ec) ||
+            std::filesystem::is_directory(cand / "lite", ec)) {
+            return cand.string();
+        }
+    }
+    std::error_code ec;
+    if (std::filesystem::is_directory("fsr4_411", ec)) {
+        return "fsr4_411";
+    }
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void*>(&Fsr411Dir), &info) && info.dli_fname) {
+        std::filesystem::path lib_path(info.dli_fname);
+        auto cand1 = lib_path.parent_path().parent_path().parent_path() / "fsr4_411";
+        if (std::filesystem::is_directory(cand1, ec)) {
+            return cand1.string();
+        }
+        auto cand2 = lib_path.parent_path().parent_path() / "fsr4_411";
+        if (std::filesystem::is_directory(cand2, ec)) {
+            return cand2.string();
+        }
+    }
+    for (const auto& cand : candidates) {
+        if (std::filesystem::is_directory(cand, ec)) {
+            return cand.string();
+        }
+    }
+    return "fsr4_411";
+}
+
 bool ReadFile(const std::string& path, std::vector<u8>& data) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
@@ -125,7 +169,14 @@ struct Fsr4Upscaler::Impl {
     std::unique_ptr<FsrAmd> amd;
 
     Impl(const Instance& instance_, Scheduler& scheduler_)
-        : instance{instance_}, scheduler{scheduler_} {}
+        : instance{instance_}, scheduler{scheduler_} {
+        const std::string dir = Fsr411Dir();
+        Fsr411::Features features{.fp8_matrices = instance.IsFsr411Fp8Supported(),
+                                  .fp16_matrices = instance.IsFsr411MatrixSupported(),
+                                  .integrated = instance.IsIntegrated()};
+        BbSettings::Get().fsr4_models_available.store(Fsr411::AvailableModels(dir, features),
+                                                      std::memory_order_relaxed);
+    }
 
     ~Impl() {
         if (staging_thread.joinable()) {
@@ -300,8 +351,7 @@ struct Fsr4Upscaler::Impl {
     /// A replay for the menu's fsr4_model (BbSettings::Fsr4Model); also tells the menu which
     /// models there are.
     std::unique_ptr<Fsr411::Upscaler> MakeFsr411(int model) const {
-        const char* env = bb_env("BB_FSR411_DIR");
-        const std::string dir = env && env[0] ? env : "fsr4_411";
+        const std::string dir = Fsr411Dir();
         Fsr411::Features features{.fp8_matrices = instance.IsFsr411Fp8Supported(),
                                   .fp16_matrices = instance.IsFsr411MatrixSupported(),
                                   .integrated = instance.IsIntegrated()};

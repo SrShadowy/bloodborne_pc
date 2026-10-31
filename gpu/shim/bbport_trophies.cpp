@@ -28,6 +28,8 @@
 #endif
 
 #include "bbport_overlay.h"
+#include "bbport_settings.h"
+#include "bbport_trophies.h"
 #include "bbport_trophy_data.h"
 
 namespace {
@@ -130,15 +132,26 @@ bool Extract(const fs::path& trp_path, const std::string& np_comm_id, const std:
 }
 #endif
 
-// TROP_XX.XML of the game's language (BB_LANGUAGE, the PS4 numbers the runtime reports: 1 English
-// US, 8 Russian; 0 .. 30), else TROP.XML.
+// TROP_XX.XML of the game's language (BB_LANGUAGE or menu_language: 1 English US, 8 Russian,
+// 17 Portuguese BR; 0 .. 30), else TROP.XML.
 fs::path LanguageFile() {
+    int language = 1;
     const char* env = bb_env("BB_LANGUAGE");
-    const int language = env ? std::atoi(env) : 1;
+    if (env && *env) {
+        language = std::atoi(env);
+    } else {
+        const auto& s = BbSettings::Get();
+        const int menu_lang = s.menu_language.load(std::memory_order_relaxed);
+        if (menu_lang == 1) language = 17;      // Portuguese (BR)
+        else if (menu_lang == 2) language = 8;  // Russian
+        else language = 1;                      // English (US)
+    }
     char xx[16];
     std::snprintf(xx, sizeof(xx), "TROP_%02d.XML", language);
     const fs::path lang = folder / xx;
-    return fs::exists(lang) ? lang : folder / "TROP.XML";
+    if (fs::exists(lang)) return lang;
+    if (language == 17 && fs::exists(folder / "TROP_07.XML")) return folder / "TROP_07.XML"; // fallback PT-PT
+    return fs::exists(folder / "TROP.XML") ? (folder / "TROP.XML") : lang;
 }
 
 fs::path IconPath(int id) {
@@ -199,7 +212,125 @@ void SetUp(const char* sce_sys, const char* user_dir) {
     }
 }
 
+static int last_loaded_lang = -1;
+
+void EnsureLoaded() {
+    const auto& s = BbSettings::Get();
+    const int cur_lang = s.menu_language.load(std::memory_order_relaxed);
+
+    if (set_up && !trophies.empty() && cur_lang == last_loaded_lang) {
+        return;
+    }
+
+    if (!set_up) {
+        SetUp(nullptr, "user");
+    }
+
+    if (folder.empty() || !fs::exists(folder / "TROP.XML")) {
+        const fs::path root = "user/trophy";
+        std::error_code ec;
+        if (fs::is_directory(root, ec)) {
+            for (const auto& entry : fs::directory_iterator(root, ec)) {
+                if (entry.is_directory(ec) &&
+                    (fs::exists(entry.path() / "TROP.XML", ec) || fs::exists(entry.path() / "unlocked.txt", ec))) {
+                    folder = entry.path();
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!folder.empty() && (trophies.empty() || cur_lang != last_loaded_lang)) {
+        const auto xml = ReadFile(LanguageFile());
+        if (!xml.empty()) {
+            trophies = BbTrophy::ParseTrophies(std::string_view(reinterpret_cast<const char*>(xml.data()), xml.size()));
+            last_loaded_lang = cur_lang;
+        }
+    }
+
+    if (!folder.empty() && fs::exists(folder / "unlocked.txt")) {
+        std::ifstream file(folder / "unlocked.txt");
+        for (std::string line; std::getline(file, line);) {
+            if (!line.empty() && line[0] != '#') {
+                unlocked.insert(std::atoi(line.c_str()));
+            }
+        }
+    }
+}
+
 } // namespace
+
+namespace BbTrophy {
+
+std::vector<TrophyListItem> GetTrophyList() {
+    std::scoped_lock lock{trophy_mutex};
+    EnsureLoaded();
+    std::vector<TrophyListItem> list;
+    list.reserve(trophies.size());
+    for (const auto& t : trophies) {
+        TrophyListItem item;
+        item.id = t.id;
+        item.grade = t.grade;
+        item.hidden = t.hidden;
+        item.unlocked = (unlocked.find(t.id) != unlocked.end());
+        item.name = !t.name.empty() ? t.name : ("Trophy #" + std::to_string(t.id));
+        item.detail = t.detail;
+        item.icon_path = IconPath(t.id);
+        list.push_back(std::move(item));
+    }
+    if (list.empty() && !unlocked.empty()) {
+        for (int id : unlocked) {
+            TrophyListItem item;
+            item.id = id;
+            item.grade = '?';
+            item.hidden = false;
+            item.unlocked = true;
+            item.name = "Trophy #" + std::to_string(id);
+            item.detail = "";
+            item.icon_path = IconPath(id);
+            list.push_back(std::move(item));
+        }
+    }
+    return list;
+}
+
+TrophyStats GetTrophyStats() {
+    std::scoped_lock lock{trophy_mutex};
+    EnsureLoaded();
+    TrophyStats stats{};
+    stats.total = trophies.size();
+    for (const auto& t : trophies) {
+        const bool is_unl = (unlocked.find(t.id) != unlocked.end());
+        if (is_unl) stats.unlocked++;
+        switch (t.grade) {
+        case 'P':
+            stats.platinum_total++;
+            if (is_unl) stats.platinum_unlocked++;
+            break;
+        case 'G':
+            stats.gold_total++;
+            if (is_unl) stats.gold_unlocked++;
+            break;
+        case 'S':
+            stats.silver_total++;
+            if (is_unl) stats.silver_unlocked++;
+            break;
+        case 'B':
+            stats.bronze_total++;
+            if (is_unl) stats.bronze_unlocked++;
+            break;
+        default:
+            break;
+        }
+    }
+    if (stats.total == 0) {
+        stats.total = unlocked.size();
+        stats.unlocked = unlocked.size();
+    }
+    return stats;
+}
+
+} // namespace BbTrophy
 
 /// The runtime's sceNpTrophyRegisterContext: the game's sce_sys folder (host path) and the user
 /// folder. Once.

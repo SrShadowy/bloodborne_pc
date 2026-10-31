@@ -110,6 +110,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fps_hud_graph_height = Clamp(f, 16.0f, 120.0f); // [extra]
     } else if (key == "fps_hud_graph_width") { // [extra]
         v.fps_hud_graph_width = Clamp(f, 100.0f, 600.0f); // [extra]
+    } else if (key == "show_trophy_toasts") {
+        v.show_trophy_toasts = i != 0;
+    } else if (key == "show_trophy_list") {
+        v.show_trophy_list = i != 0;
+    } else if (key == "show_hidden_trophies") {
+        v.show_hidden_trophies = i != 0;
     } else if (key == "show_info_hud") {
         v.show_info_hud = i != 0;
     } else if (key == "info_hud_pos") {
@@ -816,6 +822,9 @@ void Save() {
     put("fps_hud_graph_thickness", fixed(v.fps_hud_graph_thickness, 2)); // [extra]
     put("fps_hud_graph_height", fixed(v.fps_hud_graph_height, 1)); // [extra]
     put("fps_hud_graph_width", fixed(v.fps_hud_graph_width, 1)); // [extra]
+    put("show_trophy_toasts", flag(v.show_trophy_toasts));
+    put("show_trophy_list", flag(v.show_trophy_list));
+    put("show_hidden_trophies", flag(v.show_hidden_trophies));
     put("show_info_hud", flag(v.show_info_hud));
     put("info_hud_pos", std::to_string(v.info_hud_pos.load()));
     put("info_hud_show_playtime", flag(v.info_hud_show_playtime));

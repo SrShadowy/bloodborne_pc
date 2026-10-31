@@ -506,6 +506,16 @@ def game_environment(s):
     env["BB_MODS_ENABLED"] = "1" if s.get("mods_enabled", True) else "0"
     env["BB_PATCHES_DIR"] = str(patches_dir(s))
     env["BB_PATCHES_CONFIG"] = str(DATA_DIR / "patches.json")
+    fsr_dir = env.get("BB_FSR411_DIR")
+    if not fsr_dir:
+        data_fsr = DATA_DIR / "fsr4_411"
+        port_fsr = PORT_DIR / "fsr4_411"
+        if data_fsr.is_dir() and (not port_fsr.is_dir() or (data_fsr / "navi2").is_dir() or (data_fsr / "lite").is_dir() or PACKAGED):
+            fsr_dir = str(data_fsr)
+        elif port_fsr.is_dir():
+            fsr_dir = str(port_fsr)
+    if fsr_dir:
+        env["BB_FSR411_DIR"] = fsr_dir
     env["BB_LANGUAGE"] = s["language"]
     env["BB_MENU_LANGUAGE"] = language()
     env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"

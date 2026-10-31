@@ -5,9 +5,12 @@
 #pragma once
 
 #include <atomic>
+#include <filesystem>
 
 #include "bbport_settings.h"
 #include "common/types.h"
+
+struct ImTextureData;
 
 // render/pipeline_cache.cpp: the shader compiles (the "Compiling shaders" line, the Shaders section).
 namespace Vulkan {
@@ -24,6 +27,7 @@ namespace BbOverlay {
 void SetOpen(bool value);
 void TrophyWindow(float dt);
 bool TrophyActive();
+ImTextureData* GetTrophyIcon(const std::filesystem::path& path);
 
 namespace detail {
 

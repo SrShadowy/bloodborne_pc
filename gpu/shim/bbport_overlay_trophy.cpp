@@ -62,7 +62,15 @@ ImTextureData* TrophyIcon(const std::filesystem::path& path) {
 
 } // namespace
 
+ImTextureData* GetTrophyIcon(const std::filesystem::path& path) {
+    return TrophyIcon(path);
+}
+
 void ShowTrophy(char grade, const std::string& name, const std::filesystem::path& icon, float delay) {
+    const auto& s = BbSettings::Get();
+    if (!s.show_trophy_toasts.load(std::memory_order_relaxed)) {
+        return;
+    }
     std::scoped_lock lock{trophy_mutex};
     trophy_queue.push_back({grade, name, -delay, icon});
     trophy_active = true;

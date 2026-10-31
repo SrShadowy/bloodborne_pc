@@ -234,9 +234,7 @@ static void RenderTabContent(int tab, BbSettings::Values& s, int lang, float sca
         BbOverlaySections::RenderMemoryToolsSection(scale);
         break;
     case 8: // Troféus
-        ImGui::TextUnformatted(L(lang, "Bloodborne trophies are tracked and displayed via in-game toast notifications.",
-                                      "Os troféus do Bloodborne são monitorados e exibidos através de notificações na tela.",
-                                      "Трофеи отслеживаются и отображаются во всплывающих уведомлениях."));
+        BbOverlaySections::RenderTrophiesSection(s, lang, dirty, scale);
         break;
     case 9: // Online
         BbOverlaySections::RenderDiscordRpcSection(s, lang, dirty);
