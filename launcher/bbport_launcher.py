@@ -814,6 +814,14 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
                              for choice in item.get("choices", []) if "description" in choice}
                     if notes:
                         row.notes = [notes.get(value) for value in row.values]
+                    schema_labels = {choice["value"]: schema_text(choice)
+                                     for choice in item.get("choices", []) if schema_text(choice)}
+                    if schema_labels and hasattr(row, "values"):
+                        selected = row.get_selected()
+                        model = Gtk.StringList.new([schema_labels.get(val, row.get_model().get_string(i))
+                                                    for i, val in enumerate(row.values)])
+                        row.set_model(model)
+                        row.set_selected(selected)
                     row.show_note()
                 elif item["key"] == "debug_menu" and row.get_subtitle():
                     continue  # its own note names the fonts it needs

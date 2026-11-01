@@ -14,6 +14,7 @@ cd -- "$(dirname -- "$0")/../.."
 
 fail=0
 baseline="extra/tools/audit_baseline.txt"
+[[ -f $baseline ]] || echo "note: $baseline missing - strict mode (no recorded debt forgiven)"
 
 echo "== [1] extra/ file sizes (target <= 300, hard limit <= 400, ratchet)"
 while IFS= read -r f; do

@@ -102,7 +102,7 @@ void RecordShaderCompile(uint64_t pgm_hash, uint32_t hw_stage, uint32_t sw_stage
         if (state.events.size() > 250) state.events.pop_front();
 
         if (state.verbose_logging) {
-            std::printf("ShaderDiscovery: Discovered shader 0x%016llx (stage %u, perm %u, %s, %.2f ms)\n",
+            std::printf("[Shaders] ShaderDiscovery: Discovered shader 0x%016llx (stage %u, perm %u, %s, %.2f ms)\n",
                         static_cast<unsigned long long>(pgm_hash), hw_stage, perm_idx,
                         shader.location.c_str(), duration_ns / 1000000.0);
         }
@@ -163,7 +163,7 @@ void RecordPipelineCompile(uint64_t pipeline_hash, bool is_compute,
         if (state.events.size() > 250) state.events.pop_front();
 
         if (state.verbose_logging && !is_preloaded) {
-            std::printf("ShaderDiscovery: Discovered %s pipeline 0x%016llx (%s, %zu stages, %.2f ms%s)\n",
+            std::printf("[Shaders] ShaderDiscovery: Discovered %s pipeline 0x%016llx (%s, %zu stages, %.2f ms%s)\n",
                         is_compute ? "compute" : "graphics", static_cast<unsigned long long>(pipeline_hash),
                         pipeline.location.c_str(), pipeline.stage_hashes.size(), duration_ns / 1000000.0,
                         is_async ? ", async" : "");

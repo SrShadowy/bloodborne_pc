@@ -23,6 +23,7 @@ if ./extra/tools/audit.sh; then pass audit; else failst audit; fi
 
 echo "== [2/3] incremental build (bbgpu + pipeline-reconstruct-test)"
 b_log=/tmp/opencode/qa_build.log
+build_failed=0
 if ! command -v docker >/dev/null 2>&1; then
     skip "docker not in PATH"
 elif ! docker image inspect bbport-builder:ubuntu22 >/dev/null 2>&1; then
@@ -33,6 +34,9 @@ elif docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/bbport -w /bbport bbport-
 else
     failst "build - tail of $b_log:"
     tail -n 20 "$b_log"
+    echo "note: manifest with host-absolute paths? build.sh self-cleans a mismatched cache:"
+    echo "      bash build.sh --no-bump   (in the container; then re-run this gate)"
+    build_failed=1
 fi
 
 echo "== [3/3] runtime smoke (warm sandbox round-trip)"
@@ -51,8 +55,10 @@ smoke() { # $1 = log suffix, $2 = optional NAME=value extra env
 selftest_ok() { grep -q "Pipeline Feedback Self-Test: accounting=OK pNext-chaining=OK" "$qa/smoke_$1.log"; }
 blob_md5() { md5sum "$blob" 2>/dev/null | cut -d' ' -f1; }
 mkdir -p "$qa"
-if [[ ! -x $bin ]]; then
-    skip "test binary missing (stage 2 failed or never built)"
+if (( build_failed )); then
+    skip "stage 2 failed - running the stale binary would prove nothing"
+elif [[ ! -x $bin ]]; then
+    skip "test binary missing (stage 2 skipped or never built)"
 elif [[ -z $libdir ]]; then
     skip "dist/BBPort-*-linux-*/lib not found"
 else

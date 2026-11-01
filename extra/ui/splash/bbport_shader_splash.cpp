@@ -54,13 +54,13 @@ SDL_Texture* LoadSplashTexture(SDL_Renderer* renderer, const std::string& prefer
             const int h = surf->h;
             SDL_DestroySurface(surf);
             if (tex) {
-                std::printf("BbShaderSplash: Loaded splash artwork from %s (%dx%d)\n",
+                std::printf("[Shaders] BbShaderSplash: Loaded splash artwork from %s (%dx%d)\n",
                             p.string().c_str(), w, h);
                 return tex;
             }
         }
     }
-    std::printf("BbShaderSplash: Warning: No splash background image found.\n");
+    std::printf("[Shaders] BbShaderSplash: Warning: No splash background image found.\n");
     return nullptr;
 }
 
@@ -124,14 +124,14 @@ void DrawMonsterHunterProgressBar(SDL_Renderer* renderer, float progress, uint32
 
 bool Run(const SplashOptions& options, std::function<bool()> compile_task) {
     if (options.headless || !SDL_Init(SDL_INIT_VIDEO)) {
-        std::printf("Running shader reconstruction in headless mode...\n");
+        std::printf("[Shaders] Running shader reconstruction in headless mode...\n");
         return compile_task ? compile_task() : false;
     }
 
     SDL_Window* window = SDL_CreateWindow("Bloodborne — Compilando Shaders", WIN_WIDTH, WIN_HEIGHT,
                                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window) {
-        std::printf("Failed to create SDL window. Falling back to headless mode.\n");
+        std::printf("[Shaders] Failed to create SDL window. Falling back to headless mode.\n");
         return compile_task ? compile_task() : false;
     }
 

@@ -79,7 +79,7 @@ std::vector<uint8_t> LoadDriverCache(vk::PhysicalDevice physical_device, const s
     const char* cold_env = std::getenv("BB_SHADER_COLD_RUN");
     if (cold_env && cold_env[0] != '0') {
         s_status.cold_forced = true;
-        std::printf("VkPipelineCache: Cold run requested (BB_SHADER_COLD_RUN); skipping persistent driver cache.\n");
+        std::printf("[Shaders] VkPipelineCache: Cold run requested (BB_SHADER_COLD_RUN); skipping persistent driver cache.\n");
         return {};
     }
 
@@ -108,7 +108,7 @@ std::vector<uint8_t> LoadDriverCache(vk::PhysicalDevice physical_device, const s
 
     if (hdr.vendorID != props.vendorID || hdr.deviceID != props.deviceID ||
         std::memcmp(hdr.pipelineCacheUUID, props.pipelineCacheUUID, VK_UUID_SIZE) != 0) {
-        std::printf("VkPipelineCache: Driver cache UUID mismatch; discarding old driver cache.\n");
+        std::printf("[Shaders] VkPipelineCache: Driver cache UUID mismatch; discarding old driver cache.\n");
         return {};
     }
 
@@ -121,7 +121,7 @@ std::vector<uint8_t> LoadDriverCache(vk::PhysicalDevice physical_device, const s
 
     s_status.loaded = true;
     s_status.size_bytes = data.size();
-    std::printf("VkPipelineCache: Loaded persistent driver cache (%zu bytes) for device 0x%04x:0x%04x (%s)\n",
+    std::printf("[Shaders] VkPipelineCache: Loaded persistent driver cache (%zu bytes) for device 0x%04x:0x%04x (%s)\n",
                 data.size(), props.vendorID, props.deviceID, props.deviceName.data());
     return data;
 }
@@ -165,7 +165,7 @@ bool SaveDriverCache(vk::Device device, vk::PipelineCache cache, const std::file
     std::error_code ec;
     std::filesystem::rename(tmp_p, final_p, ec);
     if (!ec) {
-        std::printf("VkPipelineCache: Saved %zu bytes to %s\n", data.size(), final_p.string().c_str());
+        std::printf("[Shaders] VkPipelineCache: Saved %zu bytes to %s\n", data.size(), final_p.string().c_str());
         return true;
     }
     return false;
@@ -185,7 +185,7 @@ vk::UniquePipelineCache Create(vk::Device device, vk::PhysicalDevice physical_de
     auto [result, cache] = device.createPipelineCacheUnique(info);
     if (result != vk::Result::eSuccess && !initial.empty()) {
         // A corrupt/foreign blob must never break the boot: retry without initial data.
-        std::printf("VkPipelineCache: driver rejected the saved cache (%s); starting empty\n",
+        std::printf("[Shaders] VkPipelineCache: driver rejected the saved cache (%s); starting empty\n",
                     vk::to_string(result).c_str());
         auto [retry_result, retry_cache] = device.createPipelineCacheUnique({});
         result = retry_result;
@@ -251,7 +251,7 @@ void FlushTick() {
     // One metrics line per lull; the cold arm (BB_SHADER_COLD_RUN) prints it too — that pair
     // is the A/B measurement. hits/valid need BB_PIPELINE_STATS=1 (creation feedback).
     const BbVkPipelineStats::Stats st = BbVkPipelineStats::GetStats();
-    std::printf("VkPipelineCache: session: creates=%llu hits=%llu valid=%llu compile_time=%.0f ms longest=%.1f ms%s\n",
+    std::printf("[Shaders] VkPipelineCache: session: creates=%llu hits=%llu valid=%llu compile_time=%.0f ms longest=%.1f ms%s\n",
                 static_cast<unsigned long long>(st.creates),
                 static_cast<unsigned long long>(st.hits),
                 static_cast<unsigned long long>(st.feedback_valid),

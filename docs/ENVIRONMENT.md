@@ -92,7 +92,6 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_PAD_DEADZONE_OUTER` | =N (default 127): stick outer limit |
 | `BB_PAD_MOTION` | =0 / 1: motion sensor emulation (over bbport.ini pad_motion) |
 | `BB_PATCHES` | =name,...: extra patches by name (patches.py) |
-| `BB_PIPELINE_STATS` | =1: per-pipeline creation feedback (hit-rate and compile-time counters) |
 | `BB_PREUPLOAD` | =1: preupload assets before gameplay |
 | `BB_PROCESS_PRIORITY` | =normal / above / high: process priority on Windows (default above) |
 | `BB_REACTIVE` | =1: FSR reactive mask (the menu's) |
@@ -367,7 +366,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_VULKANINFO` | path of vulkaninfo for the launcher |
 | `BB_WORK_RETIRED` | =0: the recording thread and fences do not wait for retired work |
 
-## Diagnostics (278)
+## Diagnostics (279)
 
 Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame time; none is meant for playing.
 
@@ -548,6 +547,7 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_PASS_DUMP_TRIGGER` | =file: creating it starts BB_PASS_DUMP |
 | `BB_PENDING_STATS` | set: pending notes and granules a second, by level |
 | `BB_PIN_CLEAR_LOG` | set: large releases of GPU-pinned memory that were cleared |
+| `BB_PIPELINE_STATS` | =1: per-pipeline creation feedback (hit-rate and compile-time counters) |
 | `BB_PIPE_VERIFY` | =N: verify the draw pipe's results every Nth frame |
 | `BB_PM4_SELFTEST` | =1: tests of command processor packets Bloodborne never sends |
 | `BB_PM4_SELFTEST_STEPS` | =mask: the self test steps to run |

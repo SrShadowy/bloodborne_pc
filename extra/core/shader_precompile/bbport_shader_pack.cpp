@@ -102,7 +102,7 @@ void MigrateArchiveNames(const std::filesystem::path& cache_dir_param) {
     if (std::filesystem::exists(legacy, ec) && !std::filesystem::exists(current, ec)) {
         std::filesystem::rename(legacy, current, ec);
         if (!ec) {
-            std::printf("BbShaderPack: migrated %s to %s\n", ARCHIVE_METADATA_NAME_LEGACY,
+            std::printf("[Shaders] BbShaderPack: migrated %s to %s\n", ARCHIVE_METADATA_NAME_LEGACY,
                         ARCHIVE_METADATA_NAME);
         }
     }
@@ -280,7 +280,7 @@ bool RestoreMasterCacheIfEmpty(const std::filesystem::path& cache_dir_param) {
                 }
             }
             if (merged > 0) {
-                std::printf("BBPort: Merged %zu master cache assets to eliminate stuttering!\n", merged);
+                std::printf("[Shaders] Merged %zu master cache assets to eliminate stuttering!\n", merged);
                 return true;
             }
         }
