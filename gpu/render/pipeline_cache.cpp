@@ -62,6 +62,7 @@ extern char** environ;
 #include "vulkan/instance.h"
 #include "vulkan/shader_module.h"
 #include "render/pipeline_cache_internal.h"
+#include "extra/hooks.h" // [extra]
 
 namespace Vulkan {
 
@@ -168,10 +169,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
       desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes},
       profile{MakeProfile(instance_, sparse_page_shift)} {
     sel.regs = &liverpool->regs;
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
-    ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
-               vk::to_string(cache_result));
-    pipeline_cache = std::move(cache);
+    // [extra] persistent driver cache: seed from the saved blob (empty fallback), registered for FlushTick
+    pipeline_cache = BbVkPipelineCache::Create(instance.GetDevice(), instance.GetPhysicalDevice()); // [extra]
 }
 
 PipelineCache::~PipelineCache() {

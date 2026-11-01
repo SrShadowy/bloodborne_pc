@@ -5,7 +5,7 @@
 Inspects, validates, packs and unpacks the 3-file monolithic shader archive:
   - hunter_insight.idx (Index & Lookup)
   - caryll_runes.pack   (Contiguous SPIR-V Blob)
-  - blood_echoes.meta  (Metadata & Pipeline Keys)
+  - blood_echoes.bmeta  (Metadata & Pipeline Keys)
 """
 
 import argparse
@@ -22,7 +22,7 @@ MAGIC_META = 0x48434542     # "BECH"
 ARCHIVE_FILES = (
     "hunter_insight.idx",
     "caryll_runes.pack",
-    "blood_echoes.meta",
+    "blood_echoes.bmeta",
 )
 
 def sha256_file(path: Path) -> str:

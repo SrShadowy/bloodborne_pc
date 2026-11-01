@@ -637,6 +637,7 @@ BB_ENV(BB_SHADER_COLD_RUN, DEBUG, "=1: simulate first cold run without pipeline 
 BB_ENV(BB_SHADER_DISCOVERY, DEBUG, "=1: discover and collect shaders during gameplay")
 BB_ENV(BB_SHADER_DISCOVERY_DUMP, DEBUG, "path to dump discovered shaders")
 BB_ENV(BB_SHADER_INVENTORY, DEBUG, "path to shader inventory json")
+BB_ENV(BB_PIPELINE_STATS, DEBUG, "=1: per-pipeline creation feedback (hit-rate and compile-time counters)")
 
 // Internal: passed between the launchers, run.py/run.sh and the game; not meant to be set by hand.
 BB_ENV(BB_BUNDLED_VK_DRIVER_FILES, INTERNAL, "the package's own Vulkan driver manifests (set by the launcher)")

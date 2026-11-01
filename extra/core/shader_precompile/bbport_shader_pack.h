@@ -11,7 +11,10 @@ namespace BbShaderPack {
 
 constexpr const char* ARCHIVE_INDEX_NAME    = "hunter_insight.idx";
 constexpr const char* ARCHIVE_SHADERS_NAME  = "caryll_runes.pack";
-constexpr const char* ARCHIVE_METADATA_NAME = "blood_echoes.meta";
+// .bmeta (not .meta): keeps this archive blob out of BlobStore's *.meta glob, which every boot
+// would otherwise read and parse as a shader meta. MigrateArchiveNames renames old installs.
+constexpr const char* ARCHIVE_METADATA_NAME = "blood_echoes.bmeta";
+constexpr const char* ARCHIVE_METADATA_NAME_LEGACY = "blood_echoes.meta";
 
 constexpr uint32_t MAGIC_INDEX   = 0x47534e49; // "INSG"
 constexpr uint32_t MAGIC_SHADERS = 0x454e5552; // "RUNE"
@@ -73,6 +76,9 @@ bool PackDirectory(const std::filesystem::path& cache_dir, const std::string& ti
 
 // Verify integrity of the 3-file archive
 bool VerifyArchive(const std::filesystem::path& cache_dir);
+
+// Renames the legacy blood_echoes.meta to the current .bmeta name (once, in place)
+void MigrateArchiveNames(const std::filesystem::path& cache_dir = {});
 
 // Restores master shaders and pipeline keys if the cache directory is empty
 bool RestoreMasterCacheIfEmpty(const std::filesystem::path& cache_dir = {});

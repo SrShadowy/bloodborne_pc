@@ -89,6 +89,25 @@ bool VerifyArchive(const std::filesystem::path& cache_dir) {
     return true;
 }
 
+void MigrateArchiveNames(const std::filesystem::path& cache_dir_param) {
+    std::filesystem::path cache_dir = cache_dir_param;
+    if (cache_dir.empty()) {
+        const auto serial = Common::ElfInfo::Instance().GameSerial();
+        const std::string s = serial.empty() ? "CUSA03173" : std::string(serial);
+        cache_dir = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / s;
+    }
+    std::error_code ec;
+    const auto legacy = cache_dir / ARCHIVE_METADATA_NAME_LEGACY;
+    const auto current = cache_dir / ARCHIVE_METADATA_NAME;
+    if (std::filesystem::exists(legacy, ec) && !std::filesystem::exists(current, ec)) {
+        std::filesystem::rename(legacy, current, ec);
+        if (!ec) {
+            std::printf("BbShaderPack: migrated %s to %s\n", ARCHIVE_METADATA_NAME_LEGACY,
+                        ARCHIVE_METADATA_NAME);
+        }
+    }
+}
+
 bool PackDirectory(const std::filesystem::path& cache_dir, const std::string& title_id) {
     if (!std::filesystem::exists(cache_dir)) return false;
 
@@ -215,6 +234,8 @@ bool PackDirectory(const std::filesystem::path& cache_dir, const std::string& ti
     std::filesystem::rename(tmp_idx, cache_dir / ARCHIVE_INDEX_NAME, ec);
     std::filesystem::rename(tmp_spv, cache_dir / ARCHIVE_SHADERS_NAME, ec);
     std::filesystem::rename(tmp_meta, cache_dir / ARCHIVE_METADATA_NAME, ec);
+    // The pre-rename archive name must not linger: BlobStore's *.meta glob would re-import it.
+    std::filesystem::remove(cache_dir / ARCHIVE_METADATA_NAME_LEGACY, ec);
     return !ec;
 }
 
@@ -227,6 +248,7 @@ bool RestoreMasterCacheIfEmpty(const std::filesystem::path& cache_dir_param) {
     }
     std::error_code ec;
     std::filesystem::create_directories(cache_dir, ec);
+    MigrateArchiveNames(cache_dir);
 
     std::vector<std::filesystem::path> candidates;
     if (const char* port_dir = std::getenv("BB_PORT_DIR")) {
@@ -244,9 +266,14 @@ bool RestoreMasterCacheIfEmpty(const std::filesystem::path& cache_dir_param) {
             std::filesystem::weakly_canonical(cand, ec) != std::filesystem::weakly_canonical(cache_dir, ec)) {
             for (const auto& entry : std::filesystem::directory_iterator(cand, ec)) {
                 const auto ext = entry.path().extension();
-                if (ext == ".pack" || ext == ".idx" || ext == ".meta" || ext == ".key" ||
-                    ext == ".spv" || ext == ".bin") {
-                    if (std::filesystem::copy_file(entry.path(), cache_dir / entry.path().filename(),
+                if (ext == ".pack" || ext == ".idx" || ext == ".meta" || ext == ".bmeta" ||
+                    ext == ".key" || ext == ".spv" || ext == ".bin") {
+                    // Masters ship the pre-rename grimoire name; land it under the current one.
+                    auto dest_name = entry.path().filename();
+                    if (dest_name == ARCHIVE_METADATA_NAME_LEGACY) {
+                        dest_name = ARCHIVE_METADATA_NAME;
+                    }
+                    if (std::filesystem::copy_file(entry.path(), cache_dir / dest_name,
                                                    std::filesystem::copy_options::skip_existing, ec)) {
                         merged++;
                     }

@@ -32,7 +32,11 @@ data=${BB_DATA_DIR:-.}
 export BB_GPU_USER_DIR=${BB_GPU_USER_DIR:-${BB_USER_DIR:-$data/user}}
 user_dir="$BB_GPU_USER_DIR"
 cache_dir="$user_dir/cache/CUSA03173"
-if [[ ${1:-} == --precompile-shaders ]] || [[ ! -f "$cache_dir/pipeline_driver.cache" && ${BB_NO_PRECOMPILE:-0} != 1 && -z "${BB_PROBE:-}" ]]; then
+# The reconstruct-test saves a header-only (36-byte) driver cache, so a plain -f check would
+# close this gate forever. Treat <4 KiB as cold: the precompile splash keeps running until the
+# game itself writes a real driver cache blob (persistent VkPipelineCache, extra/).
+driver_cache_size=$(stat -c%s "$cache_dir/pipeline_driver.cache" 2>/dev/null || echo 0)
+if [[ ${1:-} == --precompile-shaders ]] || [[ "$driver_cache_size" -lt 4096 && ${BB_NO_PRECOMPILE:-0} != 1 && -z "${BB_PROBE:-}" ]]; then
     is_manual_precompile=0
     if [[ ${1:-} == --precompile-shaders ]]; then
         shift

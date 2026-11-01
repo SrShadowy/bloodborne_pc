@@ -128,6 +128,11 @@ int main(int argc, char** argv) {
                                               : (driver_status.loaded ? "WARM CACHE (Driver Cache Hit)" : "COLD COMPILE (No Driver Cache File)"));
         std::printf("Driver Cache Blob:          %s (%zu bytes)\n",
                     driver_status.loaded ? "LOADED [HIT]" : "NOT LOADED [MISS]", driver_status.size_bytes);
+        std::printf("Pipeline Creation Stats:    creates=%llu hits=%llu valid=%llu compile_time=%.0f ms%s\n",
+                    (unsigned long long)driver_status.creates, (unsigned long long)driver_status.hits,
+                    (unsigned long long)driver_status.feedback_valid,
+                    driver_status.compile_ns / 1000000.0,
+                    driver_status.feedback_armed ? " [feedback armed]" : " [feedback off]");
         std::printf("--------------------------------------------------------------------------------\n");
         std::printf("TIMING BREAKDOWN:\n");
         std::printf("  1. Disk & Keys Scan (T_io):        %8.3f s\n", io_sec);
@@ -145,6 +150,34 @@ int main(int argc, char** argv) {
                     avg_us_per_pipe, avg_us_per_pipe / 1000.0);
         std::printf("  Unique Shaders Registered:         %u\n", stats.unique_shaders);
         std::printf("--------------------------------------------------------------------------------\n");
+
+        // [extra] offline check of the feedback accounting (fake driver flags, real counters): a
+        // valid+hit feedback with a driver duration must land as one create/hit/valid + exactly
+        // that duration (not the wall time), and an unarmed attach must not touch pNext at all.
+        {
+            vk::PipelineCreationFeedback data{}; // the report struct the driver would fill
+            data.flags = vk::PipelineCreationFeedbackFlagBitsEXT::eValid |
+                         vk::PipelineCreationFeedbackFlagBitsEXT::eApplicationPipelineCacheHit;
+            data.duration = 42000;
+            vk::PipelineCreationFeedbackCreateInfoEXT fb{};
+            fb.pPipelineCreationFeedback = &data;
+            BbVkPipelineStats::RecordCreate(fb, 1000); // wall fallback must NOT be taken
+
+            vk::ComputePipelineCreateInfo ci{}; // empty pNext: armed attach chains, unarmed leaves it
+            vk::PipelineCreationFeedbackCreateInfoEXT chained{};
+            vk::PipelineCreationFeedback chained_data{};
+            const bool armed = BbVkPipelineStats::AttachForCreate(ci, chained, chained_data);
+
+            const auto st = BbVkPipelineStats::GetStats();
+            const bool accounting_ok = st.creates >= 1 && st.hits >= 1 && st.feedback_valid >= 1 &&
+                                       st.compile_ns >= 42000;
+            const bool chain_ok = !armed || (ci.pNext == &chained &&
+                                   chained.sType == vk::StructureType::ePipelineCreationFeedbackCreateInfoEXT &&
+                                   chained.pPipelineCreationFeedback == &chained_data);
+            std::printf("Pipeline Feedback Self-Test: accounting=%s pNext-chaining=%s%s\n",
+                        accounting_ok ? "OK" : "FAIL", chain_ok ? "OK" : "FAIL",
+                        armed ? "" : " [feedback off: BB_PIPELINE_STATS=1 arms the extension]");
+        }
 
         // Phase 4: Packing Hunter's Grimoire (Portable 3-File Archive)
         std::printf("[Audit 4/4] Consolidating portable Grimoire assets...\n");

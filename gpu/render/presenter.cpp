@@ -657,6 +657,7 @@ void Presenter::RecordPresent(vk::CommandBuffer cmdbuf, const Frame* frame, vk::
 }
 
 void Presenter::Present(Frame* frame, bool is_reusing_frame, bool) {
+    BbVkPipelineCache::FlushTick(); // [extra] periodic driver-cache persistence
     BbTimeline::Note(BbTimeline::PresentBegin);
     const auto release = [&] {
         if (!is_reusing_frame) {

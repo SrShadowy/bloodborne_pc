@@ -92,6 +92,7 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_PAD_DEADZONE_OUTER` | =N (default 127): stick outer limit |
 | `BB_PAD_MOTION` | =0 / 1: motion sensor emulation (over bbport.ini pad_motion) |
 | `BB_PATCHES` | =name,...: extra patches by name (patches.py) |
+| `BB_PIPELINE_STATS` | =1: per-pipeline creation feedback (hit-rate and compile-time counters) |
 | `BB_PREUPLOAD` | =1: preupload assets before gameplay |
 | `BB_PROCESS_PRIORITY` | =normal / above / high: process priority on Windows (default above) |
 | `BB_REACTIVE` | =1: FSR reactive mask (the menu's) |

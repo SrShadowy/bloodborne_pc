@@ -49,6 +49,30 @@ uintptr_t runtime_memory_resolve(const char*) { std::abort(); }
 void runtime_wait_report(double) {}
 void runtime_sleep_stats(uint64_t* calls, uint64_t* ns) { *calls = 0; *ns = 0; }
 uint64_t runtime_heap_growths() { return 0; }
+// [extra] upstream 0.7 runtime imports (no guest process in tests): the failure/benign returns are
+// what every caller already takes as "no guest memory / no active save" (BbMapNear::Map nullptr,
+// HeapGrow* skip, ActiveSave false, MakeUdmabuf fd<0, frame_stats fd<0 and zeroed trap stats).
+void* runtime_low_map(size_t, int) { return nullptr; }
+const char* runtime_file_user_dir() { return ""; }
+int runtime_memory_commit(uint64_t, uint64_t) { return -1; }
+int runtime_memory_decommit(uint64_t, uint64_t) { return -1; }
+int runtime_memory_deferred(uint64_t*, uint64_t*) { return 0; }
+int runtime_memory_pool_fd() { return -1; }
+void runtime_memory_commit_ahead(uint64_t, uint64_t) {}
+void runtime_memory_discard_direct(uint64_t, uint64_t) {}
+void runtime_memory_note_pinned(uint64_t, uint64_t) {}
+void runtime_memory_set_grow(const uint64_t*, uint64_t) {}
+void runtime_memory_set_guest_chunk_free(void (*)(uint64_t, uint64_t)) {}
+void runtime_memory_set_guest_chunk_private(int (*)(uint64_t, uint64_t, void*)) {}
+void runtime_memory_set_guest_lazy(int) {}
+void runtime_memory_set_host_only_allocations(uint64_t) {}
+void runtime_memory_trap_stats(uint64_t* w, uint64_t* a, uint64_t* c, uint64_t* b) {
+    if (w) *w = 0;
+    if (a) *a = 0;
+    if (c) *c = 0;
+    if (b) *b = 0;
+}
+int runtime_savedata_active_slot(char* dir, size_t) { if (dir) dir[0] = 0; return -1; } // [extra]
 }
 // Input prompts and reverse-engineering watches (no pad, no game files here).
 extern "C" {

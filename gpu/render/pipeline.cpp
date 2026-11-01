@@ -19,6 +19,7 @@
 #include "render/pipeline_cache.h"
 #include "vulkan/instance.h"
 #include "vulkan/shader_module.h"
+#include "extra/hooks.h" // [extra]
 
 namespace Vulkan {
 
@@ -242,7 +243,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     stages[u32(Shader::SwStage::Compute)] = &info;
     const auto debug_name = GetDebugString();
     CreateLayouts(vk::ShaderStageFlagBits::eCompute, "Compute", debug_name);
-    const vk::ComputePipelineCreateInfo pipeline_ci{
+    vk::ComputePipelineCreateInfo pipeline_ci{ // [extra] mutable: the guard chains creation feedback
         .stage =
             {
                 .pNext = instance.IsSubgroupSize64Supported() ? &Wave64 : nullptr,
@@ -252,6 +253,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
             },
         .layout = *pipeline_layout,
     };
+    const BbVkPipelineCache::PipelineCreateGuard create_guard{pipeline_ci}; // [extra]
     pipeline = CheckPipeline(instance.GetDevice().createComputePipelineUnique(pipeline_cache,
                                                                               pipeline_ci),
                              preloading, "compute");
@@ -565,7 +567,7 @@ GraphicsPipeline::GraphicsPipeline(
     // Required without extended dynamic state 3 (it is all dynamic in practice).
     constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_info{};
 
-    const vk::GraphicsPipelineCreateInfo pipeline_ci{
+    vk::GraphicsPipelineCreateInfo pipeline_ci{ // [extra] mutable: the guard chains creation feedback
         .pNext = &rendering_ci,
         .stageCount = static_cast<u32>(shaders.size()),
         .pStages = shaders.data(),
@@ -581,6 +583,7 @@ GraphicsPipeline::GraphicsPipeline(
         .pDynamicState = &dynamic_info,
         .layout = *pipeline_layout,
     };
+    const BbVkPipelineCache::PipelineCreateGuard create_guard{pipeline_ci}; // [extra]
     pipeline = CheckPipeline(device.createGraphicsPipelineUnique(pipeline_cache, pipeline_ci),
                              preloading, "graphics");
     SetObjectName(device, *pipeline, "Graphics Pipeline {}", debug_name);

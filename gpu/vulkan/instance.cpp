@@ -20,6 +20,7 @@
 #include "sdl_window.h"
 #include "upscale/vk_dlss.h"
 #include "bbport_memory_dev.h" // [extra]
+#include "extra/core/shader_precompile/bbport_vk_pipeline_stats.h" // [extra]
 
 namespace Vulkan {
 
@@ -296,6 +297,7 @@ void Instance::CreateDevice() {
           VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME}) {
         ASSERT_MSG(enable(required), "the GPU lacks the Vulkan extension {}", required);
     }
+    BbVkPipelineStats::HookDeviceExtension(has, enable); // [extra] creation feedback (BB_PIPELINE_STATS)
     const auto& robustness = query.get<vk::PhysicalDeviceRobustness2FeaturesEXT>();
     ASSERT_MSG(robustness.robustBufferAccess2 && robustness.robustImageAccess2 &&
                    robustness.nullDescriptor,
