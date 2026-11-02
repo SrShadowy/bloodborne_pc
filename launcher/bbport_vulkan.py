@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -195,6 +196,57 @@ def system_driver_closure(driver, library_dirs):
     return resolved
 
 
+def runtime_vulkan_dir(env, category):
+    """An ephemeral directory in volatile memory for driver libraries exposed to the package.
+
+    Uses volatile runtime memory ($XDG_RUNTIME_DIR or /tmp in tmpfs/RAM) to prevent
+    stale symlinks from rotting on disk across OS/driver updates. Honors BB_DATA_DIR (e.g. in tests).
+    """
+    if "BB_DATA_DIR" in env:
+        base = Path(env["BB_DATA_DIR"]) / "vulkan" / category
+    else:
+        # Purge legacy persistent disk cache if found in user's XDG_DATA_HOME (~/.local/share/bbport)
+        legacy = Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "bbport" / "vulkan"
+        if legacy.exists():
+            try:
+                shutil.rmtree(legacy, ignore_errors=True)
+            except OSError:
+                pass
+        runtime_base = Path(env.get("XDG_RUNTIME_DIR") or "/tmp")
+        base = runtime_base / f"bbport_vulkan_{os.getuid()}" / "vulkan" / category
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def link_driver_libraries(libraries, sources):
+    """Link driver libraries into a target directory, updating or pruning links cleanly on every run."""
+    libraries.mkdir(parents=True, exist_ok=True)
+    names = set()
+    for source in sources:
+        if source.name in names or not elf64(source):
+            continue
+        names.add(source.name)
+        link = libraries / source.name
+        # If link is already a symlink pointing to the exact resolved target, keep it
+        if link.is_symlink():
+            try:
+                if link.resolve() == source.resolve():
+                    continue
+            except OSError:
+                pass
+            link.unlink(missing_ok=True)
+        try:
+            link.symlink_to(source.resolve())
+        except FileExistsError:
+            link.unlink(missing_ok=True)
+            link.symlink_to(source.resolve())
+
+    # Prune any existing files or dead symlinks that are no longer part of active sources
+    for existing in list(libraries.iterdir()):
+        if existing.name not in names or (existing.is_symlink() and not existing.exists()):
+            existing.unlink(missing_ok=True)
+
+
 def expose_system_drivers(env, manifest_dirs, library_dirs, bundled):
     """The minimal package: the host's own AMD/Intel drivers, loadable inside the AppImage.
 
@@ -206,21 +258,12 @@ def expose_system_drivers(env, manifest_dirs, library_dirs, bundled):
     icds = host_system_icds(manifest_dirs, library_dirs)
     if not icds:
         return None
-    data_dir = Path(env.get("BB_DATA_DIR") or
-                    str(Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "bbport"))
-    # One cache for the set of installed drivers: their versions and mtimes decide its name.
-    fingerprint = ":".join(f"{driver}:{driver.stat().st_mtime_ns}" for _, _, driver in icds)
-    key = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
-    cache = data_dir / "vulkan" / "system" / key
+    cache = runtime_vulkan_dir(env, "system")
     libraries = cache / "lib"
-    libraries.mkdir(parents=True, exist_ok=True)
+    all_sources = []
     for _, _, driver in icds:
-        for source in system_driver_closure(driver, library_dirs):
-            link = libraries / source.name
-            try:
-                link.symlink_to(source.resolve())
-            except FileExistsError:
-                pass
+        all_sources.extend(system_driver_closure(driver, library_dirs))
+    link_driver_libraries(libraries, all_sources)
     manifests = []
     for name, data, driver in icds:
         data["ICD"]["library_path"] = str(libraries / driver.name)
@@ -276,14 +319,8 @@ def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS,
                 or "Vulkan: system drivers (no bundled Mesa); no accessible NVIDIA ICD found")
 
     data, driver = found
-    # The driver version/path and mtime give each installed driver its own small
-    # cache. exec preserves process/signal behavior; the cache survives launch.
-    key = hashlib.sha256(f"{driver}:{driver.stat().st_mtime_ns}".encode()).hexdigest()[:16]
-    data_dir = Path(env.get("BB_DATA_DIR") or
-                    str(Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "bbport"))
-    cache = data_dir / "vulkan" / "nvidia" / key
+    cache = runtime_vulkan_dir(env, "nvidia")
     libraries = cache / "lib"
-    libraries.mkdir(parents=True, exist_ok=True)
     # NVIDIA dlopens versioned shader/compiler libraries at runtime, so expose
     # the driver's siblings as well as its ICD. Never link generic host libs.
     sources = [driver]
@@ -295,16 +332,7 @@ def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS,
         for pattern in ("libnvidia-*.so*", "libGLX_nvidia.so*", "libEGL_nvidia.so*",
                         "libcuda.so*"):
             sources.extend(sorted(directory.glob(pattern)))
-    names = set()
-    for source in sources:
-        if source.name in names or not elf64(source):
-            continue
-        names.add(source.name)
-        link = libraries / source.name
-        try:
-            link.symlink_to(source.resolve())
-        except FileExistsError:
-            pass
+    link_driver_libraries(libraries, sources)
     # Keep the manifest's API/architecture metadata, replace its library path.
     data["ICD"]["library_path"] = str(libraries / driver.name)
     manifest = cache / "nvidia_icd.json"
@@ -333,10 +361,18 @@ def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS,
         if backend:
             gbm = cache / "gbm"
             gbm.mkdir(exist_ok=True)
+            link = gbm / backend.name
+            if link.is_symlink():
+                try:
+                    if link.resolve() != backend.resolve():
+                        link.unlink(missing_ok=True)
+                except OSError:
+                    link.unlink(missing_ok=True)
             try:
-                (gbm / backend.name).symlink_to(backend.resolve())
+                link.symlink_to(backend.resolve())
             except FileExistsError:
-                pass
+                link.unlink(missing_ok=True)
+                link.symlink_to(backend.resolve())
             env["GBM_BACKENDS_PATH"] = f"{gbm}:/run/opengl-driver/lib/gbm"
     return f"Vulkan: host NVIDIA driver {driver}; bundled AMD/Intel also available"
 

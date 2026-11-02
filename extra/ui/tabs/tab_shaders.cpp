@@ -6,7 +6,6 @@
 #include "ui_strings.h"
 #include "extra/core/shader_precompile/bbport_shader_discovery.h"
 #include "extra/core/shader_precompile/bbport_shader_pack.h"
-#include "extra/core/shader_precompile/bbport_static_catalog.h"
 #include "common/path_util.h"
 
 #include <imgui.h>
@@ -113,13 +112,7 @@ void TabShaders::Render() {
             ImGui::EndTabItem();
         }
 
-        // Tab 4: Static Catalog & Coverage
-        if (ImGui::BeginTabItem(L("Static Catalog###StaticTab", "Catalogo Estatico###StaticTab"))) {
-            TabShadersViews::RenderStaticCatalog();
-            ImGui::EndTabItem();
-        }
-
-        // Tab 5: Diagnostics & Export
+        // Tab 4: Diagnostics & Export
         if (ImGui::BeginTabItem(L("Diagnostics & Export###DiagnosticsTab", "Diagnostico & Exportacao###DiagnosticsTab"))) {
             TabShadersViews::RenderDiagnostics(cache_dir);
             ImGui::EndTabItem();

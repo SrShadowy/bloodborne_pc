@@ -1185,6 +1185,10 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         s["online_npid"] = self.npid_row.get_text().strip()
         s["online_password"] = self.password_row.get_text()
         s["online_upnp"] = self.upnp_row.get_active()
+        s["p2p_relay"] = self.p2p_relay_row.get_active()
+        s["p2p_gen19"] = self.p2p_gen19_row.get_active()
+        s["discord_client_id"] = (self.discord_cid_row.get_text().strip()
+                                  or DISCORD_CLIENT_ID)
         s["online_pool"] = self.online_pool()
         s["thd_server"] = self.thd_server_row.get_text().strip()
         s["thd_online_id"], s["thd_token"] = self.thd_id, self.thd_token
@@ -1210,6 +1214,10 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             "aspect_ratio": combo_value(self.aspect_row),
             "output_res": combo_value(self.output_row),
             "video_backend": combo_value(self.video_backend_row),
+            "p2p_relay": "1" if self.p2p_relay_row.get_active() else "0",
+            "p2p_gen19": "1" if self.p2p_gen19_row.get_active() else "0",
+            "discord_client_id": (self.discord_cid_row.get_text().strip()
+                                  or DISCORD_CLIENT_ID),
             "model_lod": combo_value(self.lod_row),
             "texture_quality": combo_value(self.texture_row),
             "mouse_look": "1" if self.mouse_look_row.get_active() else "0",

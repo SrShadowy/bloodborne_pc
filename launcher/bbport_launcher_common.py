@@ -231,13 +231,25 @@ DEFAULTS = {
     "online_npid": "",
     "online_password": "",
     "online_upnp": True,
+    # libbbnet20's BBR1 UDP relay fallback: on is its default (every known peer through the relay),
+    # off forces direct P2P (SHADPS4_P2P_RELAY=0 in game_environment).
+    "p2p_relay": True,
+    # Gen 19 (shadp2p 0.6.x) P2P framing inside libbbnet20 (BB_NET_GEN=19). Off keeps the 0.20
+    # wire format, the module's default. 0.19 has no P2P TCP, digest or payload crypto.
+    "p2p_gen19": False,
     # The pool, both in the online module gpu/bbnet20: "seamless" (shadNet with BBSC) or "huntersdream"
     # (The Hunter's Dream, bbhost's protocol; the account comes from the Discord sign-in).
     "online_pool": "seamless",
     "thd_server": "",
     "thd_online_id": "",
     "thd_token": "",
+    # Discord Rich Presence application ID (bbport.ini discord_client_id, read by
+    # gpu/shim/bbport_settings.cpp and extra/contact/rpc/bbport_discord_rpc.cpp).
+    "discord_client_id": "1560890616811102219",
 }
+
+# The Discord application of the port (same default as bbport_settings.h).
+DISCORD_CLIENT_ID = "1560890616811102219"
 
 # bbport.ini keys the launcher edits; the rest of the file is kept.
 INI_DEFAULTS = {
@@ -262,6 +274,9 @@ INI_DEFAULTS = {
     "button_prompts": "auto",
     "game_text_language": "auto",
     "game_voice_language": "auto",
+    "p2p_relay": "1",
+    "p2p_gen19": "0",
+    "discord_client_id": DISCORD_CLIENT_ID,
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 
@@ -482,6 +497,14 @@ def game_environment(s):
         env["BB_FRAME_STATS"] = "1"
     if s.get("save_log"):
         env["BB_SAVE_LOG"] = "1"
+    # The P2P relay fallback of libbbnet20 (BBR1): the module reads SHADPS4_P2P_RELAY, off forces
+    # direct UDP only. On leaves the module's default (every known peer through the relay).
+    relay = s.get("p2p_relay", True)
+    if relay is False or str(relay).strip().lower() in ("0", "false", "off"):
+        env["SHADPS4_P2P_RELAY"] = "0"
+        env["BB_P2P_RELAY"] = "0"
+    else:
+        env["BB_P2P_RELAY"] = "1"
     # The GPU chosen by name: its index in Vulkan's order now (BB_GPU_ID). One not found (taken
     # out, renamed by a driver update) leaves the choice to the port. BB_GPU_ID from the shell
     # wins.
@@ -509,14 +532,26 @@ def game_environment(s):
         env["BB_SHADNET_PASSWORD"] = s["online_password"]
         env["BB_UPNP"] = "1" if s["online_upnp"] else "0"
         env["BB_COMMUNITY_SERVER"] = community
+        # The Gen 19 checkbox selects the P2P framing of libbbnet20 for this whole session.
+        env["BB_NET_GEN"] = "19" if s.get("p2p_gen19") else "20"
         if pool == "seamless" and s.get("online_bbsc"):
             env["BB_BBSC"] = "1"
         if pool == "huntersdream":
             # run.sh turns these into the backend's addresses and the host overrides.
             env["BB_NET_BACKEND"] = "thd"
             env["BB_COMMUNITY_SERVER"] = online.thd_base(s.get("thd_server", ""))
-            env["BB_THD_ONLINE_ID"] = s.get("thd_online_id", "")
-            env["BB_THD_TOKEN"] = s.get("thd_token", "")
+            thd_id = s.get("thd_online_id", "")
+            thd_token = s.get("thd_token", "")
+            if not thd_id or not thd_token:
+                # The sign-in also lands in account.json (the launcher's file); a settings file
+                # that lost the token still plays with the account it recorded there.
+                try:
+                    import bbport_hosts as hosts
+                    thd_id, thd_token = hosts.load_account(CONFIG_DIR / "account.json")
+                except Exception:
+                    pass
+            env["BB_THD_ONLINE_ID"] = thd_id
+            env["BB_THD_TOKEN"] = thd_token
     if trophy_list.valid_key(s.get("trophy_key", "")):
         env["BB_TROPHY_KEY"] = s["trophy_key"].strip()
     if s.get("memory_preset"):

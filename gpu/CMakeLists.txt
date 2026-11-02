@@ -276,6 +276,8 @@ file(GLOB_RECURSE EXTRA_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/*.c)
 list(FILTER EXTRA_SOURCES EXCLUDE REGEX "extra/hosts/")
+# Gen 19 P2P codec: libbbnet20 only, it uses that module's private headers. # [extra]
+list(FILTER EXTRA_SOURCES EXCLUDE REGEX "extra/net/bbport_p2p_legacy\\.cpp$") # [extra]
 target_sources(bbgpu PRIVATE ${EXTRA_SOURCES})
 # Dear ImGui stays private to libbbgpu.so. The library is linked into bb-probe, so its exports are
 # in the global symbol scope; a Vulkan layer carrying its own Dear ImGui without -Bsymbolic

@@ -6,7 +6,6 @@
 #include <string>
 
 #include "extra/core/shader_precompile/bbport_shader_discovery.h"
-#include "extra/core/shader_precompile/bbport_static_catalog.h"
 #include "extra/core/shader_precompile/bbport_compile_queue.h"
 
 int main() {
@@ -117,27 +116,7 @@ int main() {
 
     std::filesystem::remove_all(test_dir);
 
-    // 6. Test BbStaticCatalog
-    if (std::filesystem::exists("dist/user/cache/CUSA03173/static_shader_catalog.json")) {
-        assert(BbStaticCatalog::AutoLoad("dist/user/cache/CUSA03173"));
-        assert(BbStaticCatalog::IsLoaded());
-        assert(BbStaticCatalog::GetTotalStaticShaders() == 4376);
-        assert(BbStaticCatalog::GetTotalStaticInstances() == 20218);
-
-        // Verify a known static shader (0x6320bb24 from gxshader.shaderbnd.dcx)
-        assert(BbStaticCatalog::IsKnownStatic(0x000000006320bb24ULL));
-        BbStaticCatalog::StaticShaderInfo sinfo{};
-        assert(BbStaticCatalog::FindStaticShader(0x000000006320bb24ULL, sinfo));
-        assert(sinfo.stage == "Vertex");
-
-        BbStaticCatalog::RecordRuntimeShader(0x000000006320bb24ULL);
-        assert(BbStaticCatalog::GetDiscoveredStaticCount() >= 1);
-        assert(BbStaticCatalog::GetStaticCoveragePercentage() > 0.0f);
-        std::printf("test_shader_discovery: static catalog coverage: %.2f%%\n",
-                    BbStaticCatalog::GetStaticCoveragePercentage());
-    }
-
-    // 7. Test BbCompileQueue
+    // 6. Test BbCompileQueue
     BbCompileQueue::Init(2);
     assert(BbCompileQueue::IsRunning());
     BbCompileQueue::EnqueueTask(0x11223344ULL, 0, "Central Yharnam");

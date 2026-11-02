@@ -20,6 +20,7 @@
 #include "core/libraries/net/net_translate.h"
 #include "core/net/guest_net.h"
 #include "core/net/p2p_codec.h"
+#include "extra/net/bbport_p2p_legacy.h" // [extra]
 
 namespace Libraries::Net {
 
@@ -90,7 +91,7 @@ u16 StartLocked(P2PState& state, u16 udp_port, bool allow_fallback) {
     config.signaling_channels = ChannelCount;
     config.classify_signaling = ClassifySignaling;
     const auto try_port = [&](u16 port, Error* error) {
-        auto codec = std::make_unique<P2P::FramingCodec>(state.keyring, LogBroadcast);
+        auto codec = Extra::Net::MakeP2PCodec(state.keyring, LogBroadcast); // [extra]
         return P2P::Transport::Create(AF_INET, P2P::Endpoint::IPv4("0.0.0.0", port),
                                       std::move(codec), config, error);
     };

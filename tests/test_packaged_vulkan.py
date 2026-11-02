@@ -261,6 +261,47 @@ class PackagedVulkanTests(unittest.TestCase):
         self.configure()
         self.assertEqual(vulkan.nvidia_report(self.env, "vulkaninfo", None), [])
 
+    def test_host_nvidia_driver_update_prunes_stale_links_and_updates_active(self):
+        # Simulates host OS updating driver from version 1 to version 2 (e.g. Bazzite/Fedora)
+        driver_v1 = self.library("libGLX_nvidia.so.615.71.09")
+        symlink_0 = self.libs / "libGLX_nvidia.so.0"
+        symlink_0.symlink_to(driver_v1.name)
+        glcore_v1 = self.library("libnvidia-glcore.so.615.71.09")
+        egl_v1 = self.library("libEGL_nvidia.so.615.71.09")
+        egl_symlink = self.libs / "libEGL_nvidia.so.0"
+        egl_symlink.symlink_to(egl_v1.name)
+        self.manifest()
+        self.configure()
+
+        cache = Path(self.env["LD_LIBRARY_PATH"].split(":")[0])
+        self.assertEqual((cache / "libGLX_nvidia.so.0").resolve(), driver_v1)
+        self.assertEqual((cache / "libEGL_nvidia.so.0").resolve(), egl_v1)
+        self.assertTrue((cache / glcore_v1.name).exists())
+
+        # Update driver on host: delete v1 files, create v2 files
+        driver_v1.unlink()
+        glcore_v1.unlink()
+        egl_v1.unlink()
+        symlink_0.unlink()
+        egl_symlink.unlink()
+
+        driver_v2 = self.library("libGLX_nvidia.so.615.78.08")
+        symlink_0.symlink_to(driver_v2.name)
+        glcore_v2 = self.library("libnvidia-glcore.so.615.78.08")
+        egl_v2 = self.library("libEGL_nvidia.so.615.78.08")
+        egl_symlink.symlink_to(egl_v2.name)
+
+        # Run configure again: stale links must be replaced or purged, no dead links remain
+        del self.env["VK_DRIVER_FILES"]
+        self.env["LD_LIBRARY_PATH"] = "/bundled/lib"
+        self.configure()
+        self.assertEqual((cache / "libGLX_nvidia.so.0").resolve(), driver_v2)
+        self.assertEqual((cache / "libEGL_nvidia.so.0").resolve(), egl_v2)
+        self.assertTrue((cache / glcore_v2.name).exists())
+        self.assertFalse((cache / glcore_v1.name).exists())
+        for link in cache.iterdir():
+            self.assertTrue(link.exists(), f"Found broken/MISSING symlink in cache: {link}")
+
 
 class PressureVesselTests(PackagedVulkanTests):
     """Steam's Game Mode (pressure-vessel) sets Vulkan variables of its own (#172)."""
@@ -373,3 +414,4 @@ class SystemDriverTests(unittest.TestCase):
         self.assertIn("host NVIDIA", self.configure())
         self.assertIn("/vulkan/nvidia/", self.env["VK_DRIVER_FILES"])
         self.assertNotIn("/vulkan/system/", self.env["VK_DRIVER_FILES"])
+

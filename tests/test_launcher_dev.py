@@ -298,6 +298,120 @@ class LauncherDevUITests(unittest.TestCase):
         self.assertEqual(env_off.get("BB_P2P_RELAY"), "0")
         self.assertEqual(env_off.get("SHADPS4_P2P_RELAY"), "0")
 
+    def test_p2p_relay_in_active_launcher_env(self):
+        # The active launcher page (OnlinePage) builds its env in bbport_launcher_common, not in
+        # bbport_config: the relay toggle has to reach libbbnet20 there.
+        import bbport_launcher_common as common
+        self.assertIn("p2p_relay", common.DEFAULTS)
+        self.assertTrue(common.DEFAULTS["p2p_relay"])
+        self.assertEqual(common.INI_DEFAULTS.get("p2p_relay"), "1")
+
+        s_on = dict(common.DEFAULTS)
+        env_on = common.game_environment(s_on)
+        self.assertNotIn("SHADPS4_P2P_RELAY", env_on)
+        self.assertEqual(env_on.get("BB_P2P_RELAY"), "1")
+
+        s_off = dict(common.DEFAULTS)
+        s_off["p2p_relay"] = False
+        env_off = common.game_environment(s_off)
+        self.assertEqual(env_off.get("SHADPS4_P2P_RELAY"), "0")
+        self.assertEqual(env_off.get("BB_P2P_RELAY"), "0")
+
+    def test_p2p_gen19_setting_and_env(self):
+        # The Gen 19 checkbox is off by default and only overrides the module's 0.20 codec when
+        # enabled; BB_NET_GEN is exported only with online play.
+        import os
+        from unittest import mock
+        import bbport_launcher_common as common
+        self.assertIn("p2p_gen19", common.DEFAULTS)
+        self.assertFalse(common.DEFAULTS["p2p_gen19"])
+        self.assertEqual(common.INI_DEFAULTS.get("p2p_gen19"), "0")
+
+        with mock.patch.object(common, "online_module", lambda pool="seamless": True):
+            s_off = dict(common.DEFAULTS)
+            s_off.update({"online": True, "p2p_gen19": False})
+            env_off = common.game_environment(s_off)
+            self.assertEqual(env_off.get("BB_NET_GEN"), "20")
+
+            s_on = dict(common.DEFAULTS)
+            s_on.update({"online": True, "p2p_gen19": True})
+            env_on = common.game_environment(s_on)
+            self.assertEqual(env_on.get("BB_NET_GEN"), "19")
+
+        with mock.patch.dict(os.environ, {"BB_NET_GEN": "19"}):
+            s_offline = dict(common.DEFAULTS)
+            s_offline["online"] = False
+            env_offline = common.game_environment(s_offline)
+            self.assertEqual(env_offline.get("BB_NET_GEN"), "19")
+
+    def test_p2p_gen19_row(self):
+        from bbport_launcher_online import OnlinePage
+        import bbport_launcher_common as common
+
+        class MockOnline(OnlinePage, MockRunner):
+            pass
+
+        win = MockOnline()
+        win.settings = dict(common.DEFAULTS)
+        win.ini = {}
+        win.build_online_page()
+        self.assertIsNotNone(win.p2p_gen19_row)
+        self.assertFalse(win.p2p_gen19_row.get_active())
+        self.assertIn("Gen 19", win.p2p_gen19_row.get_title())
+
+        win.settings["p2p_gen19"] = True
+        win.build_online_page()
+        self.assertTrue(win.p2p_gen19_row.get_active())
+
+    def test_discord_client_id_setting(self):
+        # The row restored from 0.6.7 writes the ini key gpu/shim/bbport_settings.cpp reads.
+        import bbport_launcher_common as common
+        self.assertEqual(common.DEFAULTS.get("discord_client_id"),
+                         common.DISCORD_CLIENT_ID)
+        self.assertEqual(common.INI_DEFAULTS.get("discord_client_id"),
+                         common.DISCORD_CLIENT_ID)
+
+    def test_thd_account_fallback(self):
+        # A settings file without the THD sign-in still plays with account.json's account.
+        import tempfile
+        from unittest import mock
+        import bbport_launcher_common as common
+        with tempfile.TemporaryDirectory() as tmp:
+            account = Path(tmp) / "account.json"
+            account.write_text('{"OnlineId": "hunter", "Token": "tok"}', encoding="utf-8")
+            s = dict(common.DEFAULTS)
+            s.update({"online": True, "online_pool": "huntersdream",
+                      "thd_online_id": "", "thd_token": ""})
+            with mock.patch.object(common, "CONFIG_DIR", Path(tmp)), \
+                    mock.patch.object(common, "online_module", lambda pool="seamless": True):
+                env = common.game_environment(s)
+                self.assertEqual(env.get("BB_THD_ONLINE_ID"), "hunter")
+                self.assertEqual(env.get("BB_THD_TOKEN"), "tok")
+
+                s["thd_online_id"], s["thd_token"] = "other", "token"
+                env = common.game_environment(s)
+                self.assertEqual(env.get("BB_THD_ONLINE_ID"), "other")
+                self.assertEqual(env.get("BB_THD_TOKEN"), "token")
+
+    def test_online_page_rows(self):
+        # The active page carries the shadNet login check and the Discord Client ID row.
+        from bbport_launcher_online import OnlinePage
+        import bbport_launcher_common as common
+
+        class MockOnline(OnlinePage, MockRunner):
+            pass
+
+        win = MockOnline()
+        win.settings = dict(common.DEFAULTS)
+        win.ini = {"discord_client_id": "123456"}
+        page = win.build_online_page()
+        self.assertIsInstance(page, Adw.PreferencesPage)
+        self.assertIsNotNone(win.shadnet_login_row)
+        self.assertIsNotNone(win.shadnet_login_button)
+        self.assertIsNotNone(win.discord_cid_row)
+        self.assertEqual(win.discord_cid_row.get_text(), "123456")
+        self.assertEqual(win.ini.get("discord_client_id"), "123456")
+
 
 if __name__ == "__main__":
     unittest.main()

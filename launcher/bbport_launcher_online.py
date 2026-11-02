@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """The launcher's online page: server pool, THD account, connection test."""
 
+import bbport_shadnet
+
 from bbport_launcher_common import *  # noqa: F401,F403
 
 
@@ -69,6 +71,14 @@ class OnlinePage:
         self.password_row = Adw.PasswordEntryRow(title=tr("Пароль"), text=s["online_password"])
         account.add(self.npid_row)
         account.add(self.password_row)
+        login = Adw.ActionRow(title=tr("Вход в shadNet (NPID и пароль)"))
+        self.shadnet_login_icon = Gtk.Image(icon_name="dialog-information-symbolic")
+        login.add_prefix(self.shadnet_login_icon)
+        self.shadnet_login_button = Gtk.Button(label=tr("Проверить вход"), valign=Gtk.Align.CENTER)
+        self.shadnet_login_button.connect("clicked", self.on_shadnet_login)
+        login.add_suffix(self.shadnet_login_button)
+        self.shadnet_login_row = login
+        account.add(login)
         self.account_group = account
         page.add(account)
 
@@ -99,6 +109,18 @@ class OnlinePage:
                                       subtitle=tr("Выключите при Tailscale или другом VPN"),
                                       active=s["online_upnp"])
         connection.add(self.upnp_row)
+        self.p2p_relay_row = Adw.SwitchRow(
+            title=tr("Резервный P2P-реле (BBR1)"),
+            subtitle=tr("Отключите для принудительного прямого P2P по UDP и отладки"),
+            active=s.get("p2p_relay", True))
+        connection.add(self.p2p_relay_row)
+        self.p2p_gen19_row = Adw.SwitchRow(
+            title=tr("Совместимость с Gen 19 (shadp2p 0.6.x)"),
+            subtitle=tr("Старый формат P2P-пакетов для пиров 0.6.x и старых сборок Windows. "
+                        "Формат должен совпадать у всех в сессии: в 0.19 нет TCP, digest "
+                        "и шифрования из 0.20"),
+            active=s.get("p2p_gen19", False))
+        connection.add(self.p2p_gen19_row)
         test = Adw.ActionRow(title=tr("Проверить соединение"))
         self.test_button = Gtk.Button(label=tr("Проверить"), valign=Gtk.Align.CENTER)
         self.test_button.connect("clicked", self.on_test_connection)
@@ -107,6 +129,18 @@ class OnlinePage:
         self.test_rows = []
         self.connection_group = connection
         page.add(connection)
+
+        discord_grp = Adw.PreferencesGroup(
+            title="Discord Rich Presence",
+            description=tr("Client ID приложения Discord. По умолчанию: 1560890616811102219 "
+                           "(BloodBorne BBPort). shadPS4: 1139939140494971051"))
+        self.discord_cid_row = Adw.EntryRow(
+            title="Discord Client ID",
+            text=self.ini.get("discord_client_id") or s.get("discord_client_id")
+            or DISCORD_CLIENT_ID)
+        discord_grp.add(self.discord_cid_row)
+        page.add(discord_grp)
+
         self.pool_row.connect("notify::selected", self.on_pool_changed)
         self.on_pool_changed()
         return page
@@ -256,6 +290,46 @@ class OnlinePage:
             return False
 
         threading.Thread(target=lambda: GLib.idle_add(show, online.check_thd(server)), daemon=True).start()
+
+    def on_shadnet_login(self, _button):
+        """One Login to the configured shadNet server: the verdict the game's
+        log would only show once, after a launch."""
+        server = self.server_row.get_text().strip() or online.SHADNET_SERVER
+        npid = self.npid_row.get_text().strip()
+        password = self.password_row.get_text()
+        if not npid or not password:
+            self.set_login_result(tr("Введите Online ID и пароль"),
+                                  "dialog-warning-symbolic", False)
+            return
+        self.shadnet_login_button.set_sensitive(False)
+        self.set_login_result(tr("Проверка…"), "dialog-information-symbolic", True)
+
+        def done(text, ok):
+            self.shadnet_login_button.set_sensitive(True)
+            self.set_login_result(text, "emblem-ok-symbolic" if ok else "dialog-warning-symbolic",
+                                  ok)
+            return False
+
+        def work():
+            try:
+                ok, verdict = bbport_shadnet.check_login(server, npid, password)
+            except bbport_shadnet.ShadnetError as error:
+                GLib.idle_add(done, tr("Ошибка: {}").format(error), False)
+                return
+            message = (tr("Пароль принят: сервер принял вход") if ok
+                       else tr("Сервер отклонил: {}").format(verdict))
+            GLib.idle_add(done, message, ok)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def set_login_result(self, text, icon, ok):
+        """The sign-in check's verdict row: the words, the picture, the class."""
+        self.shadnet_login_row.set_subtitle(text)
+        self.shadnet_login_icon.set_from_icon_name(icon)
+        if ok:
+            self.shadnet_login_row.remove_css_class("error")
+        else:
+            self.shadnet_login_row.add_css_class("error")
 
     # --- trophies page ------------------------------------------------------------------
 

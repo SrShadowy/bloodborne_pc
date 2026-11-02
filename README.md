@@ -337,7 +337,9 @@ Startup discovers the host's installed 64-bit NVIDIA Vulkan ICD and exposes vend
 The online module `out/gpu/libbbnet20.so` (`gpu/bbnet20`: shadPS4 v0.20 network stack, BBSC, and The Hunter's Dream backend) enables multiplayer when configured in the launcher (`BB_ONLINE=1`):
 - **Seamless Hunt** (default): Uses shadNet (`play.seamlesshunt.com:31313`, WebAPI `:31315`) with BBSC game server. Enables bells, summons, messages, bloodstains, and **seamless co-op (BBSC)** where sessions survive deaths, lamps, area transitions, and bosses with up to 5 players. Account registered at https://seamlesshunt.com.
 - **The Hunter's Dream** (thehuntersdream.com): Sign in with Discord from the launcher (code confirmed in browser).
-- The legacy module `libbbnet.so` remains available as fallback via `BB_NET_GEN=19`. Offline play never loads the network module.
+- The P2P relay fallback (BBR1 UDP relay) is on by default in the launcher's Online page; turn it off to force direct P2P over UDP (`SHADPS4_P2P_RELAY=0`).
+- The launcher's shadNet sign-in check answers "is this NPID/password accepted" without launching the game, and the Discord Client ID row sets the `discord_client_id` key of `bbport.ini` (Rich Presence).
+- `libbbnet20.so` speaks the same shadNet protocol v1, BBSC and BBR1 relay as the 0.6.7 module; the removed `libbbnet.so` (Gen 19) is not shipped. Gen 19 and 20 peers differ in the SceNet P2P frame layout: enable **Совместимость с Gen 19 (shadp2p 0.6.x)** (checked off by default, `BB_NET_GEN=19`) to use the 0.6.x `[src vport][dst vport][payload]` framing in the same `libbbnet20.so` for the whole session. Every player in a session must use the same framing. 0.19 has no P2P TCP, communication-ID digest or payload crypto/signature, so those 0.20 protections are absent in this mode. Offline play never loads the network module.
 
 ---
 

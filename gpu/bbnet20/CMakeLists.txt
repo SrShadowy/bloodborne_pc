@@ -31,6 +31,8 @@ list(FILTER BBNET20_SOURCES EXCLUDE REGEX
 # shadPS4's UI (bbsc/bbsc_glue.cpp). Installed only for Bloodborne with BB_BBSC=1.
 file(GLOB BBNET20_BBSC_SOURCES CONFIGURE_DEPENDS bbsc/core/*.cpp bbsc/bbsc_glue.cpp)
 file(GLOB BBNET20_THD_SOURCES CONFIGURE_DEPENDS thd/*.cpp compat/common/*.cpp)
+# Gen 19 (shadp2p 0.6.x) P2P framing, opt-in with BB_NET_GEN=19 (extra/net/; see SHADOW_CHANGES.md). # [extra]
+list(APPEND BBNET20_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../extra/net/bbport_p2p_legacy.cpp") # [extra]
 
 add_library(bbnet20 SHARED ${BBNET20_SOURCES} ${BBNET20_THD_SOURCES} ${BBNET20_BBSC_SOURCES}
     "${SHADNET_PROTO_OUT20}/shadnet.pb.cc" bbnet_glue.cpp)
@@ -66,3 +68,11 @@ else()
     target_link_libraries(bbnet20 PRIVATE bbgpu)
 endif()
 target_include_directories(bbnet20 PRIVATE "${MINIUPNPC_INCLUDE}")
+
+# Golden vectors for the opt-in Gen 19 P2P codec (BB_NET_GEN=19). It compiles the codec alone: # [extra]
+# no crypto, no vendored codec implementation, no shared module. # [extra]
+add_executable(bbnet20-p2p-legacy-test EXCLUDE_FROM_ALL # [extra]
+    ../../tests/test_bbport_p2p_legacy.cpp ../../extra/net/bbport_p2p_legacy.cpp) # [extra]
+target_compile_options(bbnet20-p2p-legacy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror) # [extra]
+target_include_directories(bbnet20-p2p-legacy-test PRIVATE # [extra]
+    .. "${BBNET_VENDOR}" "${CMAKE_CURRENT_SOURCE_DIR}/../..") # [extra]

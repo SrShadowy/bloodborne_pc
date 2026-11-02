@@ -251,12 +251,15 @@ void FlushTick() {
     // One metrics line per lull; the cold arm (BB_SHADER_COLD_RUN) prints it too — that pair
     // is the A/B measurement. hits/valid need BB_PIPELINE_STATS=1 (creation feedback).
     const BbVkPipelineStats::Stats st = BbVkPipelineStats::GetStats();
-    std::printf("[Shaders] VkPipelineCache: session: creates=%llu hits=%llu valid=%llu compile_time=%.0f ms longest=%.1f ms%s\n",
+    std::printf("[Shaders] VkPipelineCache: session: creates=%llu hits=%llu valid=%llu compile_time=%.0f ms longest=%.1f ms%s%s\n",
                 static_cast<unsigned long long>(st.creates),
                 static_cast<unsigned long long>(st.hits),
                 static_cast<unsigned long long>(st.feedback_valid),
                 st.compile_ns / 1000000.0, st.longest_ns / 1000000.0,
-                s_status.cold_forced ? " [cold run: not saved]" : "");
+                s_status.cold_forced ? " [cold run: not saved]" : "",
+                BbVkPipelineStats::s_armed.load(std::memory_order_relaxed)
+                    ? ""
+                    : " [feedback off: hits/valid need BB_PIPELINE_STATS=1]");
     s_stats_line_creates = creates;
 }
 

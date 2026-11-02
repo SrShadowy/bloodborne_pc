@@ -8,7 +8,6 @@
 #include <deque>
 #include <mutex>
 #include <unordered_map>
-#include "bbport_static_catalog.h"
 #include "extra/contact/game_data/bbport_game_data.h"
 
 namespace BbShaderDiscovery {
@@ -41,7 +40,6 @@ struct State {
             s_enabled.store(true, std::memory_order_relaxed);
         }
         initialized = true;
-        BbStaticCatalog::AutoLoad("dist/user/cache");
     }
 };
 
@@ -72,7 +70,6 @@ void RecordShaderCompile(uint64_t pgm_hash, uint32_t hw_stage, uint32_t sw_stage
     const uint64_t key = MakeShaderKey(pgm_hash, perm_idx);
     auto [it, is_new] = state.shaders.try_emplace(key);
     if (is_new) {
-        BbStaticCatalog::RecordRuntimeShader(pgm_hash);
         DiscoveredShader& shader = it->second;
         shader.pgm_hash = pgm_hash;
         shader.hw_stage = hw_stage;

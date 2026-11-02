@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # extra/tools/qa_runner.sh — the full pre-delivery QA gate (AGENTS.md section 2).
-#   [1] audit.sh           extra/ size ratchet + hook-marker check
-#   [2] incremental build  ninja bbgpu + pipeline-reconstruct-test (docker bbport-builder:ubuntu22)
+#   [1] audit.sh           extra/ size ratchet (embedded baseline) + hook-marker check
+#   [2] build              bash build.sh --no-bump + ninja pipeline-reconstruct-test, on the
+#                          HOST: the game's run.sh builds on the host at every launch, so a
+#                          docker build here would keep fighting a manifest the next host
+#                          launch rewrites anyway. Mirrors run.sh's nix-shell re-exec when the
+#                          host shell lacks the toolchain.
 #   [3] runtime smoke      offline pipeline reconstruction in a throwaway sandbox ($BB_QA_DIR,
 #                          default /tmp/opencode/qa_sandbox): exit 0, creation-feedback self-test
 #                          OK, and the driver-cache blob round-trips byte-identical across two
@@ -21,21 +25,23 @@ failst() { echo "FAIL: $*"; fails=$((fails+1)); }
 echo "== [1/3] audit.sh"
 if ./extra/tools/audit.sh; then pass audit; else failst audit; fi
 
-echo "== [2/3] incremental build (bbgpu + pipeline-reconstruct-test)"
+echo "== [2/3] build (bbgpu + pipeline-reconstruct-test, host)"
 b_log=/tmp/opencode/qa_build.log
 build_failed=0
-if ! command -v docker >/dev/null 2>&1; then
-    skip "docker not in PATH"
-elif ! docker image inspect bbport-builder:ubuntu22 >/dev/null 2>&1; then
-    skip "image bbport-builder:ubuntu22 not built"
-elif docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/bbport -w /bbport bbport-builder:ubuntu22 \
-        bash -c 'ninja -C out/gpu bbgpu pipeline-reconstruct-test' >"$b_log" 2>&1; then
+build_all() { bash build.sh --no-bump && ninja -C out/gpu pipeline-reconstruct-test; }
+# run.sh re-execs through nix-shell when the host shell lacks the toolchain; same path here.
+if ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3; } \
+        && command -v nix-shell >/dev/null; then
+    build_all() {
+        env BB_IN_NIX_SHELL=1 nix-shell shell.nix \
+            --run 'bash build.sh --no-bump && ninja -C out/gpu pipeline-reconstruct-test'
+    }
+fi
+if build_all >"$b_log" 2>&1; then
     pass build
 else
     failst "build - tail of $b_log:"
     tail -n 20 "$b_log"
-    echo "note: manifest with host-absolute paths? build.sh self-cleans a mismatched cache:"
-    echo "      bash build.sh --no-bump   (in the container; then re-run this gate)"
     build_failed=1
 fi
 

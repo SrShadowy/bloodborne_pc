@@ -410,6 +410,9 @@ if [[ -z ${BB_ONLINE:-} && -f $BB_CONFIG ]]; then
                 export SHADPS4_P2P_RELAY=0
             fi
         fi
+        if [[ $line =~ ^p2p_gen19=([01])$ ]]; then
+            if [[ ${BASH_REMATCH[1]} == 1 ]]; then export BB_NET_GEN=19; else export BB_NET_GEN=20; fi
+        fi
     done < "$BB_CONFIG"
 fi
 if [[ ${BB_P2P_RELAY:-1} == 0 ]]; then

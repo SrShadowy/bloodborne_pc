@@ -4,7 +4,6 @@
 #include "ui_strings.h"
 #include "extra/core/shader_precompile/bbport_shader_discovery.h"
 #include "extra/core/shader_precompile/bbport_shader_pack.h"
-#include "extra/core/shader_precompile/bbport_static_catalog.h"
 #include "extra/core/shader_precompile/bbport_vk_pipeline_cache.h"
 #include "bbgpu.h"
 #include "render/pipeline_cache_internal.h"
@@ -20,7 +19,6 @@ namespace {
 
 static char s_search_hash[32] = "";
 static bool s_auto_scroll = true;
-static int s_class_filter = 0; // 0 = All, 1 = Match, 2 = Runtime, 3 = Static
 
 const char* StageName(uint32_t s) {
     switch (s) {
@@ -91,7 +89,7 @@ void TabShadersViews::RenderOverview(const std::filesystem::path& cache_dir) {
 
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "[4] %s",
-                       L("Shader Recipes Pack (Upstream 0.7)", "Pacote de Receitas de Shaders (Upstream 0.7)"));
+                       L("Shader Recipes Pack", "Pacote de Receitas de Shaders"));
     std::error_code ec;
     std::filesystem::path recipes_path = "shader_recipes.bin";
     if (const char* env_p = std::getenv("BB_SHADER_RECIPES"); env_p && *env_p) {
@@ -175,14 +173,9 @@ void TabShadersViews::RenderLiveEvents() {
 void TabShadersViews::RenderInventory() {
     ImGui::SetNextItemWidth(180.0f);
     ImGui::InputTextWithHint("##SearchHash", L("Filter hash...", "Filtrar hash..."), s_search_hash, sizeof(s_search_hash));
-    ImGui::SameLine();
-    ImGui::RadioButton(L("All", "Todos"), &s_class_filter, 0); ImGui::SameLine();
-    ImGui::RadioButton(L("Match", "Coincidentes"), &s_class_filter, 1); ImGui::SameLine();
-    ImGui::RadioButton(L("Runtime Only", "Apenas Runtime"), &s_class_filter, 2);
 
     auto shaders = BbShaderDiscovery::GetShaders();
-    if (ImGui::BeginTable("ShadersTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable, ImVec2(0, 320))) {
-        ImGui::TableSetupColumn(L("Class", "Classe"), ImGuiTableColumnFlags_WidthFixed, 75.0f);
+    if (ImGui::BeginTable("ShadersTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable, ImVec2(0, 320))) {
         ImGui::TableSetupColumn(L("Stage", "Estagio"), ImGuiTableColumnFlags_WidthFixed, 55.0f);
         ImGui::TableSetupColumn(L("Program Hash", "Hash"), ImGuiTableColumnFlags_WidthFixed, 145.0f);
         ImGui::TableSetupColumn(L("Perm", "Perm"), ImGuiTableColumnFlags_WidthFixed, 45.0f);
@@ -198,66 +191,24 @@ void TabShadersViews::RenderInventory() {
             if (s_search_hash[0] != '\0' && std::string(h_str).find(s_search_hash) == std::string::npos) {
                 continue;
             }
-            const auto c = BbStaticCatalog::ClassifyShader(sh.pgm_hash);
-            if (s_class_filter == 1 && c != BbStaticCatalog::ShaderClassification::ConfirmedMatch) continue;
-            if (s_class_filter == 2 && c != BbStaticCatalog::ShaderClassification::RuntimeOnly) continue;
 
             ImGui::PushID(sh_idx++);
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            if (c == BbStaticCatalog::ShaderClassification::ConfirmedMatch) {
-                ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.65f, 1.0f), "[MATCH]");
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.30f, 1.0f), "[RUN]");
-            }
-            ImGui::TableSetColumnIndex(1);
             ImGui::TextColored(StageColor(sh.hw_stage), "%s", StageName(sh.hw_stage));
-            ImGui::TableSetColumnIndex(2);
+            ImGui::TableSetColumnIndex(1);
             if (ImGui::Selectable(h_str, false)) {
                 ImGui::SetClipboardText(h_str);
                 UiManager::SetStatus(std::string("Copied: ") + h_str);
             }
-            ImGui::TableSetColumnIndex(3); ImGui::Text("%u", sh.perm_idx);
-            ImGui::TableSetColumnIndex(4); ImGui::Text("%u W", sh.spv_size_words);
-            ImGui::TableSetColumnIndex(5); ImGui::Text("%.2f ms", sh.compile_time_ns / 1000000.0);
-            ImGui::TableSetColumnIndex(6);
+            ImGui::TableSetColumnIndex(2); ImGui::Text("%u", sh.perm_idx);
+            ImGui::TableSetColumnIndex(3); ImGui::Text("%u W", sh.spv_size_words);
+            ImGui::TableSetColumnIndex(4); ImGui::Text("%.2f ms", sh.compile_time_ns / 1000000.0);
+            ImGui::TableSetColumnIndex(5);
             ImGui::Text("%llu | %s", static_cast<unsigned long long>(sh.hit_count), sh.location.empty() ? "-" : sh.location.c_str());
             ImGui::PopID();
         }
         ImGui::EndTable();
-    }
-}
-
-void TabShadersViews::RenderStaticCatalog() {
-    if (BbStaticCatalog::IsLoaded()) {
-        const auto cstats = BbStaticCatalog::GetClassificationStats();
-        const float pct = BbStaticCatalog::GetStaticCoveragePercentage();
-        ImGui::TextColored(ImVec4(0.35f, 0.90f, 0.65f, 1.0f), "[OK] %s (%u %s)",
-                           L("Game Shaders Catalog Loaded", "Catalogo de Shaders do Jogo Carregado"),
-                           cstats.total_static, L("programs", "programas"));
-        ImGui::Text("%s: %u | %s: %u (%.1f%%) | %s: %u",
-                    L("Total Static", "Total Estatico"), cstats.total_static,
-                    L("Confirmed Matches", "Coincidentes"), cstats.confirmed_match, pct,
-                    L("Runtime Only", "Apenas Runtime"), cstats.runtime_only);
-        ImGui::ProgressBar(pct / 100.0f, ImVec2(-1.0f, 0.0f));
-
-        ImGui::Separator();
-        ImGui::TextDisabled("%s:", L("Game Bundles Breakdown", "Detalhamento por Pacote do Jogo"));
-        for (const auto& b : BbStaticCatalog::GetBundleStats()) {
-            ImGui::BulletText("%s: %u shaders (%llu KB decomp)",
-                              b.name.c_str(), b.count, static_cast<unsigned long long>(b.decompressed_size / 1024));
-        }
-    } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.30f, 1.0f), "[!] %s",
-                           L("Static catalog not loaded.", "Catalogo estatico nao carregado."));
-        if (ImGui::Button(L("Load Static Catalog", "Carregar Catalogo Estatico"))) {
-            if (BbStaticCatalog::AutoLoad(".") || BbStaticCatalog::AutoLoad("user/cache/CUSA03173")) {
-                UiManager::SetStatus(L("Static catalog loaded successfully!", "Catalogo estatico carregado com sucesso!"));
-            } else {
-                UiManager::SetStatus(L("catalog.json not found. Run: python3 tools/shader_catalog.py build GAME_DIR catalog.json",
-                                       "catalog.json nao encontrado. Execute: python3 tools/shader_catalog.py build GAME_DIR catalog.json"));
-            }
-        }
     }
 }
 
@@ -267,23 +218,11 @@ void TabShadersViews::RenderDiagnostics(const std::filesystem::path& cache_dir) 
     const uint32_t stale = (total_keys > preloaded) ? (total_keys - preloaded) : 0;
 
     ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f), "%s",
-                       L("Shader System Diagnostics & Verification", "Diagnostico & Verificacao de Shaders"));
+                       L("Pipeline Rebuild Diagnostics", "Diagnostico da Reconstrucao de Pipelines"));
     ImGui::BulletText("%s: %u", L("Total Pipeline Keys on Disk", "Total de Chaves no Disco"), total_keys);
     ImGui::BulletText("%s: %u", L("Successfully Rebuilt", "Reconstruidos com Sucesso"), preloaded);
     ImGui::BulletText("%s: %u (%s)", L("Stale/Rejected Keys", "Chaves Rejeitadas"), stale,
                       L("Permutation index collisions or outdated hashes", "Conflitos de permutacao ou hashes antigos"));
-
-    ImGui::Spacing();
-    const auto report_path = cache_dir / "shader_diagnostic_report.json";
-    if (ImGui::Button(L("Export Diagnostic Report (JSON)", "Exportar Relatorio de Diagnostico (JSON)"))) {
-        if (BbStaticCatalog::ExportDiagnosticReport(report_path)) {
-            UiManager::SetStatus(std::string("Report exported: ") + report_path.string());
-        } else {
-            UiManager::SetStatus(L("Failed to export report.", "Falha ao exportar relatorio."));
-        }
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%s)", report_path.filename().string().c_str());
 
     ImGui::Spacing();
     if (ImGui::Button(L("Export Shader Recipes (shader_recipes.bin)", "Exportar Receitas de Shaders (shader_recipes.bin)"))) {

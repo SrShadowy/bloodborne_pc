@@ -87,7 +87,7 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     // HintFsr411
     {
         "FSR 4.1.1 in INT8 mode: model from AMD 4.1.1 DLL, replayed in Vulkan (bit-exact result). One model for Native..Performance and separate for Ultra Performance. Assets: tools/fsr4cap/build_assets.sh (needs DLL and Proton).",
-        "FSR 4.1.1 em modo INT8: modelo da DLL AMD 4.1.1, reproduzido em Vulkan (resultado idêntico à DLL). Um modelo para Native..Performance e outro para Ultra Performance. Recursos: tools/fsr4cap/build_assets.sh.",
+        "FSR 4.1.1 em modo INT8: modelo da DLL AMD 4.1.1, reproduzido em Vulkan (resultado idêntico à DLL). Um modelo para Native..Performance e outro para Ultra Performance. Recursos: tools/fsr4cap/build_assets.sh (requer DLL e Proton).",
         "FSR 4.1.1 в режиме INT8: модель из DLL AMD 4.1.1, воспроизведённая в Vulkan (результат совпадает с DLL). Одна модель для Native..Performance и отдельная для Ultra Performance. Ассеты: tools/fsr4cap/build_assets.sh (нужны DLL и Proton)."
     },
     // HintFsr411Fp8
@@ -106,19 +106,19 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     {
         "FSR 4: auto-exposure",
         "FSR 4: auto-exposição",
-        "FSR 4: авто-экспозиция"
+        "FSR 4: автоэкспозиция"
     },
     // Fsr4InvertJitter
     {
         "FSR 4: invert jitter sign",
         "FSR 4: inverter sinal de jitter",
-        "FSR 4: обратный знак jitter"
+        "FSR 4: инвертировать знак jitter"
     },
     // HintFsr4Ghosting
     {
         "Ghosting test: FSR 4 normalizes color by exposure and decides when to discard previous frames. Applies immediately.",
-        "Teste para ghosting: o FSR 4 normaliza a cor pela exposição para descartar quadros anteriores. Aplica-se imediatamente.",
-        "Проверка при гостинге: сеть FSR 4 нормирует цвет по экспозиции и по ней решает, когда отбросить прошлые кадры. Меняются сразу, без перезапуска."
+        "Teste de ghosting: o FSR 4 normaliza a cor pela exposição e decide quando descartar quadros anteriores. Aplica-se imediatamente.",
+        "Тест на шлейфы (ghosting): FSR 4 нормирует цвет по экспозиции и по ней решает, когда отбросить прошлые кадры. Применяется сразу, без перезапуска."
     },
     // PresetCombo
     {
@@ -152,15 +152,15 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     },
     // HintRenderResAuto
     {
-        "Non-1080p output renders entire game at preset resolution (startup patch): fastest on Steam Deck/weak GPUs. Preset/output change requires restart. 'Dynamic resolution' below enables change without restart (postprocessing stays 1080p, slower).",
-        "Em saídas diferentes de 1080p o jogo renderiza na resolução do preset (patch inicial): mais rápido no Steam Deck e GPUs modestas. Alterações exigem reinício. A opção 'Mudança em tempo real' abaixo permite troca sem reiniciar.",
+        "Non-1080p output renders entire game at preset resolution (startup patch): fastest on Steam Deck/weak GPUs. Preset/output change requires restart. 'Dynamic Resolution Change' below enables change without restart (postprocessing stays 1080p, slower).",
+        "Em saídas diferentes de 1080p o jogo renderiza na resolução do preset (patch inicial): mais rápido no Steam Deck e GPUs modestas. Alterações exigem reinício. A opção 'Mudança de Resolução em Tempo Real' abaixo permite trocar sem reiniciar (o pós-processamento permanece em 1080p, mais lento).",
         "При выводе не 1080p вся игра рисуется в разрешении пресета (патч при запуске): это быстрее всего на Steam Deck и слабых GPU. Смена пресета или разрешения вывода — после перезапуска. Пункт «Смена разрешения на лету» ниже включает смену без перезапуска (постобработка тогда остаётся в 1080p, медленнее)."
     },
     // HintRenderResManual
     {
         "BB_RENDER_RES fixes scene size at start. Remove this variable to change resolution and presets without restarting.",
         "BB_RENDER_RES fixa o tamanho da cena na inicialização. Remova esta variável para alterar resoluções sem reiniciar.",
-        "BB_RENDER_RES фиксирует размер сцены при запуске. Уберите эту явную переменную для смены разрешения и пресетов без перезапуска игры."
+        "BB_RENDER_RES фиксирует размер сцены при запуске. Уберите эту переменную, чтобы менять разрешение и пресеты без перезапуска игры."
     },
     // HintRenderResLive
     {
@@ -213,7 +213,7 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     // HintReactivity
     {
         "Marks transparent effects (particles, fog) so the upscaler relies less on previous frames. Reduces ghosting behind particles, but restores jitter under them.",
-        "Marca efeitos transparentes (partículas, névoa) para que o upscaler dependa menos de quadros anteriores. Reduz ghosting atrás de efeitos.",
+        "Marca efeitos transparentes (partículas, névoa) para que o upscaler dependa menos de quadros anteriores. Reduz ghosting atrás de efeitos, mas devolve o jitter sob eles.",
         "Помечает прозрачные эффекты (частицы, дымку), чтобы апскейлер меньше опирался на прошлые кадры. Меньше шлейфов за эффектами, но под ними возвращается дрожание."
     },
     // ReactivityScale
@@ -400,7 +400,7 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     {
         "Disabled: fixes inverted buildings, flickering and streaks in the sky. Enabled: renders the game's planar reflections.",
         "Desativado: remove prédios invertidos, falhas e faixas no céu. Ativado: renderiza os reflexos planares originais.",
-        "Выключено: убирает перевёрнутые здания и полосы на небе. Включено: исходные плоские отражения."
+        "Выключено: убирает перевёрнутые здания, мерцание и полосы на небе. Включено: исходные плоские отражения."
     },
     // DrawPipe
     {
@@ -442,7 +442,7 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     {
         "Settings saved to bbport.ini",
         "Configurações salvas em bbport.ini",
-        "Настройки сохраняются в bbport.ini"
+        "Настройки сохранены в bbport.ini"
     },
     // PromptKeyboardHelp
     {
@@ -639,14 +639,14 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     // LightGridOpt
     {
         "4x4 Quarter-Window Light Grid",
-        "Grade de Luzes Dinâmica 4x4",
+        "Grade de Luzes 4x4 (Otimização)",
         "Сетка освещения 4x4 (оптимизация)"
     },
     // HintLightGridOpt
     {
         "Replaces 3x3 jobs of 128x128 tiles with 1 job of quarter-window 4x4 tiles, eliminating ~80k redundant light draw calls per 300 frames.",
         "Substitui 3x3 jobs de tiles 128x128 por 1 job de grade 4x4 proporcional à janela, eliminando ~80 mil draw calls redundantes de luzes.",
-        "Заменяет 3x3 задач с тайлами 128x128 на 1 задачу с сеткой 4x4 по размеру окна, убирая ~80 тыс. лишних вызовов отрисовки света."
+        "Заменяет девять задач с тайлами 128×128 одной задачей с сеткой 4×4 по размеру окна, убирая ~80 тыс. лишних вызовов отрисовки света."
     },
     // RawMouseCamera
     {
@@ -663,7 +663,7 @@ static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
     // MouseHoldAutoRotate
     {
         "Suppress Camera Auto-Rotation on Mouse",
-        "Segurar Auto-Rotação da Câmera no Mouse",
+        "Suprimir Auto-Rotação da Câmera com Mouse",
         "Отключать автоповорот камеры для мыши"
     },
     // HintMouseHoldAutoRotate

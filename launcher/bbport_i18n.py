@@ -410,6 +410,9 @@ EN = {
     'UPnP (открыть порт на роутере автоматически)': 'UPnP (open a port on the router automatically)',
     'Резервный P2P-реле (BBR1)': 'P2P fallback relay (BBR1)',
     'Отключите для принудительного прямого P2P по UDP и отладки': 'Disable to force and debug direct UDP peer-to-peer connections',
+    'Совместимость с Gen 19 (shadp2p 0.6.x)': 'Gen 19 compatibility (shadp2p 0.6.x)',
+    'Старый формат P2P-пакетов для пиров 0.6.x и старых сборок Windows. Формат должен совпадать у всех в сессии: в 0.19 нет TCP, digest и шифрования из 0.20': 'Legacy P2P packet format for 0.6.x peers and older Windows builds. Everyone in the session must match: 0.19 has no TCP, digest or 0.20 encryption',
+    'Client ID приложения Discord. По умолчанию: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051': 'Discord application Client ID. Default: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051',
     'play.seamlesshunt.com:31313 — сервер Seamless Hunt (BBSC). Публичный сервер shadPS4 принимает только сборки shadPS4. Для частного сервера укажите host:port от его владельца. WebAPI: оставьте пустым, тогда берётся адрес сервера с портом 31315': "play.seamlesshunt.com:31313 is Seamless Hunt's server (BBSC). shadPS4's public server accepts only shadPS4 builds. For a private server, enter host:port from the person who runs it. WebAPI: leave it empty to use the server address with port 31315",
     'Адрес WebAPI': 'WebAPI address',
     'Адрес сервера': 'Server address',
@@ -1056,6 +1059,11 @@ PT = {
     "UPnP (открыть порт на роутере автоматически)": "UPnP (abrir porta no router automaticamente)",
     "Резервный P2P-реле (BBR1)": "Relay de fallback P2P (BBR1)",
     "Отключите для принудительного прямого P2P по UDP и отладки": "Desative para forçar e depurar conexões P2P diretas via UDP",
+    "Совместимость с Gen 19 (shadp2p 0.6.x)": "Compatibilidade com Gen 19 (shadp2p 0.6.x)",
+    "Старый формат P2P-пакетов для пиров 0.6.x и старых сборок Windows. Формат должен совпадать у всех в сессии: в 0.19 нет TCP, digest и шифрования из 0.20":
+        "Formato antigo de pacotes P2P para peers 0.6.x e builds antigas do Windows. Todos na sessão têm de usar o mesmo formato: a 0.19 não tem TCP, digest nem encriptação da 0.20",
+    "Client ID приложения Discord. По умолчанию: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051":
+        "Client ID da aplicação Discord. Predefinição: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051",
     "eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой":
         "eboot.bin não é da versão 1.09: copie o eboot.bin do dump da atualização 1.09 para a pasta do jogo substituindo o ficheiro",
     "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":
@@ -1665,6 +1673,11 @@ PT_BR = {
     "UPnP (открыть порт на роутере автоматически)": "UPnP (abrir porta no roteador automaticamente)",
     "Резервный P2P-реле (BBR1)": "Relay de fallback P2P (BBR1)",
     "Отключите для принудительного прямого P2P по UDP и отладки": "Desative para forçar e depurar conexões P2P diretas via UDP",
+    "Совместимость с Gen 19 (shadp2p 0.6.x)": "Compatibilidade com Gen 19 (shadp2p 0.6.x)",
+    "Старый формат P2P-пакетов для пиров 0.6.x и старых сборок Windows. Формат должен совпадать у всех в сессии: в 0.19 нет TCP, digest и шифрования из 0.20":
+        "Formato antigo de pacotes P2P para peers 0.6.x e builds antigos do Windows. Todos na sessão precisam usar o mesmo formato: a 0.19 não tem TCP, digest nem criptografia da 0.20",
+    "Client ID приложения Discord. По умолчанию: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051":
+        "Client ID do aplicativo Discord. Padrão: 1560890616811102219 (BloodBorne BBPort). shadPS4: 1139939140494971051",
     "eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой":
         "eboot.bin não é da versão 1.09: copie o eboot.bin do dump da atualização 1.09 para a pasta do jogo substituindo o arquivo",
     "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":
