@@ -38,8 +38,12 @@ add_library(bbnet20 SHARED ${BBNET20_SOURCES} ${BBNET20_THD_SOURCES} ${BBNET20_B
     "${SHADNET_PROTO_OUT20}/shadnet.pb.cc" bbnet_glue.cpp)
 target_include_directories(bbnet20 PRIVATE include bbsc compat . .. ../shim "${BBNET_VENDOR}"
     "${BBNET_VENDOR}/shadnet" "${SHADNET_PROTO_OUT20}" ../third_party/imgui ../third_party/httplib
-    ${CMAKE_CURRENT_SOURCE_DIR}/../..
     ${CMAKE_CURRENT_SOURCE_DIR}/../../extra)
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU") # [extra]
+    target_compile_options(bbnet20 PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+else()
+    target_include_directories(bbnet20 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+endif() # [extra]
 # The version the shadNet client reports to the server (BB_CLIENT_VERSION overrides it).
 target_compile_definitions(bbnet20 PRIVATE BOOST_ASIO_STANDALONE NDEBUG
     CPPHTTPLIB_OPENSSL_SUPPORT CPPHTTPLIB_ZLIB_SUPPORT BBNET_PORT_VERSION="${BBPORT_VERSION}")

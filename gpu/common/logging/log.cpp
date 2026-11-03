@@ -46,6 +46,7 @@ void Write(std::string_view log_class, Level level, const char* file, int line,
     std::scoped_lock lock{mutex};
     std::fprintf(stderr, "gpu %s (%.*s): %s [%s:%d]\n", LevelNames[index], int(log_class.size()),
                  log_class.data(), message.c_str(), slash ? slash + 1 : file, line);
+    std::fflush(stderr); // [extra]
 }
 
 } // namespace Common::Log

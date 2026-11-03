@@ -24,7 +24,13 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
+if "BB_PORT_DIR" in os.environ: # [extra]
+    PORT_DIR = Path(os.environ["BB_PORT_DIR"]).resolve()
+elif getattr(sys, "frozen", False):
+    exe_path = Path(sys.executable).resolve()
+    PORT_DIR = exe_path.parent.parent if exe_path.parent.name in ("launcher", "bin") else exe_path.parent
+else:
+    PORT_DIR = Path(__file__).resolve().parent.parent # [extra]
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 from mods import discover as discover_mods  # noqa: E402
 import game_check  # noqa: E402

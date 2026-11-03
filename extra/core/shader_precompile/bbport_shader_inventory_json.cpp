@@ -45,7 +45,11 @@ std::string GetTimestampIso() {
     const auto now = std::chrono::system_clock::now();
     const auto time_t_now = std::chrono::system_clock::to_time_t(now);
     std::tm tm_now{};
+#ifdef _WIN32
+    gmtime_s(&tm_now, &time_t_now);
+#else
     gmtime_r(&time_t_now, &tm_now);
+#endif
     char buf[64];
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_now);
     return std::string(buf);

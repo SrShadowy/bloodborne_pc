@@ -40,8 +40,9 @@ extern "C" void extra_bbsc_setup_save_dir(void) {
         for (const auto& title : std::filesystem::directory_iterator(id.path(), title_ec)) {
             const auto folder = title.path() / "SPRJ0005";
             if (std::filesystem::is_directory(folder, error)) {
-                setenv("BBSC_SAVE_DIR", folder.c_str(), 0);
-                std::printf("BBSC: save folder %s\n", folder.c_str());
+                const std::string folder_str = folder.string();
+                setenv("BBSC_SAVE_DIR", folder_str.c_str(), 0);
+                std::printf("BBSC: save folder %s\n", folder_str.c_str());
                 return;
             }
         }

@@ -77,6 +77,30 @@ const std::vector<MemorySegment>& MemoryMap::GetSegments() const {
 
 } // namespace Debugger
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+extern "C" __declspec(dllexport) bool extra_query_memory_protection(uint64_t address, void** start, void** end, uint32_t* prot) {
+    MEMORY_BASIC_INFORMATION mbi;
+    if (VirtualQuery(reinterpret_cast<const void*>(address), &mbi, sizeof(mbi)) != sizeof(mbi)) {
+        return false;
+    }
+    if (mbi.State != MEM_COMMIT) {
+        return false;
+    }
+    uint32_t p = 0;
+    if (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)) p |= 1;
+    if (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) p |= 2;
+    if (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) p |= 4;
+    if (p == 0) return false;
+
+    if (start) *start = mbi.BaseAddress;
+    if (end) *end = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize);
+    if (prot) *prot = p;
+    return true;
+}
+#else
 extern "C" bool extra_query_memory_protection(uint64_t address, void** start, void** end, uint32_t* prot) {
     uintptr_t seg_start = 0, seg_end = 0;
     uint32_t p = 0;
@@ -88,3 +112,4 @@ extern "C" bool extra_query_memory_protection(uint64_t address, void** start, vo
     }
     return false;
 }
+#endif

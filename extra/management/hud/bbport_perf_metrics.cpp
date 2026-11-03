@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_perf_metrics.h"
 
+#include "core/posix_compat.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>

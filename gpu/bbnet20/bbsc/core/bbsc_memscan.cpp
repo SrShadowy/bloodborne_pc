@@ -70,6 +70,8 @@ std::vector<std::uint64_t> FindInMemory(std::span<const std::uint8_t> needle, st
     if (needle.empty()) {
         return hits;
     }
+    constexpr std::uint64_t MaxGuestScanAddress = 0x1200000000ULL; // 72 GB ceiling
+    hi = std::min(hi, MaxGuestScanAddress);
     constexpr DWORD Readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
                                PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
     std::uint64_t at = lo;

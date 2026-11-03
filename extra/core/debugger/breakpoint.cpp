@@ -24,6 +24,9 @@
 #ifndef TRAP_HWBKPT
 #define TRAP_HWBKPT 4
 #endif
+#ifndef SI_KERNEL
+#define SI_KERNEL 128
+#endif
 
 namespace Debugger {
 

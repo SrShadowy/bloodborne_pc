@@ -367,6 +367,8 @@ def run(extra_args=(), env=None, on_line=None):
                     on_line(line)
             code = game_process.wait()
         log(f'— the game exited (code {code}) —')
+        if code == 23:
+            log('— [Diagnostics] Code 23 indicates a GPU device lost / assertion failure. If running the Windows binary via Wine/Proton on Linux, Wine does not support Vulkan host memory import (0x80) required by AMDGPU. On Linux, please use the native Linux build (run.sh)! On Windows, ensure GPU drivers are updated. —')
         return code
     except (OSError, RuntimeError) as error:
         log(f'STOP: {error}')

@@ -4,6 +4,8 @@
 #endif
 #include "bbport_title_menu.h"
 
+#include "core/posix_compat.h"
+
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>

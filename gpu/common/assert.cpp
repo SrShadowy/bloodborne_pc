@@ -31,6 +31,7 @@ void assert_fail_impl() {
     std::fputs("Assertion call stack:\n", stderr);
     backtrace_symbols_fd(frames, depth, STDERR_FILENO);
     std::fputs("STOP: GPU library assertion failed (see GPU log above)\n", stderr);
+    std::fflush(stderr); // [extra]
     std::_Exit(23);
 }
 

@@ -246,7 +246,6 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
     third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp
     third_party/imgui/backends/imgui_impl_vulkan.cpp)
 target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core
     ${CMAKE_CURRENT_SOURCE_DIR}/../extra/core/debugger
@@ -279,6 +278,11 @@ list(FILTER EXTRA_SOURCES EXCLUDE REGEX "extra/hosts/")
 # Gen 19 P2P codec: libbbnet20 only, it uses that module's private headers. # [extra]
 list(FILTER EXTRA_SOURCES EXCLUDE REGEX "extra/net/bbport_p2p_legacy\\.cpp$") # [extra]
 target_sources(bbgpu PRIVATE ${EXTRA_SOURCES})
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU") # [extra]
+    target_compile_options(bbgpu PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/..)
+else()
+    target_include_directories(bbgpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+endif() # [extra]
 # Dear ImGui stays private to libbbgpu.so. The library is linked into bb-probe, so its exports are
 # in the global symbol scope; a Vulkan layer carrying its own Dear ImGui without -Bsymbolic
 # (vkShade 0.1) had its ImGui_ImplVulkan_Init bound to this copy, which called the Vulkan loader
@@ -338,7 +342,7 @@ if (WIN32)
     set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
     target_include_directories(bb-probe PRIVATE .. ../src)
     target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra>)
-    target_link_libraries(bb-probe PRIVATE bbgpu bbatrac9 pthread ws2_32 bcrypt dbghelp winmm onecore
+    target_link_libraries(bb-probe PRIVATE -Wl,--whole-archive bbgpu -Wl,--no-whole-archive bbatrac9 pthread ws2_32 bcrypt dbghelp winmm onecore
         ${Vulkan_LIBRARIES})
     # Plain -l names in the packages' CMake files (Zydis: Zycore) are found in the sysroot.
     foreach(root ${CMAKE_FIND_ROOT_PATH})

@@ -71,7 +71,11 @@ bool RecordCapture(
                 const auto now = std::chrono::system_clock::now();
                 const auto time = std::chrono::system_clock::to_time_t(now);
                 std::tm tm{};
+#ifdef _WIN32
+                localtime_s(&tm, &time);
+#else
                 localtime_r(&time, &tm);
+#endif
                 char name_buf[128];
                 std::strftime(name_buf, sizeof(name_buf), "BBPort_%Y-%m-%d_%H-%M-%S.png", &tm);
                 const std::string file_path = (dir / name_buf).string();

@@ -89,26 +89,43 @@ void Player::Emit(AvPlayerEvents event, void* data) {
     }
 }
 
+static s64 s_last_play_start_ms = 0;
+static int s_rapid_stop_counter = 0;
+
 /// The event a state change gives the game.
 void Player::Announce(State reached) {
-    switch (reached) {
-    case State::Ready:
-        Emit(AvPlayerEvents::StateReady);
-        break;
-    case State::Play:
+    const s64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    if (reached == State::Play) {
+        s_last_play_start_ms = now;
         Emit(AvPlayerEvents::StatePlay);
-        break;
-    case State::Stop:
+    } else if (reached == State::Stop) {
+        const s64 playback_duration = s_last_play_start_ms != 0 ? now - s_last_play_start_ms : 0;
+        LOG_INFO(Lib_AvPlayer, "[AvPlayer] Playback reached State::Stop (duration: {} ms)", playback_duration);
+
+        if (playback_duration < 1000 && s_last_play_start_ms != 0) {
+            s_rapid_stop_counter++;
+            LOG_WARNING(Lib_AvPlayer, "[AvPlayer] Premature video termination ({} ms, count={})",
+                        playback_duration, s_rapid_stop_counter);
+        } else {
+            s_rapid_stop_counter = 0;
+        }
         Emit(AvPlayerEvents::StateStop);
-        break;
-    case State::Pause:
-        Emit(AvPlayerEvents::StatePause);
-        break;
-    case State::Buffering:
-        Emit(AvPlayerEvents::StateBuffering);
-        break;
-    default:
-        break;
+    } else {
+        switch (reached) {
+        case State::Ready:
+            Emit(AvPlayerEvents::StateReady);
+            break;
+        case State::Pause:
+            Emit(AvPlayerEvents::StatePause);
+            break;
+        case State::Buffering:
+            Emit(AvPlayerEvents::StateBuffering);
+            break;
+        default:
+            break;
+        }
     }
 }
 

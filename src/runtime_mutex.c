@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <time.h>
 #include <stdatomic.h>
+#include "../gpu/shim/bb_env.h" // [extra]
 typedef struct { int type; } GuestAttr;
 typedef struct {
     pthread_mutex_t native;

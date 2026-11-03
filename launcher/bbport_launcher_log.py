@@ -22,8 +22,9 @@ class LogPage:
             self._log_filter_query = ""
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.log_view = Gtk.TextView(editable=False, monospace=True, cursor_visible=False,
+        self.log_view = Gtk.TextView(editable=False, monospace=False, cursor_visible=False,
                                      wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        self.log_view.add_css_class("log-terminal")
         self.log_view.set_top_margin(8)
         self.log_view.set_left_margin(8)
         self.log_view.set_right_margin(8)

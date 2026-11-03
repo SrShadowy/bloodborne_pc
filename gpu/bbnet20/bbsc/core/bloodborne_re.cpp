@@ -4071,7 +4071,11 @@ s32 GetCharacterType(u64 chr) {
 }
 
 bool IsInvaderType(s32 type) {
-    return type == 2 || type == 12;
+    return type == 2 || type == 12 || type == 13;
+}
+
+bool IsLocalPlayerInvader() {
+    return IsInvaderType(GetLocalPlayerType()) || IsInvaderType(GetLocalCharacterType());
 }
 
 // Invasions (2026-10-05): an invader is never a "partner". Their death and the host's follow the
@@ -4593,9 +4597,11 @@ void TickBbscJoinTeleport() {
     // Test 2026-10-08 (kukar3x invading): "the invader got 2 loading screens". An invader is in
     // session state 6 too; the join warp/teleport to the host is for co-op guests only (player
     // type 1) - an invader arrives where the game puts it.
-    if (GetLocalPlayerType() == 2) {
+    if (IsLocalPlayerInvader()) {
         done = true;
         bbsc_join_teleport_done = true;
+        LOG_INFO(Debug, "[BBSC Invasion] Join teleport skipped: local player is invader (slot_type={}, chr_type={})",
+                 GetLocalPlayerType(), GetLocalCharacterType());
         return;
     }
     // The host, not just any living partner: with 3+ hunters the first one found can be another
@@ -4904,7 +4910,7 @@ void TickBbscFollowHost() {
 
     const u64 global = GetGlobalState();
     if (GetSessionState() != 6 || !ReadablePointer(global, 0x1598) ||
-        ReadValue<u8>(global, 0x1592) != 0 || GetLocalPlayerType() == 2) {
+        ReadValue<u8>(global, 0x1592) != 0 || IsLocalPlayerInvader()) {
         warping = false;
         target_map = 0;
         return; // not a co-op guest in someone else's world (an invader does not follow)
@@ -5901,14 +5907,42 @@ const std::string& BbscProcessUserId() {
 
 // The character being played: the save slot file the game wrote last, during this run.
 std::optional<BbscSaveSlot> BbscActiveSaveSlotUnchecked();
+
+static std::optional<BbscSaveSlot> s_cached_active_slot;
+static s64 s_last_save_slot_scan_ms = 0;
+constexpr s64 BbscSaveSlotCacheTtlMs = 60'000; // 60s cache
+
+void InvalidateBbscActiveSaveSlot() {
+    s_cached_active_slot = std::nullopt;
+    s_last_save_slot_scan_ms = 0;
+}
+
 // Runs inside game hooks (the join load): a filesystem error must never become an exception there.
 std::optional<BbscSaveSlot> BbscActiveSaveSlot() {
+    const s64 now = SteadyNowMs();
+    if (s_cached_active_slot.has_value() && (now - s_last_save_slot_scan_ms < BbscSaveSlotCacheTtlMs)) {
+        return s_cached_active_slot;
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
     try {
-        return BbscActiveSaveSlotUnchecked();
+        s_cached_active_slot = BbscActiveSaveSlotUnchecked();
+        s_last_save_slot_scan_ms = now;
     } catch (const std::exception& e) {
-        LOG_WARNING(Debug, "BBSC save slot: could not read the save folder ({})", e.what());
+        LOG_WARNING(Debug, "[BBSC Save] Could not read save folder: {}", e.what());
         return std::nullopt;
     }
+    const auto t1 = std::chrono::steady_clock::now();
+    const auto dur_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+
+    if (s_cached_active_slot.has_value()) {
+        LOG_INFO(Debug, "[BBSC Save] Active slot resolved: user='{}' slot={} (scan took {} us)",
+                 s_cached_active_slot->user, s_cached_active_slot->slot, dur_us);
+    }
+    if (dur_us > 10'000) {
+        LOG_WARNING(Debug, "[BBSC Save] SLOW save directory iteration: {} us (disk latency warning)", dur_us);
+    }
+    return s_cached_active_slot;
 }
 
 std::optional<BbscSaveSlot> BbscActiveSaveSlotUnchecked() {
@@ -7164,11 +7198,9 @@ void TickBbscLoadCover() {
         EndBbscLoadCover("no session");
         return;
     }
-    // Test 2026-10-09 (mod 39, both guests): after a wipe the reload put the guests in the host's
-    // map, so no follow load ran - and only the follow's arrival ended the cover. The loading screen
-    // stayed up 75 s ("infinite loading screen unless you teleport"). A wipe cover ends once its
-    // load is over and the respawn after it is done (curtain closed, alive), or 20 s after the load.
-    if (bbsc_load_cover.why == "wipe" && bbsc_load_cover.game_screen_seen) {
+    // A load cover ends once its load is over. For "wipe", it waits for respawn (2s) or 20s.
+    // For "summon", "join", or "follow", it releases after 12s if network placement stalls.
+    if (bbsc_load_cover.game_screen_seen) {
         const u64 global = GetGlobalState();
         const u64 menu = ReadValue<u64>(image_base + MenuManPointerOffset, 0);
         const bool loading = (ReadablePointer(global, 0x10) && ReadValue<u8>(global, 0x08) != 0) ||
@@ -7178,14 +7210,28 @@ void TickBbscLoadCover() {
             bbsc_load_cover.load_over_ms = 0;
         } else if (bbsc_load_cover.load_over_ms == 0) {
             bbsc_load_cover.load_over_ms = now;
+            LOG_INFO(Debug, "[BBSC LoadCover] Native load screen dropped for '{}'; awaiting placement (timeout window: 12s)",
+                     bbsc_load_cover.why);
         } else {
             const s64 since = now - bbsc_load_cover.load_over_ms;
-            const bool respawned =
-                !BbscCurtainActive() && GetCharacterHp(GetLocalPlayerCharacter()) > 0;
-            if ((respawned && since >= 2'000) || since >= 20'000) {
-                EndBbscLoadCover(respawned ? "wipe reload done, guest respawned"
-                                           : "wipe reload done, time limit after the load");
-                return;
+            if (bbsc_load_cover.why == "wipe") {
+                const bool respawned =
+                    !BbscCurtainActive() && GetCharacterHp(GetLocalPlayerCharacter()) > 0;
+                if ((respawned && since >= 2'000) || since >= 20'000) {
+                    EndBbscLoadCover(respawned ? "wipe reload done, guest respawned"
+                                               : "wipe reload done, time limit after the load");
+                    return;
+                }
+            } else {
+                constexpr s64 BbscPostLoadMaxWaitMs = 12'000;
+                if (since >= BbscPostLoadMaxWaitMs) {
+                    LOG_WARNING(Debug, "[BBSC LoadCover] Post-load timeout ({} ms since load end, why='{}') - forcing screen back",
+                                since, bbsc_load_cover.why);
+                    BBSC_TIMELINE("LOAD", "load cover forced in by post-load timeout ({} ms, why='{}')",
+                                  since, bbsc_load_cover.why);
+                    EndBbscLoadCover("post-load placement timeout fallback");
+                    return;
+                }
             }
         }
     }
@@ -8435,7 +8481,7 @@ void PS4_SYSV_ABI BbscSpectateDeathHook(u64 tag, const GuestRegisterSnapshot* re
     // like a co-op guest). A dead invader goes home; a host who dies with no co-op partner alive
     // while an invader is in the world ends the session the vanilla way, which sends the invader
     // home too. The session patches are lifted so the game's own teardown runs in full.
-    const bool local_invader = session_state == 6 && IsInvaderType(GetLocalCharacterType());
+    const bool local_invader = session_state == 6 && IsLocalPlayerInvader();
     const bool host_beaten = session_state == 3 && !LivingPartnerExists() && RemoteInvaderCount() > 0;
     if (local_invader || host_beaten) {
         LOG_INFO(Debug, "BBSC death: {} - {} -> vanilla death, the invader goes home", name,
@@ -11085,9 +11131,10 @@ void TickBbscSharedProgress() {
     // type 1) collects; an invader (2) or a character not built yet (-1) does not.
     if (state == 6 && GetLocalPlayerType() != 1) {
         static bool logged = false;
-        if (!logged && GetLocalPlayerType() == 2) {
+        if (!logged && IsLocalPlayerInvader()) {
             logged = true;
-            LOG_INFO(Debug, "BBSC shared progress: we are an invader here - nothing is collected");
+            LOG_INFO(Debug, "[BBSC Invasion] Shared progress skipped: local player is invader (slot_type={}, chr_type={})",
+                     GetLocalPlayerType(), GetLocalCharacterType());
             BBSC_TIMELINE("WORLD", "shared progress: we are an invader here - nothing is collected");
         }
         return;
@@ -11402,17 +11449,24 @@ bool BbscToolSiteIntact(u64 site, u32 item) {
            here == BbscToolCheckBytes(item, BbscToolCompareAtMost);
 }
 
+constexpr u64 BbscMaxGuestScanAddress = 0x1200000000ULL; // 72 GB ceiling
+static std::atomic<bool> s_bbsc_tool_scan_ever_done{false};
+
 void StartBbscToolScan() {
+    if (s_bbsc_tool_scan_ever_done.exchange(true)) {
+        return;
+    }
     if (bbsc_tool_scan_running.exchange(true)) {
         return;
     }
     bbsc_tool_scan_done = false;
     std::thread([] {
+        const auto t0 = std::chrono::steady_clock::now();
         std::vector<std::pair<size_t, u64>> sites;
         for (size_t i = 0; i < BbscDreamToolChecks.size(); ++i) {
             const auto needle = BbscToolCheckBytes(BbscDreamToolChecks[i].item, BbscToolCompareEqual);
             for (const u64 hit :
-                 Core::Bbsc::FindInMemory(needle, BbscScanLow(), 0x10000000000ULL, 8)) {
+                 Core::Bbsc::FindInMemory(needle, BbscScanLow(), BbscMaxGuestScanAddress, 8)) {
                 sites.emplace_back(i, hit + 7);
             }
         }
@@ -11422,6 +11476,14 @@ void StartBbscToolScan() {
         }
         bbsc_tool_scan_done = true;
         bbsc_tool_scan_running = false;
+
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        LOG_INFO(Debug, "[BBSC MemScan] Tool scan completed: {} sites found across {} items (took {} ms)",
+                 bbsc_tool_sites.size(), BbscDreamToolChecks.size(), dur_ms);
+        if (dur_ms > 100) {
+            LOG_WARNING(Debug, "[BBSC MemScan] SLOW tool scan detected: {} ms (RAM scan overhead)", dur_ms);
+        }
     }).detach();
 }
 
@@ -13684,12 +13746,20 @@ std::vector<u64> FindBbscParamTables(std::string_view type, u16 min_rows = 1000,
     std::vector<u8> needle(type.begin(), type.end());
     needle.push_back(0);
     std::vector<u64> tables;
-    for (const u64 hit : Core::Bbsc::FindInMemory(needle, BbscScanLow(), 0x10000000000ULL, 16)) {
+    const auto scan_t0 = std::chrono::steady_clock::now();
+    for (const u64 hit : Core::Bbsc::FindInMemory(needle, BbscScanLow(), BbscMaxGuestScanAddress, 16)) {
         const u64 table = hit - 0x0C;
         if (ReadValue<u16>(table, 0x0A) > min_rows && ReadValue<u32>(table, 0x40) == first_id &&
             std::ranges::find(tables, table) == tables.end()) {
             tables.push_back(table);
         }
+    }
+    const auto scan_dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - scan_t0).count();
+    LOG_INFO(Debug, "[BBSC MemScan] Param table scan for '{}': {} tables found (took {} ms)",
+             type, tables.size(), scan_dur_ms);
+    if (scan_dur_ms > 100) {
+        LOG_WARNING(Debug, "[BBSC MemScan] SLOW param table scan for '{}': {} ms", type, scan_dur_ms);
     }
     if (stable && !tables.empty()) {
         stable_cache.emplace(key, tables);

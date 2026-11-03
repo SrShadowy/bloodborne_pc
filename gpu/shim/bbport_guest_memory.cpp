@@ -4,6 +4,9 @@
 // bbport_guest_memory_internal.h for the parts).
 #include "bbport_guest_memory_internal.h"
 #include "shim/bb_env.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace BbGuestMemory::detail {
 /// A type the guest memory may use: AMD's device-uncached types exactly when asked for.
@@ -257,6 +260,15 @@ bool Usable(const Vulkan::Instance& instance) {
 #endif
 #ifdef _WIN32
         const bool host_first = !force_dmabuf; // no dma-buf on Windows
+        static const bool is_wine = [] {
+            HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+            return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+        }();
+        if (is_wine) {
+            std::printf("Guest memory: [Note] Running Windows build under Wine/Proton. Wine lacks "
+                        "VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT (0x80) on buffer creation; "
+                        "if AMDGPU rejects command submission, use native Linux build (run.sh)!\n");
+        }
 #else
         const bool host_first =
             force_host || (!force_dmabuf && instance.GetVendorID() != 0x1002);

@@ -36,4 +36,9 @@ private:
 
 } // namespace Debugger
 
-extern "C" bool extra_query_memory_protection(uint64_t address, void** start, void** end, uint32_t* prot);
+#ifdef _WIN32
+#define EXTRA_EXPORT __declspec(dllexport)
+#else
+#define EXTRA_EXPORT
+#endif
+extern "C" EXTRA_EXPORT bool extra_query_memory_protection(uint64_t address, void** start, void** end, uint32_t* prot);

@@ -48,13 +48,26 @@ def _launcher_log(line):
     LOG.info(line)
 
 
-# Detect or configure launcher window backend (X11 vs Wayland).
+# Detect or configure launcher window backend (win32 on Windows, X11 vs Wayland on Linux).
 # Priority:
-# 1. CLI flags (--x11, --wayland)
-# 2. Environment variable BB_LAUNCHER_BACKEND
-# 3. Persistent user preference saved in settings.json ("video_backend": "x11" | "wayland")
-# 4. Default: Let GTK negotiate dynamically (native Wayland or X11)
-if "--x11" in sys.argv:
+# 1. Platform win32 -> native win32 GDK backend and OpenGL renderer
+# 2. CLI flags (--x11, --wayland)
+# 3. Environment variable BB_LAUNCHER_BACKEND
+# 4. Persistent user preference saved in settings.json ("video_backend": "x11" | "wayland")
+# 5. Default: Let GTK negotiate dynamically (native Wayland or X11)
+if sys.platform == "win32": # [extra]
+    os.environ["GDK_BACKEND"] = "win32"
+    _is_wine = False
+    try:
+        import ctypes
+        _is_wine = hasattr(ctypes.windll.ntdll, "wine_get_version")
+    except Exception:
+        pass
+    if _is_wine:
+        os.environ["GSK_RENDERER"] = "cairo"
+    else:
+        os.environ.setdefault("GSK_RENDERER", "gl")
+elif "--x11" in sys.argv:
     os.environ["GDK_BACKEND"] = "x11"
     os.environ.setdefault("GSK_RENDERER", "gl")
 elif "--wayland" in sys.argv:
@@ -82,7 +95,7 @@ else:
         os.environ["GDK_BACKEND"] = "wayland"
         os.environ.setdefault("GSK_RENDERER", "gl")
     else:
-        os.environ.setdefault("GSK_RENDERER", "gl")
+        os.environ.setdefault("GSK_RENDERER", "gl") # [extra]
 
 _HAS_GTK = True
 _GTK_ERR = None
@@ -128,6 +141,10 @@ def setup_icons():
                 current_theme = settings.get_property("gtk-icon-theme-name")
                 if not current_theme or not icon_theme.has_icon("video-display-symbolic"):
                     settings.set_property("gtk-icon-theme-name", "Adwaita")
+                if sys.platform == "win32": # [extra]
+                    # Windows defaults to Segoe UI 9pt, which is tiny. 10.5pt matches standard Libadwaita.
+                    # Provide Arial and sans-serif fallbacks so Wine/Proton and non-standard setups don't break.
+                    settings.set_property("gtk-font-name", "Segoe UI, Arial, sans-serif 10.5")
         except Exception:
             pass
 
@@ -142,6 +159,13 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.set_default_size(1050, 780)
         self.settings = load_settings()
         set_language(self.settings.get("ui_language", ""))
+        if hasattr(Adw, "StyleManager"): # [extra]
+            sm = Adw.StyleManager.get_default()
+            tm = self.settings.get("theme_mode", "dark")
+            if tm == "dark":
+                sm.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            elif tm == "light":
+                sm.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT) # [extra]
         self.ini, self.ini_lines = load_ini()
         self.process = None
         self.stream = None
@@ -153,6 +177,19 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
 
     def setup_css(self):
         css = """
+        window {
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Noto Sans", Arial, sans-serif;
+        }
+        .navigation-sidebar {
+            font-size: 14.5px;
+        }
+        preferencespage, preferencesgroup {
+            font-size: 14px;
+        }
+        textview, textview text, textview.monospace, textview.monospace text, .log-terminal, .log-terminal text {
+            font-family: "Lucida Console", "Liberation Mono", "DejaVu Sans Mono", "Consolas", "Courier New", monospace;
+            font-size: 12px;
+        }
         button.suggested-action {
             background: #a81c1c;
             color: #ffffff;
@@ -278,6 +315,21 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         side.set_content(Gtk.ScrolledWindow(child=self.sidebar,
                                             hscrollbar_policy=Gtk.PolicyType.NEVER))
         self.content_header = Adw.HeaderBar()
+        if hasattr(Adw, "StyleManager"): # [extra]
+            sm = Adw.StyleManager.get_default()
+            is_dark = sm.get_dark()
+            theme_icon = "display-brightness-symbolic" if is_dark else "weather-clear-night-symbolic"
+            self.theme_btn = Gtk.Button(icon_name=theme_icon)
+            self.theme_btn.set_tooltip_text("Alternar tema Claro / Escuro")
+            def on_toggle_theme(_btn):
+                curr_dark = sm.get_dark()
+                new_scheme = Adw.ColorScheme.FORCE_LIGHT if curr_dark else Adw.ColorScheme.FORCE_DARK
+                sm.set_color_scheme(new_scheme)
+                self.settings["theme_mode"] = "light" if curr_dark else "dark"
+                self.theme_btn.set_icon_name("weather-clear-night-symbolic" if curr_dark else "display-brightness-symbolic")
+                save_settings(self.settings)
+            self.theme_btn.connect("clicked", on_toggle_theme)
+            self.content_header.pack_end(self.theme_btn) # [extra]
         self.launch_button = Gtk.Button()
         self.launch_button.connect("clicked", self.on_launch)
         self.content_header.pack_end(self.launch_button)
@@ -1435,7 +1487,7 @@ def ensure_display():
     if not _HAS_GTK:
         return None
 
-    if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+    if sys.platform != "win32" and not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"): # [extra]
         return None
 
     if os.environ.get("GDK_BACKEND") == "wayland" and not os.environ.get("WAYLAND_DISPLAY"):
@@ -1510,6 +1562,15 @@ def ensure_display():
 
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1].endswith(".py"): # [extra]
+        import runpy
+        script_path = sys.argv[1]
+        sys.argv = sys.argv[1:]
+        try:
+            runpy.run_path(script_path, run_name="__main__")
+        except SystemExit as e:
+            return e.code or 0
+        return 0 # [extra]
     if "--debug" in sys.argv[1:] or "--verbose" in sys.argv[1:]:
         os.environ["LAUNCHER_DEBUG"] = "1"
         import logging
