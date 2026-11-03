@@ -247,6 +247,9 @@ class CacheMixin:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(PORT_DIR), env=env)
             for line in proc.stdout:
                 sys.stdout.write(line)
+                if hasattr(self, "append_log"):
+                    txt = line
+                    GLib.idle_add(lambda t=txt: self.append_log(t))
             proc.wait()
 
             def on_done():
@@ -289,6 +292,9 @@ class CacheMixin:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(PORT_DIR))
             for line in proc.stdout:
                 sys.stdout.write(line)
+                if hasattr(self, "append_log"):
+                    txt = line
+                    GLib.idle_add(lambda t=txt: self.append_log(t))
             proc.wait()
 
             def on_done():

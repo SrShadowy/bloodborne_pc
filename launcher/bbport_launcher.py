@@ -136,6 +136,7 @@ from bbport_launcher_online import OnlinePage
 from bbport_launcher_trophies import TrophiesPage
 from bbport_launcher_upscalers import UpscalerFiles
 from bbport_gamepad import GamepadNavigator
+from bbport_cache import CacheMixin
 # [extra] C-007: per-OS process specialists (bbport_proc dispatches win/linux) and the
 # F2 log drain that keeps pipes from filling (bbport_log_pump). Single source for both
 # LauncherWindow (this file, the live path) and GameRunnerMixin.
@@ -166,7 +167,7 @@ def setup_icons():
 
 
 # The window's pages and lists live in the bbport_launcher_*.py modules (mixins).
-class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFiles,
+class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFiles, CacheMixin,
                      Adw.ApplicationWindow):
     def __init__(self, app):
         setup_icons()
@@ -418,6 +419,7 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.update_game_status()
         self.update_user_status()
         self.update_upscaler_status()
+        self.update_cache_status()
         if hasattr(self, "gamepad_nav") and self.gamepad_nav and self.gamepad_nav.pad_handle:
             self.set_gamepad_hints_visible(True, self.gamepad_nav.pad_name)
 
@@ -427,6 +429,8 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.section_name = row.section
         if row.section == "trophies":
             self.refresh_trophies()  # the game may have unlocked some since
+        elif row.section == "graphics":
+            self.update_cache_status()
         self.stack.set_visible_child_name(row.section)
         self.content_page.set_title(self.section_titles[row.section])
         self.split.set_show_content(True)
@@ -751,6 +755,34 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         sec["graphics"].add(upscaler)
         sec["graphics"].add(quality)
         sec["graphics"].add(libraries)
+
+        # Shader Cache & Precompilation (Grimório)
+        shader_cache = Adw.PreferencesGroup(
+            title=tr("Кэш шейдеров и Grimório"),
+            description=tr("Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório")
+        )
+        self.precompile_cache_row = Adw.ActionRow(
+            title=tr("Pré-compilar Shaders"),
+            subtitle=tr("Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo")
+        )
+        self.precompile_cache_button = Gtk.Button(label=tr("Pré-compilar…"), valign=Gtk.Align.CENTER)
+        self.precompile_cache_button.connect("clicked", self.on_precompile_shaders)
+        self.precompile_cache_row.add_suffix(self.precompile_cache_button)
+        shader_cache.add(self.precompile_cache_row)
+
+        self.clear_cache_row = Adw.ActionRow(title=tr("Кэш шейдеров"))
+        self.clear_cache_button = Gtk.Button(label=tr("Очистить…"), valign=Gtk.Align.CENTER)
+        self.clear_cache_button.connect("clicked", self.on_clear_shaders)
+        self.clear_cache_row.add_suffix(self.clear_cache_button)
+        shader_cache.add(self.clear_cache_row)
+
+        self.static_catalog_row = Adw.ActionRow(title=tr("Catálogo Estático"))
+        self.static_catalog_button = Gtk.Button(label=tr("Extrair…"), valign=Gtk.Align.CENTER)
+        self.static_catalog_button.connect("clicked", self.on_extract_static_catalog)
+        self.static_catalog_row.add_suffix(self.static_catalog_button)
+        shader_cache.add(self.static_catalog_row)
+
+        sec["graphics"].add(shader_cache)
 
         effects = Adw.PreferencesGroup(title=tr("Эффекты игры"),
                                        description=tr("Патчи игры, применяются при запуске"))

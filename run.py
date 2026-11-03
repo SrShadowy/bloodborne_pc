@@ -187,9 +187,67 @@ def large_scene_memory(env, scene):
         setdefault(env, 'BB_DMEM_MB', '9152')
 
 
+def precompile_shaders(extra_args=(), env=None, on_line=None):
+    """Executes offline pipeline reconstruction and shader pack consolidation."""
+    env = dict(os.environ if env is None else env)
+    data = Path(env.get('BB_DATA_DIR') or PACKAGE_DIR)
+    user = Path(env.get('BB_USER_DIR') or data / 'user')
+    bindir = PACKAGE_DIR / 'bin'
+
+    precompile_bin = None
+    for cand in (bindir / 'pipeline-reconstruct-test.exe',
+                 PACKAGE_DIR / 'out' / 'win-native' / 'pipeline-reconstruct-test.exe',
+                 PACKAGE_DIR / 'out' / 'win-dev' / 'pipeline-reconstruct-test.exe',
+                 PACKAGE_DIR / 'out' / 'pipeline-reconstruct-test.exe',
+                 PACKAGE_DIR / 'pipeline-reconstruct-test.exe',
+                 PORT_DIR / 'bin' / 'pipeline-reconstruct-test.exe',
+                 PORT_DIR / 'out' / 'win-native' / 'pipeline-reconstruct-test.exe',
+                 PORT_DIR / 'out' / 'win-dev' / 'pipeline-reconstruct-test.exe'):
+        if cand.is_file():
+            precompile_bin = cand
+            break
+
+    if not precompile_bin:
+        log('[Shaders] Error: pipeline-reconstruct-test.exe not found! Please build the target first.')
+        return 1
+
+    if sys.platform == 'win32':
+        paths_to_add = [str(precompile_bin.parent)]
+        dist_bins = list(PORT_DIR.glob('dist/*/bin'))
+        if dist_bins:
+            paths_to_add.append(str(dist_bins[0]))
+        if Path('C:/msys64/clang64/bin').is_dir():
+            paths_to_add.append('C:/msys64/clang64/bin')
+        existing_path = env.get('PATH', os.environ.get('PATH', ''))
+        env['PATH'] = ';'.join(paths_to_add) + ';' + existing_path
+
+    cmd = [str(precompile_bin), str(user), '--headless', *extra_args]
+    log(f'[Shaders] Starting offline shader precompilation: {" ".join(cmd)}')
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                cwd=str(data), env=env, text=True, encoding='utf-8', errors='replace',
+                                creationflags=NO_WINDOW)
+        for line in proc.stdout:
+            line_str = line.rstrip('\r\n')
+            log(line_str)
+            if on_line:
+                on_line(line_str)
+        proc.wait()
+        log(f'[Shaders] Precompilation finished with exit code {proc.returncode}')
+        return proc.returncode
+    except Exception as e:
+        log(f'[Shaders] Error during precompile: {e}')
+        return 1
+
+
 def run(extra_args=(), env=None, on_line=None):
     """Prepares and runs the game; the exit code. on_line(text) gets every line of output."""
     global _log_file
+    is_precompile = ('--precompile-shaders' in extra_args) or ('--precompile-shaders' in sys.argv)
+    if is_precompile:
+        clean_args = [a for a in extra_args if a != '--precompile-shaders']
+        return precompile_shaders(clean_args, env=env, on_line=on_line)
+
     env = dict(os.environ if env is None else env)
     # A test build's diagnostics: test-env.txt next to the package, KEY=VALUE lines (# comments),
     # under what the player set.
@@ -349,6 +407,7 @@ def run(extra_args=(), env=None, on_line=None):
         if 'BB_IMAGE_SHAPES' not in env and (PACKAGE_DIR / 'image_shapes.txt').is_file():
             env['BB_IMAGE_SHAPES'] = str(PACKAGE_DIR / 'image_shapes.txt')
         setdefault(env, 'BB_SHADER_GAME_DIR', str(original_game))
+        os.environ.update(env)
         online(env, user, bindir)
         probe = Path(env.get('BB_PROBE', ''))
         if not probe.is_file():

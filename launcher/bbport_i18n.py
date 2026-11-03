@@ -1224,6 +1224,21 @@ PT = {
     "Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%": "Ultra Performance (360p) corta mais de 55% da carga de shaders",
     "Прямой импорт памяти (Zero-Copy Host Import)": "Importação Direta de Memória (Zero-Copy Host)",
     "Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV": "Usa VK_EXT_external_memory_host sem interceptações SIGSEGV na CPU",
+    "Кэш шейдеров и Grimório": "Shader Cache & Grimoire",
+    "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório": "Vulkan shader cache management, precompilation and Grimoire",
+    "Pré-compilar Shaders": "Precompile Shaders",
+    "Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo": "Precompiles and warms up Grimoire pipelines in the GPU driver before launch",
+    "Pré-compilar…": "Precompile…",
+    "Pré-compilando…": "Precompiling…",
+    "Catálogo Estático": "Static Catalog",
+    "Extrair…": "Extract…",
+    "Extraindo…": "Extracting…",
+    "Catálogo estático extraído com sucesso! 4.376 shaders indexados.": "Static catalog extracted successfully! 4,376 shaders indexed.",
+    "Erro durante a extração do catálogo estático.": "Error during static catalog extraction.",
+    "Shaders pré-compilados com sucesso! Grimório atualizado.": "Shaders precompiled successfully! Grimoire updated.",
+    "Erro durante a pré-compilação de shaders.": "Error during shader precompilation.",
+    "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Cannot precompile while the game is running. Close the game first.",
+    "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Cannot extract while the game is running. Close the game first.",
 }
 
 PT_BR = {
@@ -1971,6 +1986,21 @@ PT_BR = {
     "Золотой": "Ouro",
     "Серебряный": "Prata",
     "Бронзовый": "Bronze",
+    "Кэш шейдеров и Grimório": "Cache de Shaders & Grimório",
+    "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório": "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório",
+    "Pré-compilar Shaders": "Pré-compilar Shaders",
+    "Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo": "Reconstrói e pré-aquece as pipelines do Grimório na GPU antes de abrir o jogo",
+    "Pré-compilar…": "Pré-compilar…",
+    "Pré-compilando…": "Pré-compilando…",
+    "Catálogo Estático": "Catálogo Estático",
+    "Extrair…": "Extrair…",
+    "Extraindo…": "Extraindo…",
+    "Catálogo estático extraído com sucesso! 4.376 shaders indexados.": "Catálogo estático extraído com sucesso! 4.376 shaders indexados.",
+    "Erro durante a extração do catálogo estático.": "Erro durante a extração do catálogo estático.",
+    "Shaders pré-compilados com sucesso! Grimório atualizado.": "Shaders pré-compilados com sucesso! Grimório atualizado.",
+    "Erro durante a pré-compilação de shaders.": "Erro durante a pré-compilação de shaders.",
+    "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.",
+    "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.",
 }
 
 

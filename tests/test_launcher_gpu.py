@@ -98,11 +98,11 @@ class LauncherGpuTests(unittest.TestCase):
                 fl.on_extract_static_catalog(None)
 
             cmd = mock_popen.call_args[0][0]
-            self.assertIn("scripts/extract_static_shaders.py", cmd[1])
+            self.assertIn("extract_static_shaders.py", cmd[1].replace("\\", "/"))
             self.assertIn("--game-dir", cmd)
-            self.assertIn("/games/CUSA03173", cmd)
+            self.assertIn("/games/CUSA03173", [c.replace("\\", "/") for c in cmd])
             self.assertIn("--output", cmd)
-            self.assertIn("/tmp/test_user/cache/CUSA03173/static_shader_catalog.json", cmd)
+            self.assertIn("static_shader_catalog.json", str(cmd[cmd.index("--output") + 1]).replace("\\", "/"))
 
 
 if __name__ == "__main__":

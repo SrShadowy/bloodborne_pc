@@ -6,14 +6,20 @@
 #include "common/elf_info.h"
 #include "common/path_util.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <mutex>
 #include <shared_mutex>
+#include <thread>
 
 namespace BbVkPipelineCache {
 
@@ -50,9 +56,91 @@ std::uint64_t s_saved_creates = 0;     // creations covered by the last successf
 std::atomic<std::int64_t> s_last_create_ns{0}; // steady-clock ns of the newest create
 Clock::time_point s_last_save{};       // last save attempt (present thread only)
 std::uint64_t s_stats_line_creates = 0; // creations covered by the last metrics line (present thread only)
-// shortcut: heuristic lull/backoff for the periodic save; the mutex is what makes it safe
-constexpr std::int64_t kLullNs = 2'000'000'000;     // save only 2 s after the newest create
-constexpr std::int64_t kBackoffNs = 5'000'000'000;  // and at most one save per 5 s
+// heuristic lull/backoff for periodic save
+constexpr std::int64_t kLullNs = 3'000'000'000;     // save 3 s after the newest create
+constexpr std::int64_t kBackoffNs = 15'000'000'000; // at most one save trigger per 15 s
+
+// Background thread state to ensure disk I/O and cache serialization never stall the render/present thread
+std::atomic<bool> s_stop_worker{false};
+std::atomic<bool> s_save_requested{false};
+std::mutex s_worker_mutex;
+std::condition_variable s_worker_cv;
+std::thread s_worker_thread;
+
+void BackgroundWorker() {
+    while (!s_stop_worker.load(std::memory_order_relaxed)) {
+        {
+            std::unique_lock lk(s_worker_mutex);
+            s_worker_cv.wait_for(lk, std::chrono::seconds(2), [] {
+                return s_save_requested.load(std::memory_order_relaxed) ||
+                       s_stop_worker.load(std::memory_order_relaxed);
+            });
+        }
+        if (s_stop_worker.load(std::memory_order_relaxed)) {
+            break;
+        }
+        if (!s_save_requested.exchange(false, std::memory_order_acq_rel)) {
+            continue;
+        }
+
+        // Wait for a compile storm to settle
+        const auto now = Clock::now().time_since_epoch().count();
+        const auto last_c = s_last_create_ns.load(std::memory_order_relaxed);
+        if (now - last_c < kLullNs) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            s_save_requested.store(true, std::memory_order_release);
+            continue;
+        }
+
+        std::vector<uint8_t> data;
+        uint64_t covered_creates = 0;
+        if (s_device && s_cache && !s_status.cold_forced) {
+            // Hold s_mutex exclusively ONLY during the in-memory RAM query (<1 ms), releasing it immediately
+            std::lock_guard lock(s_mutex);
+            covered_creates = s_creates.load(std::memory_order_relaxed);
+            if (covered_creates != s_saved_creates) {
+                size_t data_size = 0;
+                const auto res1 = s_device.getPipelineCacheData(s_cache, &data_size, nullptr);
+                if (res1 == vk::Result::eSuccess && data_size > sizeof(PipelineCacheHeader)) {
+                    data.resize(data_size);
+                    const auto res2 = s_device.getPipelineCacheData(s_cache, &data_size, data.data());
+                    if (res2 != vk::Result::eSuccess) {
+                        data.clear();
+                    }
+                }
+            }
+        }
+
+        if (data.empty()) {
+            continue;
+        }
+
+        // Gentle pause so background disk writing never contests execution time with the game
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        const auto final_dir = ResolveCacheDir({});
+        std::error_code ec;
+        std::filesystem::create_directories(final_dir, ec);
+        const auto tmp_p = final_dir / (std::string(DRIVER_CACHE_NAME) + ".tmp");
+        const auto final_p = final_dir / DRIVER_CACHE_NAME;
+
+        std::ofstream f(tmp_p, std::ios::binary | std::ios::trunc);
+        if (f.is_open()) {
+            f.write(reinterpret_cast<const char*>(data.data()), data.size());
+            f.close();
+            if (f.good()) {
+                std::filesystem::rename(tmp_p, final_p, ec);
+                if (!ec) {
+                    s_saved_creates = covered_creates;
+                    std::printf("[Shaders] VkPipelineCache: (background) Saved %zu bytes to %s\n",
+                                data.size(), final_p.string().c_str());
+                }
+            } else {
+                std::filesystem::remove(tmp_p, ec);
+            }
+        }
+    }
+}
 
 } // namespace
 
@@ -84,7 +172,37 @@ std::vector<uint8_t> LoadDriverCache(vk::PhysicalDevice physical_device, const s
     }
 
     const auto final_dir = ResolveCacheDir(cache_dir);
-    const auto p = final_dir / DRIVER_CACHE_NAME;
+    auto p = final_dir / DRIVER_CACHE_NAME;
+    if (!std::filesystem::exists(p)) {
+        // Check candidate directories if not found in final_dir
+        const auto serial = Common::ElfInfo::Instance().GameSerial();
+        const std::string s = serial.empty() ? "CUSA03173" : std::string(serial);
+        std::vector<std::filesystem::path> candidates;
+        if (const char* port_dir = std::getenv("BB_PORT_DIR")) {
+            candidates.push_back(std::filesystem::path(port_dir) / "user/cache" / s / DRIVER_CACHE_NAME);
+        }
+        if (const char* app_dir = std::getenv("APPDIR")) {
+            candidates.push_back(std::filesystem::path(app_dir) / "user/cache" / s / DRIVER_CACHE_NAME);
+        }
+        candidates.push_back(std::filesystem::path("user/cache") / s / DRIVER_CACHE_NAME);
+        candidates.push_back(std::filesystem::path("../user/cache") / s / DRIVER_CACHE_NAME);
+        candidates.push_back(std::filesystem::path("../../user/cache") / s / DRIVER_CACHE_NAME);
+        candidates.push_back(std::filesystem::path("dist/user/cache") / s / DRIVER_CACHE_NAME);
+        candidates.push_back(std::filesystem::path("../dist/user/cache") / s / DRIVER_CACHE_NAME);
+
+        for (const auto& cand : candidates) {
+            std::error_code ec;
+            if (std::filesystem::exists(cand, ec) && std::filesystem::file_size(cand, ec) > sizeof(PipelineCacheHeader)) {
+                std::filesystem::create_directories(final_dir, ec);
+                std::filesystem::copy_file(cand, p, std::filesystem::copy_options::skip_existing, ec);
+                if (!ec) {
+                    std::printf("[Shaders] VkPipelineCache: Imported persistent driver cache from %s\n", cand.string().c_str());
+                    break;
+                }
+            }
+        }
+    }
+
     if (!std::filesystem::exists(p)) {
         return {};
     }
@@ -135,19 +253,26 @@ bool SaveDriverCache(vk::Device device, vk::PipelineCache cache, const std::file
         return false;
     }
 
-    size_t data_size = 0;
-    const auto res1 = device.getPipelineCacheData(cache, &data_size, nullptr);
-    if (res1 != vk::Result::eSuccess || data_size <= sizeof(PipelineCacheHeader)) {
-        return false;
-    }
+    std::vector<uint8_t> data;
+    {
+        // Query in-memory under lock, then release immediately before doing disk I/O
+        std::lock_guard lock{s_mutex};
+        size_t data_size = 0;
+        const auto res1 = device.getPipelineCacheData(cache, &data_size, nullptr);
+        if (res1 != vk::Result::eSuccess || data_size <= sizeof(PipelineCacheHeader)) {
+            return false;
+        }
 
-    std::vector<uint8_t> data(data_size);
-    const auto res2 = device.getPipelineCacheData(cache, &data_size, data.data());
-    if (res2 != vk::Result::eSuccess) {
-        return false;
+        data.resize(data_size);
+        const auto res2 = device.getPipelineCacheData(cache, &data_size, data.data());
+        if (res2 != vk::Result::eSuccess) {
+            return false;
+        }
     }
 
     const auto final_dir = ResolveCacheDir(cache_dir);
+    std::error_code ec;
+    std::filesystem::create_directories(final_dir, ec);
     const auto tmp_p = final_dir / (std::string(DRIVER_CACHE_NAME) + ".tmp");
     const auto final_p = final_dir / DRIVER_CACHE_NAME;
 
@@ -158,11 +283,10 @@ bool SaveDriverCache(vk::Device device, vk::PipelineCache cache, const std::file
     f.write(reinterpret_cast<const char*>(data.data()), data.size());
     f.close();
     if (!f.good()) {
-        std::filesystem::remove(tmp_p);
+        std::filesystem::remove(tmp_p, ec);
         return false;
     }
 
-    std::error_code ec;
     std::filesystem::rename(tmp_p, final_p, ec);
     if (!ec) {
         std::printf("[Shaders] VkPipelineCache: Saved %zu bytes to %s\n", data.size(), final_p.string().c_str());
@@ -195,6 +319,20 @@ vk::UniquePipelineCache Create(vk::Device device, vk::PhysicalDevice physical_de
                vk::to_string(result));
     s_device = device;
     s_cache = cache.get();
+
+    // Start background serialization worker at lowest priority
+    static std::once_flag s_worker_init_flag;
+    std::call_once(s_worker_init_flag, [] {
+        s_stop_worker = false;
+        s_worker_thread = std::thread([] {
+#ifdef _WIN32
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+#endif
+            BackgroundWorker();
+        });
+        s_worker_thread.detach();
+    });
+
     return std::move(cache);
 }
 
@@ -240,14 +378,14 @@ void FlushTick() {
     if (now - s_last_create_ns.load(std::memory_order_relaxed) < kLullNs) {
         return; // still in a compile storm (boot): wait for the lull
     }
-    // Exclusive: every PipelineCreateGuard (vkCreate*Pipelines) is done for the duration of
-    // the query — vkGetPipelineCacheData requires external synchronization against creates.
-    std::lock_guard lock{s_mutex};
+
     s_last_save = Clock::now();
-    if (creates != s_saved_creates && !s_status.cold_forced && SaveDriverCache(s_device, s_cache)) {
-        s_saved_creates = s_creates.load(std::memory_order_relaxed);
+    if (creates != s_saved_creates && !s_status.cold_forced) {
+        // Signal low-priority background worker without blocking present thread!
+        s_save_requested.store(true, std::memory_order_release);
+        s_worker_cv.notify_one();
     }
-    // On failure (and cold runs) keep s_saved_creates: retried after the backoff.
+
     // One metrics line per lull; the cold arm (BB_SHADER_COLD_RUN) prints it too — that pair
     // is the A/B measurement. hits/valid need BB_PIPELINE_STATS=1 (creation feedback).
     const BbVkPipelineStats::Stats st = BbVkPipelineStats::GetStats();
@@ -264,3 +402,4 @@ void FlushTick() {
 }
 
 } // namespace BbVkPipelineCache
+
