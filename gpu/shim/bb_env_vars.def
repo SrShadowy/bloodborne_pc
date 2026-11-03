@@ -630,6 +630,7 @@ BB_ENV(BB_UPSCALE_BEFORE_CS, DEBUG, "=hex hash: upscale before that compute shad
 BB_ENV(BB_VK_MARKERS, DEBUG, "=1: the game's debug labels as Vulkan markers")
 BB_ENV(BB_VK_VALIDATION, DEBUG, "=1: Vulkan validation layers")
 BB_ENV(BB_VK_VALIDATION_SYNC, DEBUG, "=1: Vulkan synchronization validation")
+BB_ENV(BB_VQ_STATS, DEBUG, "=1: cost of the VirtualQueries SaveProtections/Carve run ([BB VQ] every 4096 and at exit; D-019 triage)")
 BB_ENV(BB_VRAM_ACCESS_TRAP, DEBUG, "set: blocks moved to VRAM are closed to the CPU")
 BB_ENV(BB_VRAM_TRAP_RANGE, DEBUG, "=addr:size: BB_VRAM_ACCESS_TRAP only over that range")
 BB_ENV(BB_WAIT_LOG, DEBUG, "=file: the game's kernel waits written there")

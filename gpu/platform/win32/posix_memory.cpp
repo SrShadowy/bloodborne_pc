@@ -27,6 +27,8 @@
 
 #include <sys/mman.h>
 
+#include "shim/bb_env.h" // [extra]
+
 namespace {
 
 DWORD PageProtection(int prot) {
@@ -70,6 +72,75 @@ std::atomic<unsigned long long> bb_win32_virtual_protects{0};
 uintptr_t arena_begin = 0, arena_end = 0;
 std::recursive_mutex memory_mutex;
 
+// [extra] BB_VQ_STATS (NextStep D-019): cost triage of the VirtualQueries SaveProtections
+// runs on Carve's behalf — the ones left in the arena after the mprotect fix. Query count,
+// µs and the >= 5 µs share (the D-019 thresholds) print every 4096 queries and at exit; a
+// query over 1 ms prints at once, with its address and region (the 5-16 ms/GiB pathology of
+// tools/win-bench/vq_bench.c). Off by default: it times a hot path.
+struct VqStats {
+    std::atomic<unsigned long long> queries{0};
+    std::atomic<unsigned long long> total_us{0};
+    std::atomic<unsigned long long> over_5us{0};
+    std::atomic<unsigned long long> max_us{0};
+    std::atomic<unsigned long long> runs{0};   ///< SaveProtections calls
+    std::atomic<unsigned long long> carves{0}; ///< Carve calls
+};
+VqStats vq_stats;
+unsigned long long vq_freq = 1, vq_start = 0, vq_last_print = 0;
+
+unsigned long long VqNow() {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return static_cast<unsigned long long>(t.QuadPart);
+}
+
+void VqStatsPrint(const char* tag) {
+    const unsigned long long queries = vq_stats.queries.load(std::memory_order_relaxed);
+    const unsigned long long us = vq_stats.total_us.load(std::memory_order_relaxed);
+    std::fprintf(stderr,
+                 "[BB VQ] %s: %llu queries (in %llu SaveProtections runs of %llu carves), "
+                 "%.3f ms total, avg %.1f us, max %llu us, %llu >= 5 us, at %.1f s\n",
+                 tag, queries, vq_stats.runs.load(std::memory_order_relaxed),
+                 vq_stats.carves.load(std::memory_order_relaxed), us / 1000.0,
+                 queries ? double(us) / double(queries) : 0.0,
+                 vq_stats.max_us.load(std::memory_order_relaxed),
+                 vq_stats.over_5us.load(std::memory_order_relaxed),
+                 double(VqNow() - vq_start) / double(vq_freq));
+    std::fflush(stderr);
+    vq_last_print = VqNow();
+}
+
+/// [extra] The first query, every 4096th and every 10 s of activity (the watchdog's kill
+/// runs no atexit, so the interval lines are the data of a field run).
+void VqProgress(unsigned long long n) {
+    const bool hit = n == 1 || (n & 4095) == 0 || VqNow() - vq_last_print >= 10 * vq_freq;
+    if (hit) {
+        VqStatsPrint(n == 1 ? "first" : (n & 4095) == 0 ? "interval" : "tick");
+    }
+}
+
+/// [extra] A carve's 10 s line, even with no queries at all: proves the instrument is live
+/// (a boot run whose Carves never query is a negative, not a dead counter).
+void VqCarveProgress() {
+    if (vq_stats.carves.load(std::memory_order_relaxed) == 1 ||
+        VqNow() - vq_last_print >= 10 * vq_freq) {
+        VqStatsPrint("carve-tick");
+    }
+}
+
+const bool vq_stats_on = [] {
+    if (!bb_env_on("BB_VQ_STATS")) {
+        return false;
+    }
+    LARGE_INTEGER freq;
+    QueryPerformanceFrequency(&freq);
+    vq_freq = static_cast<unsigned long long>(freq.QuadPart);
+    vq_start = VqNow();
+    std::fprintf(stderr, "[BB VQ] VirtualQuery cost triage on (D-019)\n");
+    std::atexit([] { VqStatsPrint("exit"); });
+    return true;
+}();
+
 bool InArena(uintptr_t a, uintptr_t b) {
     return arena_begin && a >= arena_begin && b <= arena_end;
 }
@@ -98,9 +169,35 @@ struct ProtectionRun {
 };
 
 void SaveProtections(uintptr_t start, uintptr_t end, std::vector<ProtectionRun>& runs) {
+    if (vq_stats_on) { // [extra]
+        vq_stats.runs.fetch_add(1, std::memory_order_relaxed);
+    }
     for (uintptr_t at = start; at < end;) {
         MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(reinterpret_cast<void*>(at), &info, sizeof(info))) {
+        unsigned long long t0 = 0; // [extra]
+        if (vq_stats_on) {
+            t0 = VqNow();
+        }
+        const SIZE_T got = VirtualQuery(reinterpret_cast<void*>(at), &info, sizeof(info));
+        if (vq_stats_on) { // [extra]
+            const unsigned long long us = (VqNow() - t0) * 1000000 / vq_freq;
+            const unsigned long long n = vq_stats.queries.fetch_add(1, std::memory_order_relaxed) + 1;
+            vq_stats.total_us.fetch_add(us, std::memory_order_relaxed);
+            if (us >= 5) {
+                vq_stats.over_5us.fetch_add(1, std::memory_order_relaxed);
+            }
+            unsigned long long top = vq_stats.max_us.load(std::memory_order_relaxed);
+            while (us > top &&
+                   !vq_stats.max_us.compare_exchange_weak(top, us, std::memory_order_relaxed)) {
+            }
+            if (us >= 1000) {
+                std::fprintf(stderr, "[BB VQ] VirtualQuery at %#llx took %llu us (region %llu KiB)\n",
+                             (unsigned long long)at, us, (unsigned long long)(info.RegionSize >> 10));
+                std::fflush(stderr);
+            }
+            VqProgress(n);
+        }
+        if (!got) {
             Fail("VirtualQuery", at, 0);
         }
         const uintptr_t next =
@@ -112,6 +209,10 @@ void SaveProtections(uintptr_t start, uintptr_t end, std::vector<ProtectionRun>&
 
 /// Leaves [a, b) one placeholder piece (what was mapped there is gone; views around it stay).
 std::map<uintptr_t, Piece>::iterator Carve(uintptr_t a, uintptr_t b) {
+    if (vq_stats_on) { // [extra]
+        vq_stats.carves.fetch_add(1, std::memory_order_relaxed);
+        VqCarveProgress();
+    }
     auto first = pieces.upper_bound(a);
     --first; // the piece holding a
     auto last = pieces.lower_bound(b); // first piece starting at or after b
@@ -350,6 +451,12 @@ int munmap(void* address, size_t size) {
 /// VirtualProtect calls made by mprotect (the frame statistics' stall lines).
 unsigned long long bb_win32_protect_calls(void) {
     return bb_win32_virtual_protects.load(std::memory_order_relaxed);
+}
+
+/// [extra] BB_VQ_STATS' totals (the frame statistics' stall lines; D-019 per-frame share).
+void bb_win32_vq_stats(unsigned long long* queries, unsigned long long* us) {
+    *queries = vq_stats.queries.load(std::memory_order_relaxed);
+    *us = vq_stats.total_us.load(std::memory_order_relaxed);
 }
 
 int mprotect(void* address, size_t size, int prot) {

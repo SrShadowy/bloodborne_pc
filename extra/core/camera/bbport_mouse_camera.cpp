@@ -13,6 +13,10 @@
 #include <cstring>
 #include <numbers>
 
+#ifdef _WIN32
+#include <windows.h> // [extra] C-009: VirtualQuery before reading the camera object
+#endif
+
 namespace BbMouseCamera {
 namespace {
 
@@ -99,6 +103,28 @@ extern "C" void ApplyMouseTurn(std::uint8_t* cam, std::uint8_t* rbp, float* stic
     const float dx = g_dx.exchange(0.0f, std::memory_order_relaxed);
     const float dy = g_dy.exchange(0.0f, std::memory_order_relaxed);
     if (dx == 0.0f && dy == 0.0f) return;
+    // [extra] C-009: the hook is installed before the camera object exists and the game still
+    // calls this path (mouse button held at boot, a menu repaint). Reading cam+0x140 then faulted
+    // at address 0x140 (5/5 crashes in out/win-dev uncap runs, 2026-11-03). No camera, no turn:
+    // the accumulated mouse delta is dropped with the frame, as when raw_mouse_camera is off.
+    if (!cam || !stick) {
+        g_dx.store(0.0f, std::memory_order_relaxed);
+        g_dy.store(0.0f, std::memory_order_relaxed);
+        return;
+    }
+#ifdef _WIN32
+    // [extra] C-009: a freed (not yet null) camera reads the same way. Querying costs ~1 us and
+    // this runs once per mouse move; the cost is invisible next to the trap the turn needs.
+    MEMORY_BASIC_INFORMATION cam_info{};
+    if (!VirtualQuery(cam, &cam_info, sizeof(cam_info)) || cam_info.State != MEM_COMMIT ||
+        (cam_info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0 ||
+        reinterpret_cast<std::uintptr_t>(cam_info.BaseAddress) + cam_info.RegionSize <
+            reinterpret_cast<std::uintptr_t>(cam) + 0x1f4) {
+        g_dx.store(0.0f, std::memory_order_relaxed);
+        g_dy.store(0.0f, std::memory_order_relaxed);
+        return;
+    }
+#endif
 
     const float sens = std::clamp(s.mouse_sensitivity.load(std::memory_order_relaxed), 0.05f, 20.0f);
     const float scale = kRadiansPerCount * sens;

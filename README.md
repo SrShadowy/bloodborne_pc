@@ -103,7 +103,30 @@ Explore, reverse-engineer, and modify Bloodborne's runtime state live without ex
 
 ---
 
+### 7. Native Windows Port — Stability, Diagnostics & Memory
+
+Bloodborne now runs natively on **Windows 10/11 x86-64** (same game code, no CPU emulation): the POSIX layer of the runtime is implemented over Win32 (`gpu/platform/win32`), and guest memory is shared with Vulkan either through `VK_EXT_external_memory_host`, as private allocations, or — where the driver supports it — through **`VK_EXT_map_memory_placed`**, which maps device memory directly at the guest's addresses and removes the import step entirely. The port picks the first that works and falls back in order.
+
+The work below is a **reliability pass**: every item was reproduced first and closed with a falsification run.
+
+- **Mouse camera crash (`C-009`).** The camera hook could run before the camera object existed (mouse button held at boot, a menu repaint) and read `cam + 0x140` through a null pointer: a host fault at address `0x140`, reproducibly 5/5 in uncapped runs. The hook now validates the pointer — and, on Windows, the whole `0x1f4`-byte object via `VirtualQuery` — before touching it, and drops the frame's mouse delta when there is no camera to turn.
+- **Movie-system mutex race (`C-008`).** `Mutex is not initialized` on the audio thread during video init. The PS4 scheduler lets the creating thread keep running after `pthread_create`; the port's does not, so the created thread locked a mutex its creator had not initialized yet. `BB_THREAD_CREATOR_DELAY_MS` (default **2 ms**) restores that slack. Validated 10/10, falsified with `=0` (2/3 crashes).
+- **Launcher Play hang and Stop (`C-007`).** The launcher's two pipes filled while the game wrote, freezing the UI until Stop was pressed. A drain thread with a bounded drop-oldest queue (4 000 lines, batch publish every 250 ms) removes the backpressure structurally; Stop now terminates the process tree.
+- **Memory-scan stall.** BBSC's scan walked up to 1 TB of address space; it is clamped to the guest's 72 GB ceiling, runs once, and reports its ranges (`[BBSC MemScan]`).
+- **Save-slot I/O.** `BbscActiveSaveSlot()` now caches for 60 s behind a telemetry tag (`[BBSC Save]`) instead of hitting disk on every query.
+- **Black screen after a load.** The loading cover gives up after a **12 s** post-load timeout and hands control back (`[BBSC LoadCover]`).
+- **Cinematic loop.** The movie player counts premature stops and `skip_intro` is on by default, so the intro cannot trap the game in a fade.
+- **Invaders treated as co-op.** `IsInvaderType` covers types **2, 12 and 13**, and `IsLocalPlayerInvader()` checks both the local player and character type — an invader's death returns them home instead of reviving them in the host's world.
+- **Failed shader checks become artifacts (`F0a`).** With `BB_ASSERT_DUMP=<dir>`, a failed shader check writes that compilation's inputs as `asserts/<site>/<hash>-<perm>.bin`, replayable by `shader-corpus-test` — a reproducer without a live run. The thrown message also names the failed check.
+- **`VirtualQuery` cost triage (`BB_VQ_STATS`).** The remaining queries in `SaveProtections`/`Carve` are counted (calls, µs, slowest, per-frame share) and printed every 4096 queries and at exit. Measured on a fresh boot→title run the counters stayed at **zero**: these paths only run on partial `munmap`/`MAP_FIXED` splits, so the pathology the `mprotect` fix removed does not reach them. They are kept as instrumented debt rather than "fixed" blind.
+- **Build.** `build_windows.cmd --DEV` gives a fast Debug build in `out/win-dev` (no LTO, ccache); release builds keep LTO and ship `bbnet20.dll` (`-DBB_NET=ON`).
+
+Every knob is registered in `gpu/shim/bb_env_vars.def` and documented in [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md); the regression corpus of captured title shaders replays 32/32 byte-identical after each change.
+
+---
+
 ## 🏛️ What is bbport?
+
 
 ![The Plain Doll Curious Head Tilt](prints/ue.GIF)
 
@@ -420,6 +443,21 @@ The online module `out/gpu/libbbnet20.so` (`gpu/bbnet20`: shadPS4 v0.20 network 
 - **auser1337, illusion, emoose, and the Bloodborne modding community**: Resolution patches, game effects toggles (DoF, Chromatic Aberration), XML patch compilation, and modding tools (`patches/Bloodborne.xml`).
 - **FromSoftware & Sony Interactive Entertainment**: The original creators and publishers of Bloodborne (CUSA03173 / CUSA00900 / CUSA03023).
 
+### Windows Support, Diagnostics & Stability
+- **Native Windows layer:** `gpu/platform/win32` — the Win32 implementation of the runtime's POSIX subset (arena pieces, section views, page protections, threads), with `VK_EXT_external_memory_host`, private and `VK_EXT_map_memory_placed` paths for guest memory.
+- **`VK_EXT_map_memory_placed`** (Khronos Group): placing device memory at the guest's own addresses, which removes the import step on drivers that expose it.
+- **`vq_bench`** (`tools/win-bench`): the standalone measurement that established the `VirtualQuery` cost behind the streaming stalls (5–16 ms per GiB of touched memory).
+- **Field validation:** the Windows stability fixes `C-007` and `C-008` were confirmed on the maintainer's own machine (AMD RX 9070 XT, Adrenalin) with the launcher's packaged build, not only in automated runs. `C-009` is closed by reproduction (5/5 crashes → 0/3 after the fix) and awaits the same field check.
+- **Diagnostic knobs and corpus:** `BB_ASSERT_DUMP`, `BB_VQ_STATS`, `BB_THREAD_*`, `BB_STDOUT_FILE`, and the captured-shader corpus used as the zero-regression oracle.
+
 ### Packaging, Monitoring & System Tools
 - **[MangoHud](https://github.com/flightlessmango/MangoHud)**: Performance monitoring, FPS, and frametime tracking overlay.
 - **Nix / NixOS & AppImageKit**: Reproducible development environment (`shell.nix`) and standalone portable package creation for Linux desktops and the Steam Deck.
+
+### Built With
+- **MSYS2 (CLANG64)** — the Windows build (clang, CMake, Ninja, Python, SDL3, glslang), and **ccache** for the fast Debug loop.
+- **Vulkan SDK & validation layers** — the API and the tooling that catches state errors before they reach a frame.
+- **`llvm-symbolizer`** — how a bare crash address (`+0x9b341e`) becomes a file and a line, which is what closed C-009.
+
+### Reporting a Problem
+The game keeps a log per run under `logs/` (the launcher shows it live, and *Save log* keeps a copy). A log line names the failure site, so a report with the last `logs/` file is usually enough to reproduce it. The port prints the failure class explicitly — a `Host fault` with an address, `[Dantelion2 Panic]` from the game, or `cannot create ... guest memory` when the system is out of commit — and those three are different problems, so please paste the lines around the first one.

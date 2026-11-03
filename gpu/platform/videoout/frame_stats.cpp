@@ -37,6 +37,7 @@ extern "C" int runtime_memory_pool_fd(void);
 extern "C" void runtime_sleep_stats(uint64_t* calls, uint64_t* ns);
 #ifdef _WIN32
 extern "C" unsigned long long bb_win32_protect_calls(void); // posix_memory.cpp
+extern "C" void bb_win32_vq_stats(unsigned long long* queries, unsigned long long* us); // [extra] same
 #endif
 extern "C" void runtime_memory_trap_stats(uint64_t* wait_ns, uint64_t* apply_ns, uint64_t* calls,
                                           uint64_t* bytes);
@@ -280,6 +281,16 @@ void PrintLayerStall(bool long_frame) {
         std::printf("       Windows: %llu VirtualProtect calls\n", win_protects - last_win_protects);
     }
     last_win_protects = win_protects;
+    // [extra] What SaveProtections' VirtualQueries cost in this frame (BB_VQ_STATS, D-019).
+    static unsigned long long last_vq_queries = 0, last_vq_us = 0;
+    unsigned long long vq_queries = 0, vq_us = 0;
+    bb_win32_vq_stats(&vq_queries, &vq_us);
+    if (long_frame && vq_queries != last_vq_queries) {
+        std::printf("       Windows: %llu VirtualQuery (SaveProtections) calls, %.3f ms\n",
+                    vq_queries - last_vq_queries, (vq_us - last_vq_us) / 1000.0);
+    }
+    last_vq_queries = vq_queries;
+    last_vq_us = vq_us;
 #endif
     last_layer = layer_now;
     last_mprotects = mprotects;

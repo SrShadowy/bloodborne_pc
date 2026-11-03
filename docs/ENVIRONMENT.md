@@ -368,7 +368,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_VULKANINFO` | path of vulkaninfo for the launcher |
 | `BB_WORK_RETIRED` | =0: the recording thread and fences do not wait for retired work |
 
-## Diagnostics (283)
+## Diagnostics (284)
 
 Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame time; none is meant for playing.
 
@@ -646,6 +646,7 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_VK_MARKERS` | =1: the game's debug labels as Vulkan markers |
 | `BB_VK_VALIDATION` | =1: Vulkan validation layers |
 | `BB_VK_VALIDATION_SYNC` | =1: Vulkan synchronization validation |
+| `BB_VQ_STATS` | =1: cost of the VirtualQueries SaveProtections/Carve run ([BB VQ] every 4096 and at exit; D-019 triage) |
 | `BB_VRAM_ACCESS_TRAP` | set: blocks moved to VRAM are closed to the CPU |
 | `BB_VRAM_TRAP_RANGE` | =addr:size: BB_VRAM_ACCESS_TRAP only over that range |
 | `BB_WAIT_LOG` | =file: the game's kernel waits written there |
