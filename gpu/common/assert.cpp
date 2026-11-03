@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <string> // [extra] F0a: site no throw
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include <execinfo.h>
@@ -28,9 +29,13 @@ bool BbAssertLogEnabled() {
     return on;
 }
 
-void assert_fail_impl() {
+void assert_fail_impl(const char* site) {
     if (g_bb_assert_throws || BbAssertLogEnabled()) {
-        throw std::runtime_error("assertion failed");
+        // [extra] F0a: the site rides the exception so catches ([AssertLog], BB_ASSERT_DUMP)
+        // name the class of the failure, not just "assertion failed". Fixed prefix: assert_dump
+        // strips it when it names the artifact's directory.
+        throw std::runtime_error{site && *site ? std::string{"assertion failed: "} + site
+                                               : "assertion failed"};
     }
     if (&runtime_restarting && runtime_restarting) {
         for (;;) {
@@ -49,7 +54,7 @@ void assert_fail_impl() {
 }
 
 [[noreturn]] void unreachable_impl() {
-    assert_fail_impl();
+    assert_fail_impl("unreachable code");
     throw std::runtime_error("Unreachable code");
 }
 

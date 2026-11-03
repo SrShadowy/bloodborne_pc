@@ -5,8 +5,10 @@
 
 #include "common/logging/log.h"
 
-/// Stops the port; noreturn in practice (assert.cpp).
-void assert_fail_impl();
+/// Stops the port; noreturn in practice (assert.cpp). `site` (the failed text, if statically
+/// known) rides the std::runtime_error thrown in throws mode, so dumps/logs name the class of
+/// the failure (F0a, assert_dump.h).
+void assert_fail_impl(const char* site = nullptr);
 /// Set in the shader recipe import process on Windows (no fork there): a failed check throws
 /// std::runtime_error instead, and the translation it was in is given up alone.
 extern bool g_bb_assert_throws;
@@ -14,12 +16,11 @@ extern bool g_bb_assert_throws;
 /// skip the shader instead of stopping the port (assert.cpp; NextStep W0.0 enumeration mode).
 bool BbAssertLogEnabled();
 [[noreturn]] void unreachable_impl();
-
 #define ASSERT(cond)                                                                               \
     do {                                                                                           \
         if (!(cond)) [[unlikely]] {                                                                \
             LOG_CRITICAL(Debug, "Assertion Failed! ({})", #cond);                                  \
-            assert_fail_impl();                                                                    \
+            assert_fail_impl(#cond);                                                               \
         }                                                                                          \
     } while (false)
 
@@ -27,7 +28,7 @@ bool BbAssertLogEnabled();
     do {                                                                                           \
         if (!(cond)) [[unlikely]] {                                                                \
             LOG_CRITICAL(Debug, "Assertion Failed!\n" __VA_ARGS__);                                \
-            assert_fail_impl();                                                                    \
+            assert_fail_impl(#cond);                                                               \
         }                                                                                          \
     } while (false)
 

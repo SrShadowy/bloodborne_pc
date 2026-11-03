@@ -57,6 +57,7 @@ extern char** environ;
 #include "render/pipeline_store.h"
 #include "render/scheduler.h"
 #include "render/shader_capture.h"
+#include "render/assert_dump.h" // [extra] F0a
 #include "render/vk_draw_prep.h"
 #include "shader/backend/spirv/emit_spirv.h"
 #include "shader/info.h"
@@ -440,18 +441,41 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
 
     // BB_SHADER_CAPTURE: the inputs as they were, for the record.
     const bool capture = BbShaderCapture::Enabled();
+    const bool assert_dump = BbAssertDump::Enabled(); // [extra] F0a (assert_dump.h)
     std::optional<Shader::Info> in_info;
     const auto in_runtime_info = runtime_info;
     const auto in_binding = binding;
     // The inputs are kept in the pipeline cache too: a later build translates them again at
     // start instead of compiling while the game runs (shader_rebuild.h).
     const bool keep_input = EmulatorSettings.IsPipelineCacheEnabled();
-    if (capture || keep_input) {
+    if (capture || keep_input || assert_dump) {
         in_info.emplace(info);
         BbShaderCapture::BeginInput();
     }
-    const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
-    auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
+    const auto compile_one = [&] { // [extra] F0a: uma lambda p/ o try do dump nao reordenar o fluxo
+        const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
+        return Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
+    };
+    std::vector<u32> spv;
+    if (!assert_dump) {
+        spv = compile_one();
+    } else {
+        // [extra] F0a: a check failing inside the translator/emitter throws (BB_SHADER_ASSERT_LOG
+        // or the import path); the inputs read so far are exactly what replaying the failure
+        // needs, so WriteInput's record lands as asserts/<site>/<hash>-<perm>.bin and the throw
+        // goes on to the catches that skip the draw ([AssertLog]).
+        try {
+            spv = compile_one();
+        } catch (const std::exception& e) {
+            if (in_info) {
+                BbAssertDump::Write(e.what(), info.pgm_hash, perm_idx,
+                                    BbShaderCapture::TakeInput(*in_info, in_runtime_info,
+                                                               in_binding, code, perm_idx,
+                                                               info.flattened_ud_buf));
+            }
+            throw;
+        }
+    }
     if (keep_input) {
         PipelineStore::SaveShaderInput(
             BbShaderCapture::TakeInput(*in_info, in_runtime_info, in_binding, code, perm_idx,
