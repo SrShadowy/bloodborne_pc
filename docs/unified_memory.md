@@ -36,9 +36,10 @@ The game's memory must be GPU-visible at the game's own addresses. One of:
 | --- | --- | --- |
 | dma-buf chunks mapped at the game's addresses | Linux (Mesa: RADV, ANV, Turnip, Panfrost/PanVK) | `VK_EXT_external_memory_dma_buf`, export of host-visible memory |
 | host memory imported by the GPU | Windows (AMD, Intel, NVIDIA), Linux fallback | `VK_EXT_external_memory_host`, `minImportedHostPointerAlignment` ≤ 64 KiB |
+| Vulkan memory mapped at the game's addresses | Wine/Proton fallback, systems lacking dma-buf or host import | `VK_EXT_map_memory_placed`, `VK_KHR_map_memory2` |
 
-A third way, Vulkan memory mapped at the game's addresses (`VK_EXT_map_memory_placed`), is not
-implemented; it would suit a system that has neither.
+A third way, Vulkan memory mapped at the game's addresses (`VK_EXT_map_memory_placed`), is
+implemented as a fallback for Wine/Proton and environments that lack both `dma-buf` and working `external_memory_host`.
 
 Either way needs `bufferDeviceAddress` too (paged bindings read through a page table) and 64-bit integer and
 storage-buffer support in shaders.

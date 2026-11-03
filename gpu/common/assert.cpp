@@ -15,8 +15,21 @@ extern "C" __attribute__((weak)) volatile int runtime_restarting; // absent in t
 
 bool g_bb_assert_throws = false;
 
+// [extra] W0.0 (NextStep plan): BB_SHADER_ASSERT_LOG=1 makes a failed check throw like the
+// import path's (g_bb_assert_throws); the pipeline code catches, logs "[AssertLog]" with the
+// pipeline/shader hash and skips the draw, so ONE run lists every shader the translator rejects
+// instead of dying on the first (exit 23, then crash 139). Off by default: nothing changes
+// without it.
+bool BbAssertLogEnabled() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_SHADER_ASSERT_LOG");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+
 void assert_fail_impl() {
-    if (g_bb_assert_throws) {
+    if (g_bb_assert_throws || BbAssertLogEnabled()) {
         throw std::runtime_error("assertion failed");
     }
     if (&runtime_restarting && runtime_restarting) {

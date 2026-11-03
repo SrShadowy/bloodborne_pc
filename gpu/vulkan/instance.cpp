@@ -240,6 +240,17 @@ void Instance::ReadProperties() {
         }
         available_extensions.emplace_back(name);
     }
+#ifdef VK_EXT_map_memory_placed
+    if (std::ranges::contains(available_extensions, VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME)) { // [extra]
+        const auto placed_chain = physical_device.getProperties2<
+            vk::PhysicalDeviceProperties2, vk::PhysicalDeviceMapMemoryPlacedPropertiesEXT>();
+        min_placed_map_alignment =
+            placed_chain.get<vk::PhysicalDeviceMapMemoryPlacedPropertiesEXT>().minPlacedMemoryMapAlignment;
+        if (min_placed_map_alignment == 0) {
+            min_placed_map_alignment = 4096;
+        }
+    }
+#endif
 
     // In every log: reports of hangs and lost devices need it.
     std::printf("GPU: %s%s, %llu MiB VRAM; %s %s (%s), Vulkan %s\n",
@@ -273,7 +284,11 @@ void Instance::CreateDevice() {
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
         vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT,
         vk::PhysicalDevicePresentIdFeaturesKHR, vk::PhysicalDeviceAntiLagFeaturesAMD,
-        vk::PhysicalDeviceFaultFeaturesEXT>();
+        vk::PhysicalDeviceFaultFeaturesEXT
+#ifdef VK_EXT_map_memory_placed
+        , vk::PhysicalDeviceMapMemoryPlacedFeaturesEXT // [extra]
+#endif
+        >();
     features = query.get().features;
     const auto& vk11 = query.get<vk::PhysicalDeviceVulkan11Features>();
     vk12_features = query.get<vk::PhysicalDeviceVulkan12Features>();
@@ -357,6 +372,13 @@ void Instance::CreateDevice() {
     ext.memory_fd = enable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
     ext.dma_buf = ext.memory_fd && enable(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
     ext.memory_host = enable(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+#ifdef VK_EXT_map_memory_placed
+    if (has(VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME)) { // [extra]
+        enable(VK_KHR_MAP_MEMORY_2_EXTENSION_NAME);
+        ext.memory_placed = query.get<vk::PhysicalDeviceMapMemoryPlacedFeaturesEXT>().memoryMapPlaced &&
+                            enable(VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME);
+    }
+#endif
     if (bb_env_on("BB_GUEST_UNCACHED")) {
         ext.guest_uncached = enable(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
     }
@@ -560,6 +582,11 @@ void Instance::CreateDevice() {
     vk::PhysicalDevicePresentIdFeaturesKHR present_id{.presentId = true};
     vk::PhysicalDeviceAntiLagFeaturesAMD anti_lag{.antiLag = true};
     vk::PhysicalDeviceFaultFeaturesEXT fault{.deviceFault = true};
+#ifdef VK_EXT_map_memory_placed
+    vk::PhysicalDeviceMapMemoryPlacedFeaturesEXT memory_placed_features{ // [extra]
+        .memoryMapPlaced = true,
+    };
+#endif
 
     vk::DeviceCreateInfo create_info{
         .queueCreateInfoCount = u32(queues.size()),
@@ -602,6 +629,9 @@ void Instance::CreateDevice() {
     link_if(ext.present_id, present_id);
     link_if(ext.anti_lag, anti_lag);
     link_if(ext.device_fault, fault);
+#ifdef VK_EXT_map_memory_placed
+    link_if(ext.memory_placed, memory_placed_features); // [extra]
+#endif
 
     // DLSS (optional bridge library) needs its own device extensions on NVIDIA GPUs.
     const size_t own_extensions = enabled.size();
@@ -661,6 +691,10 @@ void Instance::CreateDevice() {
     require(ext.memory_host,
             reinterpret_cast<const void*>(dispatch.vkGetMemoryHostPointerPropertiesEXT),
             VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+#ifdef VK_EXT_map_memory_placed
+    require(ext.memory_placed, reinterpret_cast<const void*>(dispatch.vkMapMemory2KHR), // [extra]
+            VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME); // [extra]
+#endif
     ASSERT_MSG(dispatch.vkCmdPushDescriptorSetKHR,
                "the driver does not resolve vkCmdPushDescriptorSetKHR (VK_KHR_push_descriptor)");
     if (dlss) {

@@ -1,6 +1,7 @@
 out/
 __pycache__/
 user/
+.venv/
 *.mp4
 bbport.ini
 fsr4_shaders/

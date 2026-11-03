@@ -600,6 +600,7 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_SEQUENCE_DUMP_COUNT` | =N (default 16): images per BB_SEQUENCE_DUMP_TRIGGER |
 | `BB_SEQUENCE_DUMP_TRIGGER` | =file: creating it saves the next images shown (frame generation checks) |
 | `BB_SHADER_CAPTURE` | =dir: shader inputs captured there |
+| `BB_SHADER_ASSERT_LOG` | =1: a failed shader check is logged (`[AssertLog]`, with the pipeline/shader hash) and its pipeline skipped, instead of stopping the port; enumeration runs list every shader the translator rejects in one pass |
 | `BB_SHADER_COLD_RUN` | =1: simulate first cold run without pipeline cache |
 | `BB_SHADER_DISCOVERY` | =1: discover and collect shaders during gameplay |
 | `BB_SHADER_DISCOVERY_DUMP` | path to dump discovered shaders |

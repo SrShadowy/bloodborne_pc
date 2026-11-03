@@ -43,6 +43,7 @@ extern char** environ;
 #include "common/io_file.h"
 #include "common/path_util.h"
 #include "common/serdes.h"
+#include "common/assert.h" // [extra] BbAssertLogEnabled (BB_SHADER_ASSERT_LOG=1)
 #include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "cp/command_processor.h"
@@ -235,10 +236,20 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     CompileTimer timer{BbCompileLog::Kind::Graphics, pipeline_hash};
     GraphicsPipeline::SerializationSupport sdata{};
     auto& slot = graphics_pipelines[sel.graphics_key];
-    slot = std::make_unique<GraphicsPipeline>(instance, scheduler, desc_heap, profile,
-                                              sel.graphics_key, *pipeline_cache, sel.infos,
-                                              sel.runtime_infos, sel.fetch_shader, sel.modules,
-                                              sdata, false);
+    // [extra] With BB_SHADER_ASSERT_LOG=1 a failed shader check throws (common/assert.cpp):
+    // skip the pipeline and list the offender instead of stopping the port. The cached null
+    // turns later lookups into the same skip.
+    try {
+        slot = std::make_unique<GraphicsPipeline>(instance, scheduler, desc_heap, profile,
+                                                  sel.graphics_key, *pipeline_cache, sel.infos,
+                                                  sel.runtime_infos, sel.fetch_shader, sel.modules,
+                                                  sdata, false);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[AssertLog] graphics pipeline %#llx failed: %s (draws skipped)\n",
+                     (unsigned long long)pipeline_hash, e.what());
+        std::fflush(stderr);
+        return nullptr;
+    }
     PipelineStore::SaveGraphics(sel.graphics_key, pipeline_hash, sdata);
     sel.fetch_shader.reset();
     return slot.get();
@@ -300,9 +311,21 @@ const GraphicsPipeline* PipelineCache::CompileInBackground(const PipelineSelecti
                       modules = selection.modules]() mutable {
         const auto start = std::chrono::steady_clock::now();
         GraphicsPipeline::SerializationSupport sdata{};
-        auto pipeline = std::make_unique<GraphicsPipeline>(
-            instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos, runtime_infos,
-            fetch, modules, sdata, false);
+        std::unique_ptr<GraphicsPipeline> pipeline;
+        // [extra] BB_SHADER_ASSERT_LOG=1: a failed check throws (common/assert.cpp); keep this
+        // worker and the game alive, the pipeline's draws skipped. job.saved keeps the partial
+        // serialization data out of PipelineStore (FinishPipeline only saves when !saved).
+        try {
+            pipeline = std::make_unique<GraphicsPipeline>(
+                instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,
+                runtime_infos, fetch, modules, sdata, false);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                         "[AssertLog] background graphics pipeline %#llx failed: %s (draws skipped)\n",
+                         (unsigned long long)std::hash<GraphicsPipelineKey>{}(key), e.what());
+            std::fflush(stderr);
+            job->saved = true;
+        }
         BbCompileLog::Record(BbCompileLog::Kind::Background, std::hash<GraphicsPipelineKey>{}(key),
                              start);
         std::scoped_lock lk{job->mutex};
@@ -382,9 +405,20 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         if (CompileTrace()) std::printf("Compile: compute pipeline %#llx\n", (unsigned long long)std::hash<ComputePipelineKey>{}(compute_key));
         CompileTimer timer{BbCompileLog::Kind::Compute, std::hash<ComputePipelineKey>{}(compute_key)};
         ComputePipeline::SerializationSupport sdata{};
-        it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
-                                                       *pipeline_cache, compute_key, *sel.infos[0],
-                                                       sel.modules[0], sdata, false);
+        // [extra] BB_SHADER_ASSERT_LOG=1: skip a failed compute pipeline, do not die on it.
+        try {
+            it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
+                                                           *pipeline_cache, compute_key,
+                                                           *sel.infos[0], sel.modules[0], sdata,
+                                                           false);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                         "[AssertLog] compute pipeline %#llx failed: %s (dispatches skipped)\n",
+                         (unsigned long long)std::hash<ComputePipelineKey>{}(compute_key),
+                         e.what());
+            std::fflush(stderr);
+            return nullptr;
+        }
         PipelineStore::SaveCompute(compute_key, sdata);
     }
     return it->second.get();
@@ -395,6 +429,11 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
                                               Shader::Backend::Bindings& binding) {
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
+    if (BbAssertLogEnabled()) {
+        // [extra] enumeration run: this hash names the offender a later [AssertLog] line reports.
+        std::printf("[AssertLog] shader %#llx stage %u permutation %zu\n",
+                    (unsigned long long)info.pgm_hash, u32(info.hw_stage), perm_idx);
+    }
     if (CompileTrace()) std::printf("Compile: shader %#llx stage %u permutation %zu%s\n", (unsigned long long)info.pgm_hash, u32(info.hw_stage), perm_idx, runtime_info.hw_stage == Shader::HwStage::Vertex && runtime_info.hw.vs.motion_vectors ? " (motion)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
     CompileTimer timer{BbCompileLog::Kind::Shader, info.pgm_hash, u8(info.hw_stage), u16(perm_idx)};

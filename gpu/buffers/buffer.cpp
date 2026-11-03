@@ -84,10 +84,11 @@ vk::Buffer CreateArena(vk::Device device, VmaAllocator allocator,
                        vk::BufferCreateInfo& create_info) {
     create_info.flags |=
         vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency;
+    const auto handle_type = BbGuestMemory::HandleType(); // [extra]
     const vk::ExternalMemoryBufferCreateInfo external{
-        .handleTypes = BbGuestMemory::HandleType(),
+        .handleTypes = handle_type,
     };
-    create_info.pNext = &external;
+    create_info.pNext = handle_type != vk::ExternalMemoryHandleTypeFlagBits{} ? &external : nullptr; // [extra]
     const auto [result, buffer] = device.createBuffer(create_info);
     create_info.pNext = nullptr;
     if (result != vk::Result::eSuccess) {
@@ -231,8 +232,9 @@ Buffer::Buffer(const Vulkan::Instance& instance, u64 size_bytes_, vk::DeviceMemo
                std::string_view debug_name)
     : size_bytes{size_bytes_}, mem_type{MemoryType::HostCached},
       buffer{instance.GetDevice(), instance.GetAllocator()} {
+    const auto handle_type = BbGuestMemory::HandleType(); // [extra]
     const vk::ExternalMemoryBufferCreateInfo external{
-        .handleTypes = BbGuestMemory::HandleType(),
+        .handleTypes = handle_type,
     };
     const bool layer = BbGuestMemory::LayerMemory();
     vk::BufferUsageFlags usage =
@@ -246,7 +248,7 @@ Buffer::Buffer(const Vulkan::Instance& instance, u64 size_bytes_, vk::DeviceMemo
     }
     const auto device = instance.GetDevice();
     buffer.buffer = Vulkan::Check(device.createBuffer({
-        .pNext = &external,
+        .pNext = handle_type != vk::ExternalMemoryHandleTypeFlagBits{} ? &external : nullptr, // [extra]
         .size = size_bytes,
         .usage = usage,
         .sharingMode = vk::SharingMode::eExclusive,

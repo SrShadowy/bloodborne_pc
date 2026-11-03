@@ -36,7 +36,7 @@ def script(name, *args):
         argv = sys.argv
         sys.argv = [str(path), *map(str, args)]
         try:
-            with contextlib.redirect_stdout(out):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out): # [extra]
                 runpy.run_path(str(path), run_name='__main__')
         except SystemExit as stop:
             if stop.code not in (None, 0):
@@ -45,8 +45,12 @@ def script(name, *args):
             sys.argv = argv
         text = out.getvalue()
     else:
+        # [extra] Game titles carry non-ASCII (Bloodborne™): a console code page (CP1252) writes
+        # ™ as 0x99, which UTF-8 cannot decode (prepare.py crashed the run). Pin the children to
+        # UTF-8 and never die on a stray byte from the console.
+        script_env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         done = subprocess.run([sys.executable, str(path), *map(str, args)], stdout=subprocess.PIPE,
-                              text=True, encoding='utf-8')
+                              text=True, encoding='utf-8', errors='replace', env=script_env)
         text = done.stdout
         if done.returncode != 0:
             raise RuntimeError(f'{name} failed ({done.returncode}): {text.strip()}')
@@ -212,15 +216,16 @@ def run(extra_args=(), env=None, on_line=None):
         env['BB_FRAME_STATS'] = '1'
         setdefault(env, 'BB_FRAME_LOG', str(logs / f'{stamp}.frames.csv'))
     elif sys.platform == 'win32':
-        # Windows test builds: the 10 s summaries, a per-frame CSV and slow image creations
-        # (20 ms and more) are always logged; the hot paths only read the clock every 1024
-        # draws. BB_FRAME_STATS=off (or BB_SAVE_LOG=0) leaves them out.
-        if env.get('BB_FRAME_STATS') != 'off' and env.get('BB_SAVE_LOG') != '0':
-            setdefault(env, 'BB_FRAME_STATS', '1')
+        # [extra] Frame stats were always-on for Windows test builds (10 s summaries, a
+        # per-frame CSV, slow image creations at 20 ms+): a per-frame clock read and CSV write
+        # cost real time on every frame — the opposite of "lighter" (NextStep D4, debate
+        # 2026-11-03). Now opt-in: BB_SAVE_LOG=1 (above) or BB_FRAME_STATS=1 explicitly. An
+        # inherited BB_FRAME_STATS=off (and BB_SAVE_LOG=0) is still honoured.
+        if env.get('BB_FRAME_STATS') == '1':
             setdefault(env, 'BB_FRAME_LOG', str(logs / f'{stamp}.frames.csv'))
             setdefault(env, 'BB_SLOW_BIND_LOG', '20000')
-        elif env.get('BB_FRAME_STATS') == 'off':
-            del env['BB_FRAME_STATS']
+        elif env.get('BB_FRAME_STATS') == 'off' or env.get('BB_SAVE_LOG') == '0':
+            env.pop('BB_FRAME_STATS', None)
     if sys.platform == 'win32':
         # The FSR 4 v07 set the package brings, and the FSR 4.1.1 set in the data folder (the
         # launcher copies a built one there), as run.sh looks them up: the game runs in the data
@@ -358,14 +363,31 @@ def run(extra_args=(), env=None, on_line=None):
                 '--patches', str(out / 'patches.bin'), '--app0', str(game), '--user', str(user),
                 '--timeout', env.get('BB_TIMEOUT', '0'), *extra_args]
         log('Starting ' + ' '.join(args))
-        with subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        # [extra] C-007/F0: BB_STDOUT_FILE=1 sends bb-probe's stdout/stderr straight to
+        # logs/<stamp>.probe.log, bypassing BOTH pipes in the launcher chain
+        # (launcher <- run.py <- bb-probe). Falsification of the backpressure theory for the
+        # launcher's black screen: video appearing with this set => the pipe chain was the
+        # bottleneck (F2 reader thread / F3 producer rate-limit proceed); still black => the
+        # pipes are innocent and the cause is window/present-side. The relay loop is skipped
+        # (there is no pipe to drain); the probe's full output lands in the .probe.log file.
+        probe_stdout, probe_log = subprocess.PIPE, None
+        if os.environ.get('BB_STDOUT_FILE') == '1' or env.get('BB_STDOUT_FILE') == '1':
+            probe_log = open(logs / f'{stamp}.probe.log', 'wb')
+            probe_stdout = probe_log
+            log(f'C-007/F0: bb-probe output redirected to {logs / f"{stamp}.probe.log"}')
+        with subprocess.Popen(args, env=env, stdout=probe_stdout, stderr=subprocess.STDOUT,
                               cwd=str(data), creationflags=NO_WINDOW) as game_process:
-            for raw in game_process.stdout:
-                line = raw.decode('utf-8', 'replace').rstrip('\r\n')
-                log(line)
-                if on_line:
-                    on_line(line)
+            if probe_log is None:
+                for raw in game_process.stdout:
+                    line = raw.decode('utf-8', 'replace').rstrip('\r\n')
+                    log(line)
+                    if on_line:
+                        on_line(line)
+            else:
+                log(f'C-007/F0: waiting on PID {game_process.pid} (output in the .probe.log file)')
             code = game_process.wait()
+        if probe_log is not None:
+            probe_log.close()
         log(f'— the game exited (code {code}) —')
         if code == 23:
             log('— [Diagnostics] Code 23 indicates a GPU device lost / assertion failure. If running the Windows binary via Wine/Proton on Linux, Wine does not support Vulkan host memory import (0x80) required by AMDGPU. On Linux, please use the native Linux build (run.sh)! On Windows, ensure GPU drivers are updated. —')

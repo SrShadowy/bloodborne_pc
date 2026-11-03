@@ -72,7 +72,21 @@ if(NOT magic_enum_FOUND)
     FetchContent_Declare(magic_enum GIT_REPOSITORY https://github.com/Neargye/magic_enum.git GIT_TAG v0.9.7)
     FetchContent_MakeAvailable(magic_enum)
 endif()
-find_package(tsl-robin-map REQUIRED)
+find_package(tsl-robin-map QUIET) # [extra] REQUIRED -> QUIET + FetchContent
+if(NOT tsl-robin-map_FOUND)
+    # [extra] Header-only; MSYS2 clang64 has no package for it (same pattern as magic_enum above).
+    include(FetchContent)
+    FetchContent_Declare(tsl-robin-map GIT_REPOSITORY https://github.com/Tessil/robin-map.git GIT_TAG v1.4.1)
+    FetchContent_MakeAvailable(tsl-robin-map)
+endif()
+find_package(xbyak QUIET) # [extra]
+if(NOT xbyak_FOUND)
+    # [extra] Header-only x86-64 JIT assembler; Linux gets it from the system (libxbyak-dev),
+    # MSYS2 clang64 has no package (same pattern as magic_enum above).
+    include(FetchContent)
+    FetchContent_Declare(xbyak GIT_REPOSITORY https://github.com/herumi/xbyak.git GIT_TAG v7.44)
+    FetchContent_MakeAvailable(xbyak)
+endif()
 find_package(VulkanMemoryAllocator CONFIG QUIET)
 if (NOT TARGET GPUOpen::VulkanMemoryAllocator)
     # The header alone, without its CMake package (MSYS2: include/vma/vk_mem_alloc.h).
@@ -324,7 +338,7 @@ else()
     message(STATUS "Trophy names: off (OpenSSL's libcrypto missing; unlocks shown by number)")
 endif()
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-    tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+    tsl::robin_map xbyak GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit) # [extra] +xbyak
 if (NOT WIN32)
     target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
 endif()
@@ -518,6 +532,9 @@ add_executable(shader-corpus-test EXCLUDE_FROM_ALL ../tests/test_shader_corpus.c
 target_include_directories(shader-corpus-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_options(shader-corpus-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(shader-corpus-test PRIVATE bbgpu)
+if(WIN32) # [extra] posix_win32.cpp in bbgpu needs these on Windows (winmm+winpthreads)
+    target_link_libraries(shader-corpus-test PRIVATE winmm pthread)
+endif()
 
 add_executable(srt-walker-fault-test EXCLUDE_FROM_ALL ../tests/test_srt_walker_fault.cpp
     ../tests/test_gpu_runtime_stubs.cpp)

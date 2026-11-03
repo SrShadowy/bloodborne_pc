@@ -5,6 +5,11 @@ import os
 import signal
 from bbport_config import PORT_DIR, online_module
 from bbport_i18n import tr
+# [extra] Play/Stop is platform-specific (C-007): bbport_proc.py dispatches to
+# bbport_proc_win.py (taskkill /T tree) or bbport_proc_linux.py (setsid/killpg group).
+from bbport_proc import kill_tree, spawn_argv, stop_tree
+# [extra] C-007/F2: log drain that cannot back-pressure the game (see bbport_log_pump.py).
+from bbport_log_pump import start_log_pump
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -70,17 +75,15 @@ class GameRunnerMixin:
         launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
         launcher.set_cwd(str(PORT_DIR))
         try:
-            # On Windows run.py prepares and starts the game; on Linux setsid bash run.sh is used.
-            import sys
-            if sys.platform == "win32":
-                self.process = launcher.spawnv([sys.executable, str(PORT_DIR / "run.py")])
-            else:
-                self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
+            # [extra] Spawn argv comes from the platform specialist (C-007):
+            # Windows: python run.py / POSIX: setsid bash run.sh (see bbport_proc.py).
+            self.process = launcher.spawnv(spawn_argv(PORT_DIR))
         except GLib.Error as error:
             self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
             return
         self.stream = Gio.DataInputStream.new(self.process.get_stdout_pipe())
-        self.read_line()
+        # [extra] C-007/F2: drain thread + bounded queue + batched publish (was read_line()).
+        start_log_pump(self)
         self.process.wait_async(None, self.on_exit)
         self.update_launch_button()
         if hasattr(self, "log_status_badge"):
@@ -93,8 +96,8 @@ class GameRunnerMixin:
             self.log_status_box.add_css_class("badge-success")
         self.stack.set_visible_child_name("log")
 
-    def read_line(self):
-        self.stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_line)
+    # [extra] read_line()/on_line() removed (C-007/F2): per-line read_line_async on the GTK
+    # main loop could not keep up with telemetry bursts; start_log_pump(self) replaces them.
 
     def _should_log_line(self, line: str) -> bool:
         level = getattr(self, "settings", {}).get("log_level", "verbose")
@@ -148,39 +151,23 @@ class GameRunnerMixin:
 
         return True
 
-    def on_line(self, stream, result):
-        try:
-            line, _length = stream.read_line_finish_utf8(result)
-        except GLib.Error:
-            return
-        if line is None:
-            return
-        if self._should_log_line(line):
-            self.append_log(line + "\n")
-        self.read_line()
+    # [extra] on_line() removed with read_line() (C-007/F2) — see bbport_log_pump.py.
 
     def stop_game(self):
         if not self.process:
             return
         pid = int(self.process.get_identifier())
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(pid, signal.SIGTERM)
-            except OSError:
-                self.process.force_exit()
-        else:
-            self.process.force_exit()
+        # [extra] Graceful tree stop delegated to the platform specialist (C-007):
+        # POSIX signals the setsid group; Windows walks the tree with taskkill /T (no /F,
+        # so bb-probe.exe receives WM_CLOSE and can flush its shader cache).
+        stop_tree(pid, self.process)
         GLib.timeout_add_seconds(3, self.kill_if_running, pid)
 
     def kill_if_running(self, pid):
         if self.process:
-            if hasattr(os, "killpg"):
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except OSError:
-                    pass
-            else:
-                self.process.force_exit()
+            # [extra] Forced fallback after 3 s, platform specialist (C-007):
+            # SIGKILL to the group (POSIX) / taskkill /T /F + force_exit (Windows).
+            kill_tree(pid, self.process)
         return False
 
     def on_exit(self, process, result):

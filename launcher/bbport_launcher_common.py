@@ -460,8 +460,16 @@ def online_module(pool="seamless"):
     """The online module beside the GPU library (gpu/bbnet20, both pools; a build without its
     libraries has none), or the one BB_NET_MODULE names (the folder package's online/)."""
     forced = os.environ.get("BB_NET_MODULE", "")
-    if forced:
-        return Path(forced).is_file()
+    if forced and Path(forced).is_file():
+        return True
+    if sys.platform == "win32": # [extra]
+        cand = [
+            PORT_DIR / "online" / "bbnet20.dll",
+            PORT_DIR / "bin" / "bbnet20.dll",
+            PORT_DIR / "out" / "win-native" / "bbnet20.dll",
+            PORT_DIR / "out" / "bbnet20.dll",
+        ]
+        return any(p.is_file() for p in cand) # [extra]
     name = "libbbnet20.so"
     return (PORT_DIR / ("bin" if PACKAGED else "out") / "gpu" / name).is_file()
 
@@ -660,6 +668,8 @@ def schema_text(texts):
     text where there is one, else English."""
     if not texts:
         return ""
+    if not isinstance(texts, dict): # [extra]
+        return str(texts) # [extra]
     russian = texts.get("ru", "")
     if language() == "ru":
         return russian

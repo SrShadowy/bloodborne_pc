@@ -119,12 +119,28 @@ except Exception as _err:
 
 from bbport_launcher_common import *  # noqa: F401,F403
 from bbport_config import LOG_LEVELS
+GUEST_MEMORY_MODES = [  # [extra]
+    ("Авто", "", None),
+    ("host: импорт памяти хоста (VK_EXT_external_memory_host)", "host",
+     "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)"),
+    ("dmabuf: выделение разделяемой памяти через dma-buf", "dmabuf",
+     "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows"),
+    ("private: приватные области для каждого прямого выделения", "private",
+     "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc"),
+    ("placed: отображение памяти Vulkan по адресам игры", "placed",
+     "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает"),
+]
 from bbport_launcher_content import ContentPages
 from bbport_launcher_log import LogPage
 from bbport_launcher_online import OnlinePage
 from bbport_launcher_trophies import TrophiesPage
 from bbport_launcher_upscalers import UpscalerFiles
 from bbport_gamepad import GamepadNavigator
+# [extra] C-007: per-OS process specialists (bbport_proc dispatches win/linux) and the
+# F2 log drain that keeps pipes from filling (bbport_log_pump). Single source for both
+# LauncherWindow (this file, the live path) and GameRunnerMixin.
+from bbport_log_pump import start_log_pump
+from bbport_proc import kill_tree, spawn_argv, stop_tree
 
 
 def setup_icons():
@@ -823,7 +839,25 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             self.settings.get("memory_preset", "high")
         )
         dev.add(self.memory_preset_row)
+        self.guest_memory_row = combo_row(
+            tr("Режим памяти гостя (BB_GUEST_MEMORY)"),
+            tr("Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer"),
+            GUEST_MEMORY_MODES,
+            self.settings.get("guest_memory_mode", "")
+        )
+        dev.add(self.guest_memory_row)
         sec["developer"].add(dev)
+
+        log_opt = Adw.PreferencesGroup(title=tr("Оптимизация журнала и ввода-вывода"))
+        self.log_level_row = combo_row(
+            tr("Уровень журнала"),
+            None,
+            LOG_LEVELS,
+            self.settings.get("log_level", "verbose"),
+        )
+        log_opt.add(self.log_level_row)
+        sec["developer"].add(log_opt)
+
         self.describe_rows()
         return list(sec.values())
 
@@ -848,7 +882,8 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             "mods_enabled": self.mods_enabled_row, "mangohud": self.mangohud_row,
             "save_log": self.save_log_row, "crash_diag": self.crash_diag_row,
             "frame_stats": self.stats_row, "gpu_profile": self.profile_row,
-            "vk_validation": self.validation_row, **self.camera_speed_rows, **self.effect_rows,
+            "vk_validation": self.validation_row, "log_level": getattr(self, "log_level_row", None),
+            **self.camera_speed_rows, **self.effect_rows,
         }
         # Rows whose subtitle shows a state (a path, a device): the description is a tooltip.
         stateful = {"game_dir", "user_dir", "gpu", "gamepad", "display"}
@@ -862,12 +897,15 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
                     row.set_tooltip_text(text)
                 elif hasattr(row, "show_note"):
                     row.description = text
+                    choices_data = item.get("choices", []) # [extra]
+                    if isinstance(choices_data, str):
+                        choices_data = SETTINGS_SCHEMA.get("lists", {}).get(choices_data, []) # [extra]
                     notes = {choice["value"]: schema_text(choice["description"])
-                             for choice in item.get("choices", []) if "description" in choice}
+                             for choice in choices_data if isinstance(choice, dict) and "description" in choice} # [extra]
                     if notes:
                         row.notes = [notes.get(value) for value in row.values]
                     schema_labels = {choice["value"]: schema_text(choice)
-                                     for choice in item.get("choices", []) if schema_text(choice)}
+                                     for choice in choices_data if isinstance(choice, dict) and schema_text(choice)} # [extra]
                     if schema_labels and hasattr(row, "values"):
                         selected = row.get_selected()
                         model = Gtk.StringList.new([schema_labels.get(val, row.get_model().get_string(i))
@@ -890,7 +928,6 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             LOG_LEVELS,
             self.settings.get("log_level", "verbose"),
         )
-        self.log_level_row.connect("notify::selected", lambda *_: self.store())
         log_opt.add(self.log_level_row)
         page.add(log_opt)
 
@@ -916,6 +953,13 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.validation_row = Adw.SwitchRow(title=tr("Слои валидации Vulkan"),
                                             active=self.settings.get("vk_validation", False))
         dev.add(self.validation_row)
+        self.guest_memory_row = combo_row(
+            tr("Режим памяти гостя (BB_GUEST_MEMORY)"),
+            tr("Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer"),
+            GUEST_MEMORY_MODES,
+            self.settings.get("guest_memory_mode", "")
+        )
+        dev.add(self.guest_memory_row)
         self.extra_row = Adw.EntryRow(title=tr("Доп. переменные (ИМЯ=значение через пробел)"))
         self.extra_row.set_text(self.settings.get("extra_env", ""))
         dev.add(self.extra_row)
@@ -1225,8 +1269,12 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         s["gpu_profile"] = self.profile_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.extra_row.get_text().strip()
+        if hasattr(self, "log_level_row"):
+            s["log_level"] = combo_value(self.log_level_row)
         if hasattr(self, "memory_preset_row"):
             s["memory_preset"] = combo_value(self.memory_preset_row)
+        if hasattr(self, "guest_memory_row"):
+            s["guest_memory_mode"] = combo_value(self.guest_memory_row)
         s["trophy_key"] = self.trophy_key_row.get_text().strip()
         s["mods_enabled"] = self.mods_enabled_row.get_active()
         s["online"] = self.online_row.get_active()
@@ -1336,55 +1384,47 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
         launcher.set_cwd(str(PORT_DIR))
         try:
-            # On Windows run.py prepares and starts the game; on Linux setsid bash run.sh is used.
-            if sys.platform == "win32":
-                self.process = launcher.spawnv([sys.executable, str(PORT_DIR / "run.py")])
-            else:
-                self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
+            # [extra] Spawn argv comes from the platform specialist (C-007):
+            # Windows: python run.py / POSIX: setsid bash run.sh (bbport_proc.py).
+            self.process = launcher.spawnv(spawn_argv(PORT_DIR))
         except GLib.Error as error:
             self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
             return
         self.stream = Gio.DataInputStream.new(self.process.get_stdout_pipe())
-        self.read_line()
+        # [extra] C-007/F2: dedicated drain thread + bounded queue + batched publish
+        # (backpressure on the Windows pipes froze bb-probe before its first frame).
+        start_log_pump(self)
         self.process.wait_async(None, self.on_exit)
         self.update_launch_button()
+        if hasattr(self, "log_status_badge"):
+            pid = self.process.get_identifier() if self.process else ""
+            self.log_status_badge.set_text(tr("Игра запущена (PID {})").format(pid))
+        if hasattr(self, "log_status_box"):
+            self.log_status_box.remove_css_class("badge-warning")
+            self.log_status_box.add_css_class("badge-success")
+        if hasattr(self, "log_status_icon"):
+            self.log_status_icon.set_from_icon_name("media-playback-start-symbolic")
         self.select_section("log")
 
-    def read_line(self):
-        self.stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_line)
-
-    def on_line(self, stream, result):
-        try:
-            line, _length = stream.read_line_finish_utf8(result)
-        except GLib.Error:
-            return
-        if line is None:
-            return
-        self.append_log(line + "\n")
-        self.read_line()
+    # [extra] read_line/on_line were removed (C-007/F2): per-line read_line_async on the GTK
+    # main loop saturated under telemetry bursts and back-pressured the game into the black
+    # screen. bbport_log_pump.start_log_pump(self) replaces them (drain thread + batch publish).
 
     def stop_game(self):
         if not self.process:
             return
         pid = int(self.process.get_identifier())
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(pid, signal.SIGTERM)
-            except OSError:
-                self.process.force_exit()
-        else:
-            self.process.force_exit()
+        # [extra] Graceful tree stop via the platform specialist (C-007): POSIX signals the
+        # setsid group; Windows walks the tree with taskkill /T (no /F: bb-probe's window
+        # receives WM_CLOSE and can flush its shader cache).
+        stop_tree(pid, self.process)
         GLib.timeout_add_seconds(3, self.kill_if_running, pid)
 
     def kill_if_running(self, pid):
         if self.process:
-            if hasattr(os, "killpg"):
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except OSError:
-                    pass
-            else:
-                self.process.force_exit()
+            # [extra] Forced fallback after 3 s, platform specialist (C-007):
+            # SIGKILL the group (POSIX) / taskkill /T /F + force_exit (Windows).
+            kill_tree(pid, self.process)
         return False
 
     def on_exit(self, process, result):
@@ -1396,6 +1436,13 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.process = None
         self.update_launch_button()
         self.update_game_status()
+        if hasattr(self, "log_status_badge"):
+            self.log_status_badge.set_text(tr("Игра не запущена"))
+        if hasattr(self, "log_status_box"):
+            self.log_status_box.remove_css_class("badge-success")
+            self.log_status_box.add_css_class("badge-warning")
+        if hasattr(self, "log_status_icon"):
+            self.log_status_icon.set_from_icon_name("media-playback-stop-symbolic")
         self.refresh_trophies()  # what this session unlocked, and the names once decrypted
         self.append_log(tr("\n— игра завершилась (код {}) —\n").format(status))
 

@@ -10,6 +10,9 @@ void assert_fail_impl();
 /// Set in the shader recipe import process on Windows (no fork there): a failed check throws
 /// std::runtime_error instead, and the translation it was in is given up alone.
 extern bool g_bb_assert_throws;
+/// [extra] BB_SHADER_ASSERT_LOG=1: failed checks throw too, so pipelines log "[AssertLog]" and
+/// skip the shader instead of stopping the port (assert.cpp; NextStep W0.0 enumeration mode).
+bool BbAssertLogEnabled();
 [[noreturn]] void unreachable_impl();
 
 #define ASSERT(cond)                                                                               \

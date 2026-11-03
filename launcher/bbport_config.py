@@ -254,6 +254,7 @@ DEFAULTS = {
     "crash_diag": False,
     "memory_model": "auto",
     "memory_preset": "high",
+    "guest_memory_mode": "",
     "zero_copy": True,
     "as_0_3": False,
     "gpu_profile": False,
@@ -424,6 +425,17 @@ def ngx_libraries(directory):
 def online_module(pool="seamless"):
     """The online module beside the GPU library (gpu/bbnet, or gpu/bbnet20 for shadNet / The
     Hunter's Dream pools; a build without its libraries has none)."""
+    forced = os.environ.get("BB_NET_MODULE", "")
+    if forced and Path(forced).is_file():
+        return True
+    if sys.platform == "win32": # [extra]
+        cand = [
+            PORT_DIR / "online" / "bbnet20.dll",
+            PORT_DIR / "bin" / "bbnet20.dll",
+            PORT_DIR / "out" / "win-native" / "bbnet20.dll",
+            PORT_DIR / "out" / "bbnet20.dll",
+        ]
+        return any(p.is_file() for p in cand) # [extra]
     base = PORT_DIR / ("bin" if PACKAGED else "out") / "gpu"
     name = "libbbnet.so" if pool == "legacy" else "libbbnet20.so"
     return (base / name).is_file() or (base / "libbbnet.so").is_file() or (base / "libbbnet20.so").is_file()
@@ -692,6 +704,9 @@ def game_environment(s):
             if thd_id and thd_token:
                 env["BB_HOST_ONLINE_ID"] = thd_id
                 env["BB_HOST_TOKEN"] = thd_token
+    guest_mem = s.get("guest_memory_mode", "")
+    if guest_mem in ("host", "dmabuf", "private", "placed"):
+        env["BB_GUEST_MEMORY"] = guest_mem
     for item in s["extra_env"].split():
         if "=" in item:
             key, value = item.split("=", 1)

@@ -8,6 +8,8 @@
 #include "shader/ir/reinterpret.h"
 #include "shader/profile.h"
 #include "shader/runtime_info.h"
+#include <atomic> // [extra] first-degrade log below
+#include <cstdio> // [extra]
 
 namespace Shader::Gcn {
 
@@ -62,14 +64,35 @@ bool NeedsUnormFixup(const Profile& profile, const auto& color_buffer) {
 
 } // namespace
 
+// [extra] W0.2a (NextStep, debate 2026-11-03): hardware takes COMP as a no-op when the export
+// format is a 32-bit one (Zero/R_32/GR_32/AR_32/ABGR_32) — compression only exists for the
+// 16-bit pack formats below. Some Bloodborne shaders emit compr=1 with ABGR_32; they used to
+// die in CompressedNumberFormat's UNREACHABLE. Now they take the uncompressed path, and the
+// FIRST degrade logs the shader so a live offender becomes a capture for the golden-image
+// test. Formats above ABGR_32 stay UNREACHABLE (defensive: never silently translated).
+[[nodiscard]] bool IsCompressedExportFormat(ShaderExportFormat format) {
+    return format >= ShaderExportFormat::ABGR_FP16 && format <= ShaderExportFormat::ABGR_SINT16;
+}
+
 /// The four components of an export (empty where not exported): from VGPR pairs of 16-bit
 /// values (compressed: src0 = R, G; src1 = B, A) or one VGPR each.
 static std::array<IR::F32, 4> ExportComponents(IR::IREmitter& ir, const GcnInst& inst,
                                                ShaderExportFormat format, u32 mask,
-                                               bool alpha_in_compressed) {
+                                               bool alpha_in_compressed, u64 pgm_hash) {
     std::array<IR::F32, 4> components{};
     const auto& exp = inst.control.exp;
-    if (!exp.compr) {
+    if (!exp.compr || !IsCompressedExportFormat(format)) {
+        if (exp.compr) { // [extra] degraded branch: compressed EXP with a 32-bit export format
+            static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+            if (!logged.test_and_set()) {
+                std::fprintf(stderr,
+                             "[BBPort] compressed EXP with uncompressed export format %u "
+                             "in shader %#llx: exporting raw VGPRs (hardware COMP no-op). "
+                             "If this frame renders wrong, this shader is the W0.2 golden candidate.\n",
+                             static_cast<u32>(format), (unsigned long long)pgm_hash);
+                std::fflush(stderr);
+            }
+        }
         mask = ExportedComponents(mask, format);
         for (u32 i = 0; i < 4; i++, mask >>= 1) {
             if (mask & 1) {
@@ -110,7 +133,8 @@ void Translator::ExportRenderTarget(const GcnInst& inst) {
     if (color_buffer.export_format == ShaderExportFormat::Zero || exp.en == 0) {
         return;
     }
-    const auto components = ExportComponents(ir, inst, color_buffer.export_format, exp.en, true);
+    const auto components =
+        ExportComponents(ir, inst, color_buffer.export_format, exp.en, true, info.pgm_hash);
     // Hosts whose float to 8-bit unorm rounding is off get a bias.
     const bool unorm_fixup = NeedsUnormFixup(profile, color_buffer);
     for (u32 i = 0; i < 4; ++i) {
@@ -134,7 +158,8 @@ void Translator::ExportDepth(const GcnInst& inst) {
     const auto& fs = runtime_info.hw.fs;
     // (Compressed: no sample mask from the high half of the second pair.)
     const auto components =
-        ExportComponents(ir, inst, fs.z_export_format, exp.en & fs.mrtz_mask, false);
+        ExportComponents(ir, inst, fs.z_export_format, exp.en & fs.mrtz_mask, false,
+                         info.pgm_hash);
     static constexpr std::array MrtzBuiltins = {IR::Attribute::Depth, IR::Attribute::StencilRef,
                                                 IR::Attribute::SampleMask, IR::Attribute::Null};
     for (u32 i = 0; i < 4; ++i) {

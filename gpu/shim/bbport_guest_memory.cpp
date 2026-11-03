@@ -190,6 +190,7 @@ bool Usable(const Vulkan::Instance& instance) {
         const bool force_host = forced && std::string_view{forced} == "host";
         const bool force_dmabuf = forced && std::string_view{forced} == "dmabuf";
         const bool force_private = forced && std::string_view{forced} == "private";
+        const bool force_placed = forced && std::string_view{forced} == "placed"; // [extra]
 #ifndef _WIN32
         // Lazy guest memory with the layer's memory module (BB_GUEST_LAZY=1; off by default since
         // 2026-10-23: buffers across its imports kept breaking — explosions, black surfaces, GPU
@@ -241,6 +242,22 @@ bool Usable(const Vulkan::Instance& instance) {
             std::printf("Guest memory: private memory import does not work here: %s\n", private_why);
             return false;
         };
+        const auto try_placed = [&] { // [extra]
+            const char* placed_why = "";
+            if (PlacedMapWorks(instance, placed_why)) {
+                mode = Mode::PlacedMap;
+                private_regions = true;
+                std::printf("Guest memory: Vulkan memory mapped at game addresses "
+                            "(VK_EXT_map_memory_placed, alignment %llu)\n",
+                            (unsigned long long)instance.GetMinPlacedMemoryMapAlignment());
+                return true;
+            }
+            std::printf("Guest memory: placed memory map does not work here: %s\n", placed_why);
+            return false;
+        };
+        if (force_placed) { // [extra]
+            return try_placed();
+        }
         if (force_private) {
             return try_private();
         }
@@ -259,15 +276,15 @@ bool Usable(const Vulkan::Instance& instance) {
         }
 #endif
 #ifdef _WIN32
-        const bool host_first = !force_dmabuf; // no dma-buf on Windows
         static const bool is_wine = [] {
             HMODULE ntdll = GetModuleHandleA("ntdll.dll");
             return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
         }();
-        if (is_wine) {
-            std::printf("Guest memory: [Note] Running Windows build under Wine/Proton. Wine lacks "
-                        "VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT (0x80) on buffer creation; "
-                        "if AMDGPU rejects command submission, use native Linux build (run.sh)!\n");
+        const bool host_first = !force_dmabuf && !(is_wine && instance.GetVendorID() == 0x1002); // [extra]
+        if (is_wine && instance.GetVendorID() == 0x1002) {
+            std::printf("Guest memory: [Note] Running Windows build under Wine/Proton on AMD GPU (0x1002). "
+                        "Wine lacks VK_EXT_external_memory_host (0x80) on buffer creation, and AMDGPU kernel "
+                        "rejects CS on imported host memory. Please use the native Linux build (run.sh)!\n");
         }
 #else
         const bool host_first =
@@ -294,12 +311,19 @@ bool Usable(const Vulkan::Instance& instance) {
             }
             return true;
         }
+        // Third measure: VK_EXT_map_memory_placed
+        if (try_placed()) { // [extra]
+            return true; // [extra]
+        } // [extra]
         return false;
     }();
     return usable;
 }
 
 vk::ExternalMemoryHandleTypeFlagBits HandleType() {
+    if (mode == Mode::PlacedMap) { // [extra]
+        return vk::ExternalMemoryHandleTypeFlagBits{}; // [extra]
+    } // [extra]
     return mode == Mode::HostImport ? vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT
                                     : vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT;
 }
@@ -369,6 +393,17 @@ void DestroyRetiredChunks() {
         chunks_now.swap(dropped_chunks);
     }
     for (Chunk* chunk : chunks_now) {
+#ifdef VK_EXT_map_memory_placed
+        if (mode == Mode::PlacedMap && VULKAN_HPP_DEFAULT_DISPATCHER.vkUnmapMemory2KHR) { // [extra]
+            const VkMemoryUnmapInfoKHR unmap_info{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR,
+                .pNext = nullptr,
+                .flags = 0,
+                .memory = chunk->memory,
+            };
+            VULKAN_HPP_DEFAULT_DISPATCHER.vkUnmapMemory2KHR(device, &unmap_info);
+        }
+#endif
         device.destroyBuffer(chunk->buffer);
         device.freeMemory(chunk->memory);
         // Windows: the pages the import held go back to the system now that it let them go.

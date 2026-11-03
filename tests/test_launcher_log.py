@@ -90,5 +90,30 @@ class LauncherLogFilterTests(unittest.TestCase):
         self.assertEqual(self.win._all_log_lines, [])
 
 
+class LauncherLogPageTests(unittest.TestCase):
+    def setUp(self):
+        from bbport_launcher_log import LogPage
+        class MockWin(LogPage):
+            def __init__(self):
+                self.toasts = Adw.ToastOverlay()
+                self.settings = {"log_level": "verbose"}
+        self.win = MockWin()
+        self.page = self.win.build_log_page()
+
+    def test_log_page_widgets(self):
+        self.assertIsNotNone(self.win.log_status_box)
+        self.assertIsNotNone(self.win.log_status_icon)
+        self.assertIsNotNone(self.win.log_status_badge)
+        self.assertIsNotNone(self.win.log_lines_label)
+        self.assertEqual(self.win.log_lines_label.get_text(), "0 / 5000")
+
+    def test_log_page_append_updates_lines_label(self):
+        self.win.append_log("first line\n")
+        self.win.append_log("second line\n")
+        self.assertEqual(self.win.log_lines_label.get_text(), "2 / 5000")
+        self.win.on_clear_log()
+        self.assertEqual(self.win.log_lines_label.get_text(), "0 / 5000")
+
+
 if __name__ == "__main__":
     unittest.main()

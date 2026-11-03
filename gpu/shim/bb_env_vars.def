@@ -589,6 +589,7 @@ BB_ENV(BB_SECTIONS_SLOW, DEBUG, "=1 (with BB_SECTIONS): slow frames' sections at
 BB_ENV(BB_SEQUENCE_DUMP_COUNT, DEBUG, "=N (default 16): images per BB_SEQUENCE_DUMP_TRIGGER")
 BB_ENV(BB_SEQUENCE_DUMP_TRIGGER, DEBUG, "=file: creating it saves the next images shown (frame generation checks)")
 BB_ENV(BB_SHADER_CAPTURE, DEBUG, "=dir: shader inputs captured there")
+BB_ENV(BB_SHADER_ASSERT_LOG, DEBUG, "=1: a failed shader check is logged ([AssertLog]) and its pipeline skipped, not fatal (enumeration runs)")
 BB_ENV(BB_SKIP_PS, DEBUG, "=hash,...: draws with these pixel shaders left out")
 BB_ENV(BB_SLOW_BIND_LOG, DEBUG, "=microseconds: image memory binds slower than this")
 BB_ENV(BB_SPEC_MATCH_CHECK, DEBUG, "set: the built specialization must find the same one")
