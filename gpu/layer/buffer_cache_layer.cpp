@@ -1144,9 +1144,16 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
     const bool emergency =
         critical != 0 && BbStats::gc_used_bytes.load(std::memory_order_relaxed) >= critical;
     std::vector<std::pair<u64, VAddr>> wasteful; // bytes without valid blocks, start
+    // Why a pass could not act, for the log: a default run that compacts nothing has to say which
+    // filter stopped it (the age gate, the per-mirror threshold, waste between valid blocks, no
+    // room), or every acceptance run ends in the same guess.
+    size_t young = 0, below = 0, whole = 0, noroom = 0;
+    u32 oldest_young = 0; // the age of the mirror the age gate held back the longest
     for (const auto& [start, mirror] : layer_mirrors) {
         if (const auto born = layer_mirror_born.find(start);
             !emergency && born != layer_mirror_born.end() && now - born->second < min_age) {
+            ++young;
+            oldest_young = std::max(oldest_young, now - born->second);
             continue;
         }
         const u64 size = mirror->SizeBytes();
@@ -1158,6 +1165,8 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
         // the default run (7.8 MiB), so nothing was ever compacted there.
         if (waste >= LayerPolicy::MirrorMinWaste(size)) {
             wasteful.emplace_back(waste, start);
+        } else {
+            ++below;
         }
     }
     std::ranges::sort(wasteful, std::greater{});
@@ -1180,6 +1189,7 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
         // all it can drop), and copying it for a few KiB is the failure of 2026-10-25 (411
         // mirrors in 8 minutes for 0.4 GB of data on the 2 GB laptop).
         if (old_size - remade < LayerPolicy::MirrorMinWaste(old_size)) {
+            ++whole;
             continue;
         }
         // The new mirrors first: without room in VRAM for all of them this one stays as it is.
@@ -1194,6 +1204,7 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
             made.push_back(std::move(mirror));
         }
         if (made.size() != segments.size()) {
+            ++noroom;
             continue;
         }
         auto node = layer_mirrors.extract(start);
@@ -1234,6 +1245,19 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
         std::printf("Layer memory: %zu mirrors made again over their valid blocks, "
                     "%llu MiB freed\n",
                     compacted, (unsigned long long)(freed >> 20));
+    } else if (!layer_mirrors.empty()) {
+        // Nothing came back, and the run needs to say why instead of leaving it to the next
+        // acceptance run to guess: too young (the age gate), under the per-mirror threshold, waste
+        // all between valid blocks (it would come back whole), or no room for the new mirrors.
+        // Rate limited: the VRAM pressure path can call this every frame while it is short.
+        static u32 printed = 0; // coarse seconds; 0 = not yet
+        if (printed == 0 || now - printed >= 10) {
+            printed = now;
+            std::printf("Layer memory: nothing compacted: %zu young (age gate %u s, oldest %u s), "
+                        "%zu under the per-mirror waste, %zu waste between valid blocks, %zu without "
+                        "room\n",
+                        young, min_age, oldest_young, below, whole, noroom);
+        }
     }
     return freed;
 }
