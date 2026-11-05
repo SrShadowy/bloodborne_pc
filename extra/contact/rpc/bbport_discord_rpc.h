@@ -5,6 +5,11 @@
 
 namespace BbDiscordRpc {
 
+/// The BBPort Discord application: presence shows Bloodborne with the map art.
+inline constexpr const char* kBbportClientId = "1560890616811102219";
+/// shadPS4's application, kept as an option for people who prefer that card.
+inline constexpr const char* kShadps4ClientId = "1139939140494971051";
+
 /// Activity payload display data for live preview and JSON construction.
 struct ActivityDisplay {
     std::string details;

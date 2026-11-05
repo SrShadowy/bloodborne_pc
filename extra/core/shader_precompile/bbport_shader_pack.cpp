@@ -1,101 +1,73 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: 3-file optimized shader archive ("Hunter's Grimoire") implementation.
-#include "bbport_shader_pack.h"
+// bbport: the 3-file shader archive ("Hunter's Grimoire") -- the paths its files live at and the
+// helpers the rest of the module shares. The archive itself is inspected in
+// bbport_shader_pack_inspect.cpp, built in bbport_shader_pack_pack.cpp, expanded in
+// bbport_shader_pack_unpack.cpp and seeded from a shipped copy in bbport_shader_pack_restore.cpp.
+#include "bbport_shader_pack_internal.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+
 #include "common/elf_info.h"
 #include "common/path_util.h"
 
-#include <chrono>
-#include <cstdio>
-#include <cstring>
-#include <fstream>
-#include <map>
-#include <string_view>
+namespace BbShaderPack::detail {
+
+ArchivePaths PathsIn(const std::filesystem::path& cache_dir) {
+    return ArchivePaths{cache_dir / ARCHIVE_INDEX_NAME, cache_dir / ARCHIVE_SHADERS_NAME,
+                        cache_dir / ARCHIVE_METADATA_NAME};
+}
+
+std::string GameSerialOrDefault() {
+    const auto serial = Common::ElfInfo::Instance().GameSerial();
+    return serial.empty() ? std::string("CUSA03173") : std::string(serial);
+}
+
+std::filesystem::path ResolveCacheDir(const std::filesystem::path& dir) {
+    if (!dir.empty()) {
+        return dir;
+    }
+    return Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / GameSerialOrDefault();
+}
+
+std::vector<std::filesystem::path> MasterCacheCandidates(const std::string& serial) {
+    std::vector<std::filesystem::path> candidates;
+    if (const char* port_dir = std::getenv("BB_PORT_DIR")) {
+        candidates.push_back(std::filesystem::path(port_dir) / "user/cache" / serial);
+    }
+    if (const char* app_dir = std::getenv("APPDIR")) {
+        candidates.push_back(std::filesystem::path(app_dir) / "user/cache" / serial);
+    }
+    candidates.push_back(std::filesystem::path("user/cache") / serial);
+    candidates.push_back(std::filesystem::path("../user/cache") / serial);
+    candidates.push_back(std::filesystem::path("../../user/cache") / serial);
+    candidates.push_back(std::filesystem::path("dist/user/cache") / serial);
+    candidates.push_back(std::filesystem::path("../dist/user/cache") / serial);
+    return candidates;
+}
+
+bool ReadFileBytes(const std::filesystem::path& path, std::vector<std::uint8_t>& out) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return false;
+    }
+    const auto size = file.tellg();
+    if (size <= 0) {
+        return false;
+    }
+    out.resize(static_cast<std::size_t>(size));
+    file.seekg(0, std::ios::beg);
+    file.read(reinterpret_cast<char*>(out.data()), size);
+    return file.good();
+}
+
+} // namespace BbShaderPack::detail
 
 namespace BbShaderPack {
 
-namespace {
-
-bool ReadFileBytes(const std::filesystem::path& p, std::vector<uint8_t>& out) {
-    std::ifstream f(p, std::ios::binary | std::ios::ate);
-    if (!f.is_open()) return false;
-    const auto sz = f.tellg();
-    if (sz <= 0) return false;
-    out.resize(static_cast<size_t>(sz));
-    f.seekg(0, std::ios::beg);
-    f.read(reinterpret_cast<char*>(out.data()), sz);
-    return f.good();
-}
-
-} // namespace
-
-bool HasArchive(const std::filesystem::path& cache_dir) {
-    const auto p_idx = cache_dir / ARCHIVE_INDEX_NAME;
-    const auto p_spv = cache_dir / ARCHIVE_SHADERS_NAME;
-    const auto p_meta = cache_dir / ARCHIVE_METADATA_NAME;
-    return std::filesystem::exists(p_idx) && std::filesystem::exists(p_spv) &&
-           std::filesystem::exists(p_meta) && std::filesystem::file_size(p_idx) >= sizeof(ArchiveIndexHeader);
-}
-
-ArchiveStats GetArchiveStats(const std::filesystem::path& cache_dir) {
-    ArchiveStats stats{};
-    if (!HasArchive(cache_dir)) return stats;
-
-    const auto p_idx = cache_dir / ARCHIVE_INDEX_NAME;
-    const auto p_spv = cache_dir / ARCHIVE_SHADERS_NAME;
-    const auto p_meta = cache_dir / ARCHIVE_METADATA_NAME;
-
-    stats.index_file_size = std::filesystem::file_size(p_idx);
-    stats.shaders_file_size = std::filesystem::file_size(p_spv);
-    stats.meta_file_size = std::filesystem::file_size(p_meta);
-
-    std::ifstream f(p_idx, std::ios::binary);
-    if (!f.is_open()) return stats;
-
-    ArchiveIndexHeader hdr{};
-    f.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
-    if (!f.good() || hdr.magic != MAGIC_INDEX || hdr.version != ARCHIVE_VERSION) return stats;
-
-    stats.valid = true;
-    stats.shader_count = hdr.shader_count;
-    stats.pipeline_count = hdr.pipeline_count;
-    stats.title_id = std::string(hdr.title_id, strnlen(hdr.title_id, sizeof(hdr.title_id)));
-    return stats;
-}
-
-bool VerifyArchive(const std::filesystem::path& cache_dir) {
-    const auto stats = GetArchiveStats(cache_dir);
-    if (!stats.valid) return false;
-
-    std::ifstream f_idx(cache_dir / ARCHIVE_INDEX_NAME, std::ios::binary);
-    if (!f_idx.is_open()) return false;
-
-    ArchiveIndexHeader hdr{};
-    f_idx.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
-
-    for (uint32_t i = 0; i < hdr.shader_count; ++i) {
-        ArchiveShaderEntry e{};
-        f_idx.read(reinterpret_cast<char*>(&e), sizeof(e));
-        if (!f_idx.good()) return false;
-        if (e.spv_offset + e.spv_size > stats.shaders_file_size) return false;
-        if (e.meta_offset + e.meta_size > stats.meta_file_size) return false;
-    }
-
-    for (uint32_t i = 0; i < hdr.pipeline_count; ++i) {
-        ArchivePipelineEntry e{};
-        f_idx.read(reinterpret_cast<char*>(&e), sizeof(e));
-        if (!f_idx.good()) return false;
-        if (e.key_offset + e.key_size > stats.meta_file_size) return false;
-    }
-    return true;
-}
-
 void MigrateArchiveNames(const std::filesystem::path& cache_dir_param) {
-    std::filesystem::path cache_dir = cache_dir_param;
-    if (cache_dir.empty()) {
-        const auto serial = Common::ElfInfo::Instance().GameSerial();
-        const std::string s = serial.empty() ? "CUSA03173" : std::string(serial);
-        cache_dir = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / s;
-    }
+    const auto cache_dir = detail::ResolveCacheDir(cache_dir_param);
     std::error_code ec;
     const auto legacy = cache_dir / ARCHIVE_METADATA_NAME_LEGACY;
     const auto current = cache_dir / ARCHIVE_METADATA_NAME;
@@ -106,310 +78,6 @@ void MigrateArchiveNames(const std::filesystem::path& cache_dir_param) {
                         ARCHIVE_METADATA_NAME);
         }
     }
-}
-
-bool PackDirectory(const std::filesystem::path& cache_dir, const std::string& title_id) {
-    if (!std::filesystem::exists(cache_dir)) return false;
-
-    std::vector<ArchiveShaderEntry> shader_entries;
-    std::vector<ArchivePipelineEntry> pipe_entries;
-
-    const auto tmp_idx = cache_dir / (std::string(ARCHIVE_INDEX_NAME) + ".tmp");
-    const auto tmp_spv = cache_dir / (std::string(ARCHIVE_SHADERS_NAME) + ".tmp");
-    const auto tmp_meta = cache_dir / (std::string(ARCHIVE_METADATA_NAME) + ".tmp");
-
-    std::ofstream out_spv(tmp_spv, std::ios::binary | std::ios::trunc);
-    std::ofstream out_meta(tmp_meta, std::ios::binary | std::ios::trunc);
-    if (!out_spv.is_open() || !out_meta.is_open()) return false;
-
-    // 16-byte magic header for pack and meta files
-    uint32_t spv_hdr[4] = {MAGIC_SHADERS, ARCHIVE_VERSION, 0, 0};
-    uint32_t meta_hdr[4] = {MAGIC_ECHOES, ARCHIVE_VERSION, 0, 0};
-    out_spv.write(reinterpret_cast<char*>(spv_hdr), sizeof(spv_hdr));
-    out_meta.write(reinterpret_cast<char*>(meta_hdr), sizeof(meta_hdr));
-
-    uint64_t cur_spv_offset = sizeof(spv_hdr);
-    uint64_t cur_meta_offset = sizeof(meta_hdr);
-
-    std::map<uint64_t, std::filesystem::path> meta_files;
-    for (const auto& entry : std::filesystem::directory_iterator(cache_dir)) {
-        if (entry.path().extension() == ".meta") {
-            const std::string stem = entry.path().stem().string();
-            const uint64_t hash = std::strtoull(stem.c_str(), nullptr, 16);
-            if (hash != 0) meta_files[hash] = entry.path();
-        }
-    }
-
-    // 1. Pack Shaders (.spv and matching .meta)
-    for (const auto& entry : std::filesystem::directory_iterator(cache_dir)) {
-        if (entry.path().extension() == ".spv") {
-            const std::string stem = entry.path().stem().string();
-            uint64_t pgm_hash = 0;
-            uint32_t perm_idx = 0;
-            if (std::sscanf(stem.c_str(), "%llx_%u", &pgm_hash, &perm_idx) < 1) continue;
-
-            std::vector<uint8_t> spv_bytes;
-            if (!ReadFileBytes(entry.path(), spv_bytes)) continue;
-
-            ArchiveShaderEntry se{};
-            se.pgm_hash = pgm_hash;
-            se.perm_idx = perm_idx;
-            se.spv_offset = cur_spv_offset;
-            se.spv_size = static_cast<uint32_t>(spv_bytes.size());
-
-            out_spv.write(reinterpret_cast<const char*>(spv_bytes.data()), spv_bytes.size());
-            cur_spv_offset += spv_bytes.size();
-
-            auto it = meta_files.find(pgm_hash);
-            if (it != meta_files.end()) {
-                std::vector<uint8_t> meta_bytes;
-                if (ReadFileBytes(it->second, meta_bytes)) {
-                    se.meta_offset = cur_meta_offset;
-                    se.meta_size = static_cast<uint32_t>(meta_bytes.size());
-                    out_meta.write(reinterpret_cast<const char*>(meta_bytes.data()), meta_bytes.size());
-                    cur_meta_offset += meta_bytes.size();
-                }
-            }
-            shader_entries.push_back(se);
-        }
-    }
-
-    // 2. Pack Pipeline Keys (.key)
-    for (const auto& entry : std::filesystem::directory_iterator(cache_dir)) {
-        if (entry.path().extension() == ".key") {
-            const std::string stem = entry.path().stem().string();
-            uint64_t pipe_hash = 0;
-            bool is_compute = false;
-            if (stem.rfind("c_0x", 0) == 0) {
-                is_compute = true;
-                pipe_hash = std::strtoull(stem.c_str() + 2, nullptr, 16);
-            } else if (stem.rfind("g_0x", 0) == 0) {
-                pipe_hash = std::strtoull(stem.c_str() + 2, nullptr, 16);
-            } else {
-                pipe_hash = std::strtoull(stem.c_str(), nullptr, 16);
-            }
-
-            std::vector<uint8_t> key_bytes;
-            if (!ReadFileBytes(entry.path(), key_bytes)) continue;
-
-            ArchivePipelineEntry pe{};
-            pe.pipeline_hash = pipe_hash;
-            pe.is_compute = is_compute ? 1 : 0;
-            pe.key_offset = cur_meta_offset;
-            pe.key_size = static_cast<uint32_t>(key_bytes.size());
-
-            out_meta.write(reinterpret_cast<const char*>(key_bytes.data()), key_bytes.size());
-            cur_meta_offset += key_bytes.size();
-            pipe_entries.push_back(pe);
-        }
-    }
-    out_spv.close();
-    out_meta.close();
-
-    // 3. Write Index File
-    std::ofstream out_idx(tmp_idx, std::ios::binary | std::ios::trunc);
-    if (!out_idx.is_open()) return false;
-
-    ArchiveIndexHeader hdr{};
-    hdr.magic = MAGIC_INDEX;
-    hdr.version = ARCHIVE_VERSION;
-    std::strncpy(hdr.title_id, title_id.c_str(), sizeof(hdr.title_id) - 1);
-    hdr.shader_count = static_cast<uint32_t>(shader_entries.size());
-    hdr.pipeline_count = static_cast<uint32_t>(pipe_entries.size());
-    hdr.total_spv_bytes = cur_spv_offset - sizeof(spv_hdr);
-    hdr.total_meta_bytes = cur_meta_offset - sizeof(meta_hdr);
-    hdr.timestamp = static_cast<uint64_t>(std::time(nullptr));
-
-    out_idx.write(reinterpret_cast<char*>(&hdr), sizeof(hdr));
-    for (const auto& se : shader_entries) {
-        out_idx.write(reinterpret_cast<const char*>(&se), sizeof(se));
-    }
-    for (const auto& pe : pipe_entries) {
-        out_idx.write(reinterpret_cast<const char*>(&pe), sizeof(pe));
-    }
-    out_idx.close();
-
-    // Atomic rename
-    std::error_code ec;
-    std::filesystem::rename(tmp_idx, cache_dir / ARCHIVE_INDEX_NAME, ec);
-    std::filesystem::rename(tmp_spv, cache_dir / ARCHIVE_SHADERS_NAME, ec);
-    std::filesystem::rename(tmp_meta, cache_dir / ARCHIVE_METADATA_NAME, ec);
-    // The pre-rename archive name must not linger: BlobStore's *.meta glob would re-import it.
-    std::filesystem::remove(cache_dir / ARCHIVE_METADATA_NAME_LEGACY, ec);
-    return !ec;
-}
-
-bool UnpackArchive(const std::filesystem::path& cache_dir) {
-    if (!HasArchive(cache_dir)) {
-        return false;
-    }
-
-    std::ifstream f_idx(cache_dir / ARCHIVE_INDEX_NAME, std::ios::binary);
-    std::ifstream f_spv(cache_dir / ARCHIVE_SHADERS_NAME, std::ios::binary);
-    std::ifstream f_meta(cache_dir / ARCHIVE_METADATA_NAME, std::ios::binary);
-    if (!f_idx.is_open() || !f_spv.is_open() || !f_meta.is_open()) {
-        return false;
-    }
-
-    ArchiveIndexHeader hdr{};
-    f_idx.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
-    if (!f_idx.good() || hdr.magic != MAGIC_INDEX || hdr.version != ARCHIVE_VERSION) {
-        return false;
-    }
-
-    uint32_t spv_hdr[4]{};
-    uint32_t meta_hdr[4]{};
-    f_spv.read(reinterpret_cast<char*>(spv_hdr), sizeof(spv_hdr));
-    f_meta.read(reinterpret_cast<char*>(meta_hdr), sizeof(meta_hdr));
-    if (spv_hdr[0] != MAGIC_SHADERS || (meta_hdr[0] != MAGIC_META && meta_hdr[0] != MAGIC_ECHOES)) {
-        return false;
-    }
-
-    uint32_t unpacked_spv = 0;
-    uint32_t unpacked_meta = 0;
-    uint32_t unpacked_keys = 0;
-
-    for (uint32_t i = 0; i < hdr.shader_count; ++i) {
-        ArchiveShaderEntry se{};
-        f_idx.read(reinterpret_cast<char*>(&se), sizeof(se));
-        if (!f_idx.good()) {
-            break;
-        }
-
-        if (se.spv_size > 0) {
-            char name[64];
-            std::snprintf(name, sizeof(name), "0x%016llx_%u.spv",
-                          static_cast<unsigned long long>(se.pgm_hash), se.perm_idx);
-            const auto dest = cache_dir / name;
-            if (!std::filesystem::exists(dest)) {
-                std::vector<uint8_t> buf(se.spv_size);
-                f_spv.seekg(se.spv_offset, std::ios::beg);
-                f_spv.read(reinterpret_cast<char*>(buf.data()), se.spv_size);
-                if (f_spv.good()) {
-                    std::ofstream out(dest, std::ios::binary);
-                    if (out.is_open()) {
-                        out.write(reinterpret_cast<const char*>(buf.data()), buf.size());
-                        unpacked_spv++;
-                    }
-                }
-            }
-        }
-
-        if (se.meta_size > 0) {
-            char name[64];
-            std::snprintf(name, sizeof(name), "0x%016llx.meta",
-                          static_cast<unsigned long long>(se.pgm_hash));
-            const auto dest = cache_dir / name;
-            if (!std::filesystem::exists(dest)) {
-                std::vector<uint8_t> buf(se.meta_size);
-                f_meta.seekg(se.meta_offset, std::ios::beg);
-                f_meta.read(reinterpret_cast<char*>(buf.data()), se.meta_size);
-                if (f_meta.good()) {
-                    std::ofstream out(dest, std::ios::binary);
-                    if (out.is_open()) {
-                        out.write(reinterpret_cast<const char*>(buf.data()), buf.size());
-                        unpacked_meta++;
-                    }
-                }
-            }
-        }
-    }
-
-    for (uint32_t i = 0; i < hdr.pipeline_count; ++i) {
-        ArchivePipelineEntry pe{};
-        f_idx.read(reinterpret_cast<char*>(&pe), sizeof(pe));
-        if (!f_idx.good()) {
-            break;
-        }
-
-        if (pe.key_size > 0) {
-            char name[64];
-            std::snprintf(name, sizeof(name), "%s0x%016llx.key",
-                          pe.is_compute ? "c_" : "g_",
-                          static_cast<unsigned long long>(pe.pipeline_hash));
-            const auto dest = cache_dir / name;
-            if (!std::filesystem::exists(dest)) {
-                std::vector<uint8_t> buf(pe.key_size);
-                f_meta.seekg(pe.key_offset, std::ios::beg);
-                f_meta.read(reinterpret_cast<char*>(buf.data()), pe.key_size);
-                if (f_meta.good()) {
-                    std::ofstream out(dest, std::ios::binary);
-                    if (out.is_open()) {
-                        out.write(reinterpret_cast<const char*>(buf.data()), buf.size());
-                        unpacked_keys++;
-                    }
-                }
-            }
-        }
-    }
-
-    std::printf("[Shaders] BbShaderPack: Unpacked %u SPV shaders, %u metadata, and %u pipeline keys from Hunter's Grimoire\n",
-                unpacked_spv, unpacked_meta, unpacked_keys);
-    return true;
-}
-
-bool RestoreMasterCacheIfEmpty(const std::filesystem::path& cache_dir_param) {
-    const auto serial = Common::ElfInfo::Instance().GameSerial();
-    const std::string s = serial.empty() ? "CUSA03173" : std::string(serial);
-    std::filesystem::path cache_dir = cache_dir_param;
-    if (cache_dir.empty()) {
-        cache_dir = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / s;
-    }
-    std::error_code ec;
-    std::filesystem::create_directories(cache_dir, ec);
-    MigrateArchiveNames(cache_dir);
-
-    std::vector<std::filesystem::path> candidates;
-    if (const char* port_dir = std::getenv("BB_PORT_DIR")) {
-        candidates.push_back(std::filesystem::path(port_dir) / "user/cache" / s);
-    }
-    if (const char* app_dir = std::getenv("APPDIR")) {
-        candidates.push_back(std::filesystem::path(app_dir) / "user/cache" / s);
-    }
-    candidates.push_back(std::filesystem::path("user/cache") / s);
-    candidates.push_back(std::filesystem::path("../user/cache") / s);
-    candidates.push_back(std::filesystem::path("../../user/cache") / s);
-    candidates.push_back(std::filesystem::path("dist/user/cache") / s);
-    candidates.push_back(std::filesystem::path("../dist/user/cache") / s);
-
-    size_t merged = 0;
-    for (const auto& cand : candidates) {
-        if (std::filesystem::exists(cand, ec) &&
-            std::filesystem::weakly_canonical(cand, ec) != std::filesystem::weakly_canonical(cache_dir, ec)) {
-            for (const auto& entry : std::filesystem::directory_iterator(cand, ec)) {
-                const auto ext = entry.path().extension();
-                if (ext == ".pack" || ext == ".idx" || ext == ".meta" || ext == ".bmeta" ||
-                    ext == ".key" || ext == ".spv" || ext == ".bin" || ext == ".cache") {
-                    // Masters ship the pre-rename grimoire name; land it under the current one.
-                    auto dest_name = entry.path().filename();
-                    if (dest_name == ARCHIVE_METADATA_NAME_LEGACY) {
-                        dest_name = ARCHIVE_METADATA_NAME;
-                    }
-                    if (std::filesystem::copy_file(entry.path(), cache_dir / dest_name,
-                                                   std::filesystem::copy_options::skip_existing, ec)) {
-                        merged++;
-                    }
-                }
-            }
-            if (merged > 0) {
-                std::printf("[Shaders] Merged %zu master cache assets to eliminate stuttering!\n", merged);
-                break;
-            }
-        }
-    }
-
-    // If we have the 3-file archive in cache_dir, but no loose .key files, unpack them so BlobStore / discovery sees them.
-    size_t key_count = 0;
-    for (const auto& entry : std::filesystem::directory_iterator(cache_dir, ec)) {
-        if (entry.path().extension() == ".key") {
-            key_count++;
-        }
-    }
-    if (key_count == 0 && HasArchive(cache_dir)) {
-        UnpackArchive(cache_dir);
-    }
-
-    return merged > 0;
 }
 
 } // namespace BbShaderPack

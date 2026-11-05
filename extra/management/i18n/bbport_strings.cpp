@@ -1,729 +1,95 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: the localized text of the in-game settings menu and the prompt help lines. The rows live
+// in bbport_strings_table_*.cpp (one per area of the menu), each tagged with its StringId; this file
+// resolves them for the requested language.
 #include "bbport_strings.h"
-#include "bbport_settings.h"
 
-#include <algorithm>
+#include <cstddef>
+#include <iterator>
+
+#include "bbport_settings.h"
+#include "bbport_strings_internal.h"
 
 namespace BbStrings {
+namespace {
 
-struct TextGroup {
-    const char* en;
-    const char* pt_br;
-    const char* ru;
+using detail::Entry;
+using detail::Table;
+using detail::Text;
+
+/// Every table, in lookup order. Adding a section means adding its table here.
+const Table kTables[] = {
+    detail::UpscalerTable(),
+    detail::VisualsTable(),
+    detail::OutputTable(),
+    detail::EffectsTable(),
+    detail::UiTable(),
+    detail::CameraTable(),
 };
 
-static constexpr TextGroup kTable[static_cast<size_t>(StringId::Count)] = {
-    // WindowTitle
-    {
-        "Bloodborne — Settings",
-        "Bloodborne — Configurações",
-        "Bloodborne — настройки"
-    },
-    // FpsMs
-    {
-        "ms",
-        "ms",
-        "мс"
-    },
-    // SectionLanguage
-    {
-        "Language",
-        "Idioma",
-        "Язык"
-    },
-    // LanguageInterface
-    {
-        "Interface Language",
-        "Idioma da Interface",
-        "Язык интерфейса"
-    },
-    // SectionUpscaler
-    {
-        "Temporal Upscaler",
-        "Upscaler Temporal",
-        "Временной апскейлер"
-    },
-    // UpscalerCombo
-    {
-        "Upscaler",
-        "Upscaler",
-        "Апскейлер"
-    },
-    // UpscalerOff
-    {
-        "Off",
-        "Desligado",
-        "Выкл"
-    },
-    // UpscalerTaa
-    {
-        "TAA (Native AA)",
-        "TAA (Anti-aliasing Nativo)",
-        "TAA (нативное сглаживание)"
-    },
-    // UpscalerNotSupported
-    {
-        "— not supported by GPU",
-        "— não suportado pela GPU",
-        "— не поддерживается видеокартой"
-    },
-    // UpscalerWorkInProgress
-    {
-        "— work in progress",
-        "— em desenvolvimento",
-        "— в работе"
-    },
-    // Fsr4Unavailable
-    {
-        "FSR 4 unavailable",
-        "FSR 4 indisponível",
-        "FSR 4 недоступен"
-    },
-    // Fsr4ActiveModeSelected
-    {
-        "Active mode selected above. FSR 4 can be chosen again.",
-        "Modo ativo selecionado acima. O FSR 4 pode ser selecionado novamente.",
-        "Активен режим, выбранный выше. FSR 4 можно выбрать снова."
-    },
-    // HintFsr411
-    {
-        "FSR 4.1.1 in INT8 mode: model from AMD 4.1.1 DLL, replayed in Vulkan (bit-exact result). One model for Native..Performance and separate for Ultra Performance. Assets: tools/fsr4cap/build_assets.sh (needs DLL and Proton).",
-        "FSR 4.1.1 em modo INT8: modelo da DLL AMD 4.1.1, reproduzido em Vulkan (resultado idêntico à DLL). Um modelo para Native..Performance e outro para Ultra Performance. Recursos: tools/fsr4cap/build_assets.sh (requer DLL e Proton).",
-        "FSR 4.1.1 в режиме INT8: модель из DLL AMD 4.1.1, воспроизведённая в Vulkan (результат совпадает с DLL). Одна модель для Native..Performance и отдельная для Ultra Performance. Ассеты: tools/fsr4cap/build_assets.sh (нужны DLL и Proton)."
-    },
-    // HintFsr411Fp8
-    {
-        "FSR 4.1.1 in FP8 mode (Float8 cooperative matrices on RDNA4): model from AMD 4.1.1 DLL, replayed in Vulkan with native float precision.",
-        "FSR 4.1.1 em modo FP8 (Float8 / matrizes cooperativas no RDNA4): modelo da DLL AMD 4.1.1, reproduzido em Vulkan com precisão float nativa.",
-        "FSR 4.1.1 в режиме FP8 (Float8 / кооперативные матрицы RDNA4): модель из DLL AMD 4.1.1, воспроизведённая в Vulkan с точностью float."
-    },
-    // HintFsr4
-    {
-        "FSR 4 in INT8 mode (v07 model from AMD FidelityFX SDK source). Higher quality than FSR 3.1, heavier pass. Preset change rebuilds model (brief pause). Assets: tools/fetch_fsr4_assets.sh.",
-        "FSR 4 em modo INT8 (modelo v07 do código-fonte AMD FidelityFX SDK). Qualidade superior ao FSR 3.1, porém mais pesado. Mudar o preset recompila o modelo (breve pausa). Recursos: tools/fetch_fsr4_assets.sh.",
-        "FSR 4 в режиме INT8 (модель v07 из исходников AMD FidelityFX SDK). Качество выше, чем у FSR 3.1, но проход тяжелее. Смена пресета пересобирает модель (короткая пауза). Ассеты: tools/fetch_fsr4_assets.sh."
-    },
-    // Fsr4AutoExposure
-    {
-        "FSR 4: auto-exposure",
-        "FSR 4: auto-exposição",
-        "FSR 4: автоэкспозиция"
-    },
-    // Fsr4InvertJitter
-    {
-        "FSR 4: invert jitter sign",
-        "FSR 4: inverter sinal de jitter",
-        "FSR 4: инвертировать знак jitter"
-    },
-    // HintFsr4Ghosting
-    {
-        "Ghosting test: FSR 4 normalizes color by exposure and decides when to discard previous frames. Applies immediately.",
-        "Teste de ghosting: o FSR 4 normaliza a cor pela exposição e decide quando descartar quadros anteriores. Aplica-se imediatamente.",
-        "Тест на шлейфы (ghosting): FSR 4 нормирует цвет по экспозиции и по ней решает, когда отбросить прошлые кадры. Применяется сразу, без перезапуска."
-    },
-    // PresetCombo
-    {
-        "Preset",
-        "Predefinição",
-        "Пресет"
-    },
-    // PresetRenderWord
-    {
-        "render",
-        "render",
-        "рендер"
-    },
-    // HintTaa
-    {
-        "TAA antialiases scene at output resolution without FSR model or upscaling. Saved FSR preset restores upon selecting FSR.",
-        "O TAA suaviza a cena na resolução de saída, sem modelo FSR ou upscaling. O preset do FSR é restaurado ao selecioná-lo.",
-        "TAA сглаживает сцену в разрешении вывода, без модели FSR и апскейлинга. Сохранённый пресет FSR восстановится при выборе FSR."
-    },
-    // ActiveSceneRender
-    {
-        "Active scene render",
-        "Renderização ativa da cena",
-        "Активный рендер сцены"
-    },
-    // StartupPreset
-    {
-        "Startup preset",
-        "Predefinição inicial",
-        "Пресет при запуске"
-    },
-    // HintRenderResAuto
-    {
-        "Non-1080p output renders entire game at preset resolution (startup patch): fastest on Steam Deck/weak GPUs. Preset/output change requires restart. 'Dynamic Resolution Change' below enables change without restart (postprocessing stays 1080p, slower).",
-        "Em saídas diferentes de 1080p o jogo renderiza na resolução do preset (patch inicial): mais rápido no Steam Deck e GPUs modestas. Alterações exigem reinício. A opção 'Mudança de Resolução em Tempo Real' abaixo permite trocar sem reiniciar (o pós-processamento permanece em 1080p, mais lento).",
-        "При выводе не 1080p вся игра рисуется в разрешении пресета (патч при запуске): это быстрее всего на Steam Deck и слабых GPU. Смена пресета или разрешения вывода — после перезапуска. Пункт «Смена разрешения на лету» ниже включает смену без перезапуска (постобработка тогда остаётся в 1080p, медленнее)."
-    },
-    // HintRenderResManual
-    {
-        "BB_RENDER_RES fixes scene size at start. Remove this variable to change resolution and presets without restarting.",
-        "BB_RENDER_RES fixa o tamanho da cena na inicialização. Remova esta variável para alterar resoluções sem reiniciar.",
-        "BB_RENDER_RES фиксирует размер сцены при запуске. Уберите эту переменную, чтобы менять разрешение и пресеты без перезапуска игры."
-    },
-    // HintRenderResLive
-    {
-        "Native AA: FSR acts as antialiasing. Other presets reduce render resolution relative to output. UI renders at output resolution. Preset applies next frame without restart.",
-        "Native AA: o FSR age como anti-aliasing. Outros presets reduzem a resolução da cena em relação à saída. A interface renderiza na resolução de saída. Preset aplica-se no próximo quadro.",
-        "Native AA: FSR работает как сглаживание. Остальные пресеты уменьшают разрешение отрисовки сцены относительно вывода. Интерфейс рисуется в разрешении вывода. Пресет применяется со следующего кадра без перезапуска игры."
-    },
-    // SharpeningRcas
-    {
-        "Sharpening (RCAS)",
-        "Nitidez (RCAS)",
-        "Резкость (RCAS)"
-    },
-    // SharpnessIntensity
-    {
-        "Sharpness intensity",
-        "Intensidade de nitidez",
-        "Сила резкости"
-    },
-    // HintSharpness
-    {
-        "Up to 1.0 is upscaler's native RCAS. Above 1.0 adds an extra RCAS pass. Ctrl+Click to type exact value.",
-        "Até 1.0 é o RCAS nativo do upscaler. Acima de 1.0 adiciona um passe extra de RCAS. Ctrl+Clique para digitar o valor exato.",
-        "До 1 — резкость самого апскейлера (RCAS). Выше 1 добавляется ещё один проход RCAS. Ctrl+клик по ползунку — ввести точное значение."
-    },
-    // SubpixelJitter
-    {
-        "Subpixel jitter",
-        "Deslocamento subpixel (jitter)",
-        "Субпиксельный сдвиг (jitter)"
-    },
-    // HintJitter
-    {
-        "Each frame the scene shifts by a fraction of a pixel, allowing the upscaler to reconstruct more details. Without it, only history smoothing occurs.",
-        "A cada quadro a cena é deslocada por uma fração de pixel, permitindo ao upscaler reconstruir mais detalhes. Sem isso, ocorre apenas suavização temporal.",
-        "Каждый кадр сцена сдвигается на долю пикселя, и апскейлер собирает из нескольких кадров больше деталей. Без него получается только сглаживание по истории."
-    },
-    // SectionReactivity
-    {
-        "Reactivity Mask",
-        "Máscara de Reatividade",
-        "Маска реактивности"
-    },
-    // ReactivityEnable
-    {
-        "Enable mask",
-        "Ativar máscara",
-        "Включить маску"
-    },
-    // HintReactivity
-    {
-        "Marks transparent effects (particles, fog) so the upscaler relies less on previous frames. Reduces ghosting behind particles, but restores jitter under them.",
-        "Marca efeitos transparentes (partículas, névoa) para que o upscaler dependa menos de quadros anteriores. Reduz ghosting atrás de efeitos, mas devolve o jitter sob eles.",
-        "Помечает прозрачные эффекты (частицы, дымку), чтобы апскейлер меньше опирался на прошлые кадры. Меньше шлейфов за эффектами, но под ними возвращается дрожание."
-    },
-    // ReactivityScale
-    {
-        "Scale",
-        "Escala",
-        "Масштаб"
-    },
-    // ReactivityThreshold
-    {
-        "Threshold",
-        "Limiar",
-        "Порог"
-    },
-    // ReactivityMax
-    {
-        "Maximum",
-        "Máximo",
-        "Максимум"
-    },
-    // ReactivityShowMask
-    {
-        "Show mask (debug)",
-        "Exibir máscara (depuração)",
-        "Показать маску (отладка)"
-    },
-    // ObjectMotionVectors
-    {
-        "Character motion vectors",
-        "Vetores de movimento de personagens",
-        "Векторы движения персонажей"
-    },
-    // HintObjectMotion
-    {
-        "Precise vectors for animated objects: clothes and weapons break apart less during motion. Static scene receives no extra pass. Applies after restart.",
-        "Vetores precisos para objetos animados: roupas e armas quebram menos durante o movimento. A cena estática não recebe passe extra. Aplica-se após reiniciar.",
-        "Точные векторы для анимированных объектов: одежда и оружие меньше рассыпаются при движении. Статичная сцена не получает дополнительный проход. Изменение применяется после перезапуска игры."
-    },
-    // ObjectMotionShowDebug
-    {
-        "Show motion vectors (debug)",
-        "Exibir vetores de movimento (depuração)",
-        "Показать векторы движения (отладка)"
-    },
-    // HintObjectMotionColors
-    {
-        "Red/Green: horizontal/vertical motion (8 px = full brightness). Blue: pixel received exact object vector, not just camera motion. Moving objects without blue or red/green are treated as stationary by upscaler, causing trails.",
-        "Vermelho/Verde: movimento horizontal/vertical (8 px = brilho total). Azul: o pixel recebeu vetor exato do objeto, não apenas da câmera. Objetos em movimento sem azul/vermelho/verde causam rastros.",
-        "Красный/зелёный: движение по горизонтали/вертикали (8 пикселей = полная яркость). Синий: пиксель получил точный вектор объекта, а не только движение камеры. Движущийся предмет без синего и без красного/зелёного апскейлер считает неподвижным, отсюда шлейф."
-    },
-    // SectionOutputResolution
-    {
-        "Output Resolution",
-        "Resolução de Saída",
-        "Разрешение вывода"
-    },
-    // OutputResolutionCombo
-    {
-        "Output Resolution",
-        "Resolução de Saída",
-        "Разрешение вывода"
-    },
-    // HintOutputResolutionFixed
-    {
-        "Final frame and UI size. Preset sets scene size relative to output: 4K Performance = 1920x1080. Applies after restart.",
-        "Tamanho final do quadro e interface. O preset define o tamanho da cena relativo à saída: 4K Performance = 1920x1080. Aplica-se após reiniciar.",
-        "Размер готового кадра и интерфейса. Пресет задаёт размер сцены относительно вывода: 4K Performance = 1920x1080. Применяется после перезапуска игры."
-    },
-    // HintOutputResolutionLive
-    {
-        "Final frame and UI size changes on next frame boundary. Preset sets scene size relative to output: 4K Performance = 1920x1080. Size change resets FSR history and may cause a brief pause.",
-        "Tamanho do quadro final e interface muda no próximo quadro. O preset define a resolução da cena em relação à saída. Mudar o tamanho reseta o histórico do FSR.",
-        "Размер готового кадра и интерфейса меняется на границе следующего кадра. Пресет задаёт размер сцены относительно вывода: 4K Performance = 1920x1080. Смена размера сбрасывает историю FSR и может вызвать короткую паузу."
-    },
-    // DynamicResolutionChange
-    {
-        "Dynamic Resolution Change",
-        "Mudança de Resolução em Tempo Real",
-        "Смена разрешения на лету"
-    },
-    // LiveModeAuto
-    {
-        "Auto (by GPU)",
-        "Automático (pela GPU)",
-        "Авто (по видеокарте)"
-    },
-    // LiveModeDisabled
-    {
-        "Disabled (faster)",
-        "Desativado (mais rápido)",
-        "Выключена (быстрее)"
-    },
-    // LiveModeEnabled
-    {
-        "Enabled",
-        "Ativado",
-        "Включена"
-    },
-    // HintLiveResolution
-    {
-        "Enabled: output resolution and preset change without restarting, but postprocessing remains 1080p (noticeably slower on Steam Deck and older GPUs). Disabled: everything renders at preset resolution, changes via restart. Auto enables it on powerful discrete GPUs. Applies after restart.",
-        "Ativado: resolução de saída e presets mudam sem reiniciar, mas o pós-processamento permanece em 1080p (mais lento em hardware modesto). Desativado: renderização na resolução do preset, mudanças exigem reinício. Automático ativa em GPUs potentes.",
-        "Включена: разрешение вывода и пресет меняются без перезапуска, но постобработка игры остаётся в 1080p — на Steam Deck и старых видеокартах это заметно медленнее. Выключена: всё рисуется в разрешении пресета, смена — через перезапуск. Авто включает её на мощных дискретных видеокартах. Применяется после перезапуска игры."
-    },
-    // SectionGameEffects
-    {
-        "Game Effects",
-        "Efeitos do Jogo",
-        "Эффекты игры"
-    },
-    // LodCombo
-    {
-        "Model Detail (LOD)",
-        "Detalhes dos Modelos (LOD)",
-        "Детализация моделей"
-    },
-    // LodMax
-    {
-        "Maximum (-2)",
-        "Máximo (-2)",
-        "Максимальная (-2)"
-    },
-    // LodDefault
-    {
-        "Game Default",
-        "Padrão do Jogo",
-        "Как в игре"
-    },
-    // LodLower
-    {
-        "Lower (1)",
-        "Mais Baixo (1)",
-        "Ниже (1)"
-    },
-    // LodMin
-    {
-        "Minimum (2)",
-        "Mínimo (2)",
-        "Минимальная (2)"
-    },
-    // HintGameEffects
-    {
-        "Model LOD, Chromatic Aberration, Depth of Field, SSAO and Native AA apply immediately in real time. Other startup patches apply after restart.",
-        "LOD dos Modelos, Aberração Cromática, Profundidade de Campo, SSAO e AA Nativo aplicam-se imediatamente em tempo real. Outros patches exigem reinício.",
-        "Детализация моделей (LOD), хроматическая аберрация, глубина резкости (DoF), SSAO и сглаживание применяются сразу в реальном времени."
-    },
-    // HintSpecialControls
-    {
-        "Free camera: hold Cross and press L3 (keyboard: Space + Z). Debug menu: left touchpad / Tab (needs DbgFont14h.ccm and DbgFont14h.tpf in dvdroot_ps4/font from Nexus #253). Right touchpad: Backspace.",
-        "Câmera livre: segure Cross e pressione L3 (teclado: Espaço + Z). Menu de debug: touchpad esquerdo / Tab (requer fontes DbgFont14h no dvdroot_ps4/font). Touchpad direito: Backspace.",
-        "Свободная камера: удерживайте Cross и нажимайте L3 (клавиатура: Space + Z). Debug menu: левый touchpad / Tab. Нужны DbgFont14h.ccm и DbgFont14h.tpf в dvdroot_ps4/font из мода Nexus #253. Правый touchpad: Backspace."
-    },
-    // RestartWarning
-    {
-        "Changes will apply after restarting the game",
-        "As alterações serão aplicadas após reiniciar o jogo",
-        "Изменения применятся после перезапуска игры"
-    },
-    // ApplyAndRestart
-    {
-        "Apply and Restart Game",
-        "Aplicar e Reiniciar o Jogo",
-        "Применить и перезапустить игру"
-    },
-    // SectionMisc
-    {
-        "Miscellaneous",
-        "Diversos",
-        "Прочее"
-    },
-    // ShowFpsCorner
-    {
-        "Show FPS in Corner",
-        "Contador de FPS no Canto",
-        "Счётчик FPS в углу"
-    },
-    // PuddleReflections
-    {
-        "Water Puddle Reflections",
-        "Reflexos em Poças d'Água",
-        "Отражения в лужах"
-    },
-    // HintPuddleReflections
-    {
-        "Disabled: fixes inverted buildings, flickering and streaks in the sky. Enabled: renders the game's planar reflections.",
-        "Desativado: remove prédios invertidos, falhas e faixas no céu. Ativado: renderiza os reflexos planares originais.",
-        "Выключено: убирает перевёрнутые здания, мерцание и полосы на небе. Включено: исходные плоские отражения."
-    },
-    // DrawPipe
-    {
-        "Draw Pipe (Two-Stage Pipeline)",
-        "Draw Pipe (Pipeline em 2 Estágios)",
-        "Двухстадийный конвейер (Draw Pipe)"
-    },
-    // HintDrawPipe
-    {
-        "Hybrid: keeps +20-30% FPS in gameplay, runs synchronously in cutscenes without glitches.",
-        "Híbrido: mantém +20-30% FPS no gameplay e roda de forma síncrona em cutscenes sem falhas visuais.",
-        "Гибридный: сохраняет +20-30% FPS в игре и работает синхронно в кат-сценах без визуальных сбоев."
-    },
-    // DrawPipeModeOff
-    {
-        "Off (Standard)",
-        "Desligado (Modo Padrão)",
-        "Выключен (Стандартный)"
-    },
-    // DrawPipeModeOn
-    {
-        "On (Always 2 stages)",
-        "Ligado (Sempre 2 estágios)",
-        "Включён (всегда 2 стадии)"
-    },
-    // DrawPipeModeHybrid
-    {
-        "Hybrid (Recommended)",
-        "Híbrido (Recomendado)",
-        "Гибридный (Рекомендуется)"
-    },
-    // CloseButton
-    {
-        "Close",
-        "Fechar",
-        "Закрыть"
-    },
-    // SavedToIni
-    {
-        "Settings saved to bbport.ini",
-        "Configurações salvas em bbport.ini",
-        "Настройки сохранены в bbport.ini"
-    },
-    // PromptKeyboardHelp
-    {
-        "Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel",
-        "Teclado: digite, Backspace = apagar, Enter = OK, Esc = cancelar",
-        "Клавиатура: ввод, Backspace = удалить, Enter = OK, Esc = отмена"
-    },
-    // KbSpace
-    {
-        "Space",
-        "Espaço",
-        "Пробел"
-    },
-    // KbBackspace
-    {
-        "Delete",
-        "Apagar",
-        "Стереть"
-    },
-    // KbClear
-    {
-        "Clear",
-        "Limpar",
-        "Очистить"
-    },
-    // KbConfirm
-    {
-        "Confirm (OK)",
-        "Confirmar (OK)",
-        "Готово (OK)"
-    },
-    // KbCancel
-    {
-        "Cancel",
-        "Cancelar",
-        "Отмена"
-    },
-    // KbCaps
-    {
-        "Caps",
-        "Caps",
-        "Регистр"
-    },
-    // PromptGamepadHelp
-    {
-        "Gamepad: (X/A) Type  (Square/X) Delete  (Triangle/Y) Space  (L1/R1) Caps  (Start) OK  (Circle/B) Cancel",
-        "Controle: (X/A) Inserir  (Quadrado/X) Apagar  (Triângulo/Y) Espaço  (L1/R1) Caps  (Start) OK  (Círculo/B) Cancelar",
-        "Геймпад: (Крест/A) Ввод  (Квадрат/X) Удалить  (Треугольник/Y) Пробел  (L1/R1) Регистр  (Start) OK  (Круг/B) Отмена"
-    },
-    // SectionFrameGeneration
-    {
-        "Frame Generation",
-        "Geração de Quadros (Frame Generation)",
-        "Генерация кадров (Frame Generation)"
-    },
-    // FrameGenerationEnable
-    {
-        "Enable FSR 3.1 Frame Generation",
-        "Ativar FSR 3.1 Frame Generation",
-        "Включить FSR 3.1 Frame Generation"
-    },
-    // HintFrameGeneration
-    {
-        "Generates synthetic interpolated frames between real frames. Requires minImageCount + 2 swapchain support. Independent from the selected upscaler.",
-        "Gera quadros interpolados entre quadros reais. Requer suporte a minImageCount + 2 na swapchain. Opera de forma independente do upscaler selecionado.",
-        "Генерирует интерполированные кадры между реальными. Требует поддержки minImageCount + 2 в swapchain. Независимо от выбранного апскейлера."
-    },
-    // FrameGenerationNotSupported
-    {
-        "Frame Generation is not supported on this GPU or swapchain configuration.",
-        "Frame Generation não é suportado nesta GPU ou configuração de swapchain.",
-        "Генерация кадров не поддерживается этой видеокартой или конфигурацией swapchain."
-    },
-    // SectionPostProcess
-    {
-        "Post-Processing & Lighting (Live)",
-        "Pós-Processamento e Iluminação (Tempo Real)",
-        "Постобработка и освещение (на лету)"
-    },
-    // BloomIntensity
-    {
-        "Bloom / Glare Intensity",
-        "Intensidade de Bloom / Brilho",
-        "Интенсивность свечения (Bloom)"
-    },
-    // HintBloom
-    {
-        "Scales YEBIS glare luminance in real time. Setting to 0.0 skips the glare passes completely for higher GPU performance.",
-        "Ajusta a luminância do brilho YEBIS em tempo real. Definir como 0.0 pula completamente os passes de glare, economizando GPU.",
-        "Масштабирует яркость свечения YEBIS в реальном времени. Значение 0.0 полностью пропускает проходы свечения, ускоряя GPU."
-    },
-    // ColorSaturation
-    {
-        "Color Saturation",
-        "Saturação de Cor",
-        "Насыщенность цвета"
-    },
-    // HintSaturation
-    {
-        "Scales the tone-mapper's color saturation in real time (0.0 = grayscale, 1.0 = game default).",
-        "Ajusta a saturação de cores do tone-mapper em tempo real (0.0 = preto e branco, 1.0 = padrão do jogo).",
-        "Масштабирует насыщенность цвета тональной компрессии в реальном времени (0.0 = Ч/Б, 1.0 = по умолчанию)."
-    },
-    // VignetteEnable
-    {
-        "Screen Edge Vignette",
-        "Vinheta nas Bordas da Tela",
-        "Виньетирование по краям экрана"
-    },
-    // HintVignette
-    {
-        "Toggles the area's YEBIS screen-edge darkening in real time.",
-        "Ativa ou desativa o escurecimento nas bordas da tela (YEBIS Vignette) em tempo real.",
-        "Включает или выключает затемнение по краям экрана (YEBIS Vignette) в реальном времени."
-    },
-    // SsaoStrength
-    {
-        "SSAO Occlusion Strength",
-        "Intensidade da Oclusão SSAO",
-        "Сила затенения SSAO"
-    },
-    // HintSsaoStrength
-    {
-        "Scales ambient occlusion contrast in recesses (1.0 = game default, 2.0 = twice as deep).",
-        "Ajusta a profundidade da oclusão ambiental nos cantos e frestas (1.0 = padrão do jogo, 2.0 = dobro de contraste).",
-        "Масштабирует глубину затенения SSAO в углублениях (1.0 = по умолчанию, 2.0 = вдвое глубже)."
-    },
-    // ShadowDistance
-    {
-        "Shadow Cascade Distance",
-        "Distância das Cascatas de Sombra",
-        "Дальность каскадов теней"
-    },
-    // HintShadowDistance
-    {
-        "Scales directional shadow cascade splits and fade distance in real time (1.0 = game default).",
-        "Escala o alcance das cascatas de sombras direcionais em tempo real (1.0 = padrão do jogo).",
-        "Масштабирует дальность каскадов направленных теней в реальном времени (1.0 = по умолчанию)."
-    },
-    // FogOpacity
-    {
-        "Atmospheric Fog Opacity",
-        "Opacidade da Neblina Atmosférica",
-        "Плотность атмосферного тумана"
-    },
-    // HintFogOpacity
-    {
-        "Scales distant street haze and height fog opacity in real time (0.0 = clear distant view, 1.0 = game default).",
-        "Ajusta a densidade da neblina distante e de altura em tempo real (0.0 = horizonte limpo, 1.0 = padrão do jogo).",
-        "Масштабирует плотность дальнего и высотного тумана в реальном времени (0.0 = чистый горизонт, 1.0 = по умолчанию)."
-    },
-    // SectionCamera
-    {
-        "Camera & Field of View (Live)",
-        "Câmera e Campo de Visão (Tempo Real)",
-        "Камера и угол обзора (на лету)"
-    },
-    // CameraFov
-    {
-        "Field of View (FOV Scale)",
-        "Campo de Visão (Escala de FOV)",
-        "Угол обзора (масштаб FOV)"
-    },
-    // HintCameraFov
-    {
-        "Uncaps the 48-degree limit and scales LockCamParam vertical FOV in real time (1.0 = 43° default).",
-        "Desbloqueia o limite de 48° e escala o FOV vertical da câmera em tempo real (1.0 = 43° padrão).",
-        "Снимает ограничение в 48° и масштабирует вертикальный угол обзора камеры в реальном времени (1.0 = 43°)."
-    },
-    // CameraDistance
-    {
-        "Camera Distance",
-        "Distância da Câmera",
-        "Дистанция камеры"
-    },
-    // HintCameraDistance
-    {
-        "Scales follow camera target distance from the character in real time (1.0 = 4 m default).",
-        "Ajusta a distância da câmera em relação ao personagem em tempo real (1.0 = 4 m padrão).",
-        "Масштабирует дистанцию камеры от персонажа в реальном времени (1.0 = 4 м по умолчанию)."
-    },
-    // CameraHeight
-    {
-        "Camera Height",
-        "Altura da Câmera",
-        "Высота камеры"
-    },
-    // HintCameraHeight
-    {
-        "Scales follow camera vertical pivot offset above the character in real time (1.0 = default).",
-        "Ajusta a altura do ponto de foco da câmera sobre o personagem em tempo real (1.0 = padrão).",
-        "Масштабирует высоту точки фокуса камеры над персонажем в реальном времени (1.0 = по умолчанию)."
-    },
-    // LightGridOpt
-    {
-        "4x4 Quarter-Window Light Grid",
-        "Grade de Luzes 4x4 (Otimização)",
-        "Сетка освещения 4x4 (оптимизация)"
-    },
-    // HintLightGridOpt
-    {
-        "Replaces 3x3 jobs of 128x128 tiles with 1 job of quarter-window 4x4 tiles, eliminating ~80k redundant light draw calls per 300 frames.",
-        "Substitui 3x3 jobs de tiles 128x128 por 1 job de grade 4x4 proporcional à janela, eliminando ~80 mil draw calls redundantes de luzes.",
-        "Заменяет девять задач с тайлами 128×128 одной задачей с сеткой 4×4 по размеру окна, убирая ~80 тыс. лишних вызовов отрисовки света."
-    },
-    // RawMouseCamera
-    {
-        "Raw 1:1 Mouse Camera (DS3 Mode)",
-        "Câmera Mouse Raw 1:1 (Modo DS3)",
-        "Прямой ввод мыши 1:1 (режим DS3)"
-    },
-    // HintRawMouseCamera
-    {
-        "Turns the camera directly by raw mouse counts without stick deadzone or speed cap, and switches lock-on targets with a mouse flick.",
-        "Gira a câmera diretamente pelos counts brutos do mouse sem zona morta ou limite de analógico, e troca o alvo travado (Lock-On) com flick do mouse.",
-        "Поворачивает камеру напрямую по счёту мыши без мёртвой зоны и потолка скорости стика; рывок мыши переключает цель захвата."
-    },
-    // MouseHoldAutoRotate
-    {
-        "Suppress Camera Auto-Rotation on Mouse",
-        "Suprimir Auto-Rotação da Câmera com Mouse",
-        "Отключать автоповорот камеры для мыши"
-    },
-    // HintMouseHoldAutoRotate
-    {
-        "Prevents the camera from rotating on its own when walking sideways with keyboard & mouse; restores auto-rotation automatically when a gamepad stick is used.",
-        "Impede que a câmera gire sozinha ao andar de lado com teclado e mouse; restaura a auto-rotação automaticamente ao usar o controle.",
-        "Не даёт камере поворачиваться самой при движении боком на клавиатуре и мыши; автоматически возвращает автоповорот при касании стика геймпада."
+/// The text of `id`, or null when a table has no row for it (a string that was never written).
+const Text* FindText(StringId id) {
+    for (const Table& table : kTables) {
+        for (const Entry& entry : table) {
+            if (entry.id == id) {
+                return &entry.text;
+            }
+        }
     }
-};
+    return nullptr;
+}
 
-const char* Get(StringId id, int lang) {
-    const size_t index = static_cast<size_t>(id);
-    if (index >= static_cast<size_t>(StringId::Count)) {
+/// One language's string from a row, falling back to English and then to "".
+const char* Pick(const Text* text, int lang) {
+    if (text == nullptr) {
         return "";
     }
-    const auto& group = kTable[index];
+    const char* picked = nullptr;
     switch (lang) {
     case BbSettings::LangPortuguese:
-        return group.pt_br ? group.pt_br : group.en;
+        picked = text->pt;
+        break;
     case BbSettings::LangRussian:
-        return group.ru ? group.ru : group.en;
+        picked = text->ru;
+        break;
     case BbSettings::LangEnglish:
     default:
-        return group.en ? group.en : "";
+        break;
     }
+    if (picked != nullptr) {
+        return picked;
+    }
+    return text->en != nullptr ? text->en : "";
+}
+
+/// The Game Effects checkboxes, indexed like BbSettings::Effects.
+constexpr detail::Text kEffectLabels[] = {
+    {"Chromatic Aberration", "Aberração Cromática", "Хроматическая аберрация"},
+    {"Depth of Field (DoF)", "Profundidade de Campo (DoF)", "Глубина резкости (DoF)"},
+    {"Motion Blur", "Desfoque de Movimento", "Размытие в движении"},
+    {"SSAO Ambient Occlusion", "Oclusão Ambiental SSAO", "Затенение SSAO"},
+    {"Game's Native AA", "Anti-Aliasing Nativo do Jogo", "Собственное сглаживание игры"},
+    {"Dynamic Light Shadows", "Sombras de Luzes Dinâmicas", "Тени от динамических источников"},
+    {"SSR Reflections (not in base game)", "Reflexos SSR (não existia no jogo base)", "Отражения SSR (не было в игре)"},
+    {"Bloom", "Bloom (Brilho Intenso)", "Свечение (Bloom)"},
+    {"Skip Intro Cutscenes", "Pular Telas Iniciais", "Пропуск заставок при запуске"},
+    {"Free Camera (Cross + L3)", "Câmera Livre (Cross + L3)", "Свободная камера (Cross + L3)"},
+    {"Debug Menu (requires fonts)", "Menu de Depuração (requer fontes)", "Debug menu (нужны файлы шрифтов)"},
+};
+static_assert(std::size(kEffectLabels) == BbSettings::EffectCount,
+              "kEffectLabels must have one row per BbSettings::Effects entry");
+
+} // namespace
+
+const char* Get(StringId id, int lang) {
+    return Pick(FindText(id), lang);
 }
 
 const char* EffectLabel(int effect_index, int lang) {
-    static constexpr TextGroup kEffects[BbSettings::EffectCount] = {
-        {"Chromatic Aberration", "Aberração Cromática", "Хроматическая аберрация"},
-        {"Depth of Field (DoF)", "Profundidade de Campo (DoF)", "Глубина резкости (DoF)"},
-        {"Motion Blur", "Desfoque de Movimento", "Размытие в движении"},
-        {"SSAO Ambient Occlusion", "Oclusão Ambiental SSAO", "Затенение SSAO"},
-        {"Game's Native AA", "Anti-Aliasing Nativo do Jogo", "Собственное сглаживание игры"},
-        {"Dynamic Light Shadows", "Sombras de Luzes Dinâmicas", "Тени от динамических источников"},
-        {"SSR Reflections (not in base game)", "Reflexos SSR (não existia no jogo base)", "Отражения SSR (не было в игре)"},
-        {"Bloom", "Bloom (Brilho Intenso)", "Свечение (Bloom)"},
-        {"Skip Intro Cutscenes", "Pular Telas Iniciais", "Пропуск заставок при запуске"},
-        {"Free Camera (Cross + L3)", "Câmera Livre (Cross + L3)", "Свободная камера (Cross + L3)"},
-        {"Debug Menu (requires fonts)", "Menu de Depuração (requer fontes)", "Debug menu (нужны файлы шрифтов)"},
-    };
-    if (effect_index < 0 || effect_index >= BbSettings::EffectCount) {
+    if (effect_index < 0 || effect_index >= static_cast<int>(std::size(kEffectLabels))) {
         return "";
     }
-    const auto& group = kEffects[effect_index];
-    const char* str = nullptr;
-    switch (lang) {
-    case BbSettings::LangPortuguese:
-        str = group.pt_br;
-        break;
-    case BbSettings::LangRussian:
-        str = group.ru;
-        break;
-    case BbSettings::LangEnglish:
-    default:
-        str = group.en;
-        break;
-    }
-    if (!str && group.en) str = group.en;
-    return str ? str : "";
+    return Pick(&kEffectLabels[effect_index], lang);
 }
 
 } // namespace BbStrings

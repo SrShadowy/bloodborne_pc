@@ -101,6 +101,12 @@ unsigned bb_win32_available_cpus(void);
 void bb_win32_background_thread(void);
 /// BbThreads::MakeCritical: 1 above normal, 2 highest.
 void bb_win32_critical_thread(int level);
+/// Diagnostics (CommandProcessor::ReportStall): every thread of the process, its name, where it
+/// is, and the frames of the port and of the game it is running -- what the SIGUSR2 dump gives on
+/// Linux, which is where a stalled guest's stack says what it waits for. Suspends each thread but
+/// this one for the read only. `guest_lo`/`guest_hi` bracket the game's image: pointers inside it
+/// are printed image-relative (the addresses the logs quote).
+void bb_win32_dump_threads(uintptr_t guest_lo, uintptr_t guest_hi);
 
 #ifndef _countof
 #define _countof(array) (sizeof(array) / sizeof((array)[0]))

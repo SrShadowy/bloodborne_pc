@@ -400,19 +400,31 @@ void Display::VblankThread(std::stop_token stop) {
     // followed by an early one: 48 ms then 18 ms at 30 FPS, a saw in the frame time graph).
     const u32 frame_limit = EmulatorSettings.GetFrameLimit();
     static const bool catch_up = bb_env_on("BB_PACE_CATCHUP");
-    const auto period_now = [&] {
+    // The rate the slots are placed for, clamped to the range the game runs at: 0 = no limit.
+    // BbFrameRate::Limit() is an atomic the F3 key and the overlay's list change mid-run, so it is
+    // read on every use; the emulator setting behind it is the boot value (0 = no limit).
+    const auto period_fps = [] {
         const int live = BbFrameRate::Limit();
-        const u32 fps = live > 0 ? u32(std::clamp(live, 30, 480)) : frame_limit;
+        return live > 0 ? u32(std::clamp(live, 30, 480)) : EmulatorSettings.GetFrameLimit();
+    };
+    const auto period_now = [period_fps] {
+        const u32 fps = period_fps();
         return fps ? std::chrono::nanoseconds(1'000'000'000 / fps) : std::chrono::nanoseconds(0);
     };
     auto next_flip = std::chrono::steady_clock::now();
     std::printf("VideoOut: vblank %u Hz, frame limit %u FPS\n",
                 EmulatorSettings.GetVblankFrequency(), frame_limit);
     // With a frame limit or the uncapped presets a flip is shown as soon as it arrives (and its
-    // slot allows), between vblanks, instead of at the next vblank.
-    const auto immediate_flips = [&] {
-        return frame_limit != 0 || BbFrameRate::Limit() > 0 || EmulatorSettings.IsUncappedVblank();
+    // slot allows), between vblanks, instead of at the next vblank. Re-read on every use: at a
+    // vblank narrower than the rate the flips must leave the vblank ticks to keep up.
+    const auto immediate_flips = [] {
+        return EmulatorSettings.GetFrameLimit() != 0 || BbFrameRate::Limit() > 0 ||
+               EmulatorSettings.IsUncappedVblank();
     };
+    // The period the slots were placed for: a change starts a new schedule at once, instead of
+    // waiting out a deadline that belonged to the old one. Compared after the clamp, so a limit
+    // that changes without changing the period (e.g. 500 -> 480 FPS) does not reset anything.
+    u32 scheduled_fps = period_fps();
     const auto flip = [&](const Request& request, std::chrono::steady_clock::time_point now) {
         if (const auto frame_period = period_now(); frame_period.count()) {
             next_flip = catch_up ? std::max(next_flip + frame_period, now - frame_period)
@@ -426,6 +438,10 @@ void Display::VblankThread(std::stop_token stop) {
         timer.Start();
         const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
         const auto now = std::chrono::steady_clock::now();
+        if (const u32 fps = period_fps(); fps != scheduled_fps) {
+            scheduled_fps = fps;
+            next_flip = now;
+        }
         if ((!period_now().count() || now >= next_flip) &&
             port.vblank_status.count % u64(port.flip_rate + 1) == 0) {
             Request request;
@@ -456,6 +472,9 @@ void Display::VblankThread(std::stop_token stop) {
                                            [this] { return !requests.empty(); })) {
                     break;
                 }
+            }
+            if (period_fps() != scheduled_fps) {
+                break; // the limit changed: the outer loop starts the new schedule
             }
             if (std::chrono::steady_clock::now() < next_flip) {
                 if (next_flip >= tick_deadline) {

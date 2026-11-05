@@ -43,13 +43,15 @@ void assert_fail_impl(const char* site) {
         }
     }
     std::fflush(stdout);
+    // [extra] The buffered log lines go out first: the calls that led here follow them.
+    Common::Log::Flush();
     // The calls that led here (module+offset: addr2line -e out/gpu/libbbgpu.so).
     void* frames[48];
     const int depth = backtrace(frames, 48);
     std::fputs("Assertion call stack:\n", stderr);
     backtrace_symbols_fd(frames, depth, STDERR_FILENO);
     std::fputs("STOP: GPU library assertion failed (see GPU log above)\n", stderr);
-    std::fflush(stderr); // [extra]
+    std::fflush(stderr);
     std::_Exit(23);
 }
 

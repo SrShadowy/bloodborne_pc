@@ -5909,25 +5909,44 @@ const std::string& BbscProcessUserId() {
 std::optional<BbscSaveSlot> BbscActiveSaveSlotUnchecked();
 
 static std::optional<BbscSaveSlot> s_cached_active_slot;
+static bool s_cache_valid = false; // a scan ran, even if it found no slot
 static s64 s_last_save_slot_scan_ms = 0;
+static int s_cached_runtime_slot = -1; // what the runtime had opened when the cache was filled
 constexpr s64 BbscSaveSlotCacheTtlMs = 60'000; // 60s cache
 
 void InvalidateBbscActiveSaveSlot() {
     s_cached_active_slot = std::nullopt;
+    s_cache_valid = false;
     s_last_save_slot_scan_ms = 0;
+    s_cached_runtime_slot = -1;
 }
+
+// The runtime records the save file the game opened last (src/runtime_file.c: an in-memory
+// variable, no disk I/O). Loading another character changes it: the cached scan belongs to the
+// previous one, and the own-world/loot/progress files would be written under its slot for up to
+// the TTL. The 60 s cache was never invalidated on a character change (the function existed but
+// had no caller).
+extern "C" int runtime_savedata_active_slot(char* dir, std::size_t size);
 
 // Runs inside game hooks (the join load): a filesystem error must never become an exception there.
 std::optional<BbscSaveSlot> BbscActiveSaveSlot() {
+    const int runtime_slot = runtime_savedata_active_slot(nullptr, 0);
+    // -1 is "the game has not opened a save yet": nothing to compare, and the scan may still have
+    // run before it did. Any real slot different from the cached one means another character.
+    if (runtime_slot >= 0 && runtime_slot != s_cached_runtime_slot) {
+        InvalidateBbscActiveSaveSlot();
+    }
     const s64 now = SteadyNowMs();
-    if (s_cached_active_slot.has_value() && (now - s_last_save_slot_scan_ms < BbscSaveSlotCacheTtlMs)) {
+    if (s_cache_valid && (now - s_last_save_slot_scan_ms < BbscSaveSlotCacheTtlMs)) {
         return s_cached_active_slot;
     }
 
     const auto t0 = std::chrono::steady_clock::now();
     try {
         s_cached_active_slot = BbscActiveSaveSlotUnchecked();
+        s_cache_valid = true;
         s_last_save_slot_scan_ms = now;
+        s_cached_runtime_slot = runtime_slot;
     } catch (const std::exception& e) {
         LOG_WARNING(Debug, "[BBSC Save] Could not read save folder: {}", e.what());
         return std::nullopt;

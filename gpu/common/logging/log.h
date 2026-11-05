@@ -32,7 +32,10 @@ enum class Level : int { trace, debug, info, warn, err, critical, off };
 [[nodiscard]] bool ShouldLog(Level level);
 void Write(std::string_view log_class, Level level, const char* file, int line,
            std::string&& message);
-inline void Flush() {}
+/// Writes the lines buffered by Write(). Warnings and worse flush on their own, the rest in
+/// batches; an exit() drains the last batch. Call it before _Exit()/_exit() (an assert, the
+/// window closing), which skip both.
+void Flush();
 
 } // namespace Common::Log
 

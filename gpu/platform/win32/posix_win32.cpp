@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 #include <psapi.h>
+#include <tlhelp32.h>
 
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -413,6 +414,241 @@ void bb_win32_describe_address(const void* address, char* text, unsigned size) {
     std::snprintf(text, size, "region %p+%#llx state %#lx protect %#lx type %#lx, allocation %p protect %#lx",
                   mbi.BaseAddress, (unsigned long long)mbi.RegionSize, mbi.State, mbi.Protect, mbi.Type,
                   mbi.AllocationBase, mbi.AllocationProtect);
+}
+
+// CommandProcessor::ReportStall: the Linux report has the runtime's SIGUSR2 handler walk every
+// thread's frame-pointer chain (/proc/self/task); Windows has neither, so a stalled guest left the
+// log with no thread at all -- the report could say the GPU was idle and nothing about where the
+// game stopped. This reads each thread's registers while it is suspended (CONTEXT_FULL) and walks
+// the stack with RtlVirtualUnwind over the x64 unwind tables (.pdata), which is how Windows itself
+// walks one.
+//
+// [extra] It first used the frame-pointer chain only. The first real report showed why that is not
+// enough: every thread parked in a system call comes back with rbp = 0 (the transition into the
+// kernel does not keep it), so the walk had no frame to start from and printed no chain at all --
+// 121 threads, none with a frame (2026-11-05). RtlVirtualUnwind does not need rbp; it reads the
+// unwind data of each module, so it crosses ntdll/kernel32 and reaches the port's frames.
+void bb_win32_dump_threads(uintptr_t guest_lo, uintptr_t guest_hi) {
+    using GetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+    const auto describe = reinterpret_cast<GetThreadDescriptionFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("kernel32.dll"),
+                                               "GetThreadDescription")));
+    const HANDLE self = GetCurrentProcess();
+    const DWORD self_id = GetCurrentThreadId();
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    MODULEINFO info{};
+    if (!K32GetModuleInformation(self, GetModuleHandleW(nullptr), &info, sizeof(info))) {
+        std::printf("  thread dump: no module information (%lu)\n", GetLastError());
+        std::fflush(stdout);
+        return;
+    }
+    const auto end = base + uintptr_t(info.SizeOfImage);
+    // The exe's code: used to tell port frames from the rest when the chain is printed.
+    uintptr_t text_lo = base, text_hi = end;
+    {
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+        const auto* section = IMAGE_FIRST_SECTION(nt);
+        for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+            if (std::memcmp(section->Name, ".text", 5) == 0) {
+                text_lo = base + section->VirtualAddress;
+                text_hi = text_lo + section->Misc.VirtualSize;
+            }
+        }
+    }
+    // A stack read from another thread: only committed pages without the guard (crossing one would
+    // fault this thread), and never across the end of the region.
+    const auto readable = [](uintptr_t address, uintptr_t bytes) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        return VirtualQuery(reinterpret_cast<const void*>(address), &mbi, sizeof(mbi)) &&
+               mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0 &&
+               address + bytes <= reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    };
+    // How far the committed region around `address` reaches above it, 0 if it is not readable.
+    // RtlVirtualUnwind reads the stack on its own, so this is what says a stack pointer can be
+    // handed to it without risking a fault in the thread doing the dump.
+    const auto room = [](uintptr_t address) -> uintptr_t {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(address), &mbi, sizeof(mbi)) ||
+            mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
+            return 0;
+        }
+        const auto end = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        return address < end ? end - address : 0;
+    };
+    // [`guest_lo`, `guest_hi`) and the exe: both printed image-relative, as the other logs quote
+    // them (the guest's eboot at its image base, the port's code at the exe's). Anything else names
+    // its module (`ntdll.dll+0x...`): the first report showed a wall of bare hex in a system DLL,
+    // where the only way to read it was to know the addresses by heart.
+    const auto where = [&](uintptr_t address, char* text, unsigned size) {
+        if (guest_lo && address >= guest_lo && address < guest_hi) {
+            std::snprintf(text, size, "game+%#llx", (unsigned long long)(address - guest_lo));
+            return;
+        }
+        if (address >= base && address < end) {
+            std::snprintf(text, size, "exe+%#llx", (unsigned long long)(address - base));
+            return;
+        }
+        HMODULE module = nullptr;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(address), &module)) {
+            char path[MAX_PATH] = "?";
+            GetModuleFileNameA(module, path, MAX_PATH);
+            const char* slash = std::strrchr(path, '\\');
+            std::snprintf(text, size, "%s+%#llx", slash ? slash + 1 : path,
+                          (unsigned long long)(address - reinterpret_cast<uintptr_t>(module)));
+            return;
+        }
+        std::snprintf(text, size, "%#llx", (unsigned long long)address);
+    };
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        std::printf("  thread dump: no snapshot (%lu)\n", GetLastError());
+        std::fflush(stdout);
+        return;
+    }
+    // One line per thread, built while it is suspended and printed after it is running again: a
+    // suspended thread may hold the stdout lock, so nothing here allocates or writes until every
+    // thread let go. Fixed sizes for the same reason (no string growth under a held thread).
+    constexpr unsigned kLines = 256, kLineSize = 512;
+    static char lines[kLines][kLineSize];
+    unsigned used = 0;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    for (BOOL ok = Thread32First(snapshot, &entry); ok && used < kLines;
+         ok = Thread32Next(snapshot, &entry)) {
+        if (entry.th32OwnerProcessID != GetCurrentProcessId() || entry.th32ThreadID == self_id) {
+            continue; // this thread is the one printing
+        }
+        const HANDLE thread =
+            OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION,
+                       FALSE, entry.th32ThreadID);
+        if (!thread) {
+            continue;
+        }
+        char name[128] = "";
+        PWSTR wide = nullptr;
+        if (describe && SUCCEEDED(describe(thread, &wide)) && wide) {
+            WideCharToMultiByte(CP_UTF8, 0, wide, -1, name, sizeof(name), nullptr, nullptr);
+            LocalFree(wide);
+        }
+        if (SuspendThread(thread) == DWORD(-1)) {
+            CloseHandle(thread);
+            continue;
+        }
+        // CONTEXT_FULL, not CONTEXT_CONTROL: RtlVirtualUnwind writes the whole register set of the
+        // caller as it unwinds, and the integer half has to be there to read.
+        CONTEXT context{};
+        context.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(thread, &context)) {
+            char* line = lines[used];
+            char rip[64], rsp[64];
+            where(uintptr_t(context.Rip), rip, sizeof(rip));
+            where(uintptr_t(context.Rsp), rsp, sizeof(rsp));
+            int at = std::snprintf(line, kLineSize, "  thread %5lu %-28s rip %s rsp %s",
+                                   entry.th32ThreadID, name[0] ? name : "?", rip, rsp);
+            at = std::min(at > 0 ? at : 0, int(kLineSize) - 1);
+            // The chain, one frame at a time: RtlVirtualUnwind for anything with x64 unwind data
+            // (the port and every system DLL), the frame pointer for the game's image, which runs
+            // natively but has no .pdata registered here (and does keep rbp: its functions start
+            // with `push rbp; mov rbp, rsp`). Only the frames that are port code or game code are
+            // printed: a chain of eight ntdll/kernel32 frames says nothing, and the game's frames
+            // are the ones that say where the guest is.
+            for (unsigned depth = 0; depth < 64 && at > 0 && unsigned(at) < kLineSize - 40; ++depth) {
+                const auto pc = uintptr_t(context.Rip);
+                if (pc == 0) {
+                    break;
+                }
+                const bool in_exe = pc >= text_lo && pc < text_hi;
+                const bool in_game = guest_lo && pc >= guest_lo && pc < guest_hi;
+                if (in_exe || in_game) {
+                    char shown[32];
+                    where(pc, shown, sizeof(shown));
+                    // snprintf returns the length it would have written; clamped, so a full line
+                    // cannot make the next write walk off the fixed buffer.
+                    const int add = std::snprintf(line + at, kLineSize - unsigned(at), " <- %s", shown);
+                    if (add > 0) {
+                        at = std::min(at + add, int(kLineSize) - 1);
+                    }
+                }
+                const auto rsp_before = uintptr_t(context.Rsp);
+                // RtlVirtualUnwind reads the stack itself, and a chain that stopped being one
+                // (a reused stack, a frame pointer that was data) can point it anywhere. Hand it
+                // only what is committed without the guard: the top of the frame plus the window
+                // above it that one frame's unwind reads. At the very end of a region the rest is
+                // refused instead of faulting in the thread doing the dump.
+                if (room(rsp_before) < 128) {
+                    break;
+                }
+                // A return address is the instruction after the call, and that can already be the
+                // next function (or outside the module). Look the entry up just before it; the top
+                // frame's PC is exact.
+                const auto lookup_pc = DWORD64(depth == 0 ? pc : pc - 1);
+                DWORD64 image_base = 0;
+                PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(lookup_pc, &image_base, nullptr);
+                if (function) {
+                    PVOID handler_data = nullptr;
+                    DWORD64 establisher = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, lookup_pc, function, &context,
+                                     &handler_data, &establisher, nullptr);
+                } else if (in_game) {
+                    // No unwind data for the game's image: its own frame pointer is the only way
+                    // on. Accepted only while it is a sound frame (aligned, committed, above the
+                    // stack pointer, strictly climbing) and its return address lands in code
+                    // (either image), which is what keeps a data word from passing for a frame.
+                    const auto frame = uintptr_t(context.Rbp);
+                    if ((frame & 7) != 0 || frame <= rsp_before || !readable(frame, 2 * sizeof(uintptr_t))) {
+                        break;
+                    }
+                    const auto* words = reinterpret_cast<const uintptr_t*>(frame);
+                    const uintptr_t caller = words[1], next = words[0];
+                    const bool caller_in_exe = caller >= text_lo && caller < text_hi;
+                    const bool caller_in_game = guest_lo && caller >= guest_lo && caller < guest_hi;
+                    if ((!caller_in_exe && !caller_in_game) || next <= frame) {
+                        break;
+                    }
+                    context.Rip = DWORD64(caller);
+                    context.Rsp = DWORD64(frame + 2 * sizeof(uintptr_t));
+                    context.Rbp = DWORD64(next);
+                } else {
+                    // A leaf (or a PC with no entry): its return address sits at the stack pointer.
+                    // It must at least land in some loaded module (or the game's image): a data
+                    // word that happens to be in range would otherwise pass for a frame.
+                    if (!readable(rsp_before, sizeof(uintptr_t))) {
+                        break;
+                    }
+                    const auto caller = *reinterpret_cast<const uintptr_t*>(rsp_before);
+                    HMODULE owner = nullptr;
+                    const bool caller_in_module =
+                        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                           reinterpret_cast<LPCSTR>(caller), &owner) != 0;
+                    const bool caller_in_game =
+                        guest_lo && caller >= guest_lo && caller < guest_hi;
+                    if (!caller_in_module && !caller_in_game) {
+                        break;
+                    }
+                    context.Rip = DWORD64(caller);
+                    context.Rsp = DWORD64(rsp_before + sizeof(uintptr_t));
+                }
+                if (uintptr_t(context.Rsp) <= rsp_before && uintptr_t(context.Rip) != 0) {
+                    break; // no progress: the chain is not one (a stale or reused stack)
+                }
+            }
+            if (at > 0) {
+                ++used;
+            }
+        }
+        ResumeThread(thread);
+        CloseHandle(thread);
+    }
+    CloseHandle(snapshot);
+    for (unsigned i = 0; i < used; ++i) {
+        std::printf("%s\n", lines[i]);
+    }
+    std::printf("  thread dump: %u threads (where each is, then the port's and the game's frames)\n", used);
+    std::fflush(stdout);
 }
 
 void bb_guest_tls_set(void* tcb) {

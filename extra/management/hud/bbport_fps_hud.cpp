@@ -1,29 +1,206 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: the FPS HUD -- the window in a corner with the FPS/frametime, GPU, CPU, VRAM, RAM and
+// upscaler lines, laid out as a row or a two-column table. Its metrics are built in
+// bbport_fps_hud_metrics.cpp and its graphics drawn in bbport_fps_hud_graph.cpp.
 #include "bbport_fps_hud.h"
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <cstdio>
-#include <string>
-#include <vector>
+#include <cstdint>
+#include <string_view>
 
 #include "bb_env.h"
+#include "bbport_fps_hud_internal.h"
 #include "bbport_perf_metrics.h"
 #include "bbport_settings.h"
 #include "bbport_shader_tracker.h"
-#include "bbport_strings.h"
 #include "ui_strings.h"
 #include <imgui.h>
 
 namespace BbFpsHud {
+namespace {
 
-struct MetricEntry {
-    const char* tag = "";
-    ImU32 tag_col = IM_COL32_WHITE;
-    std::string value;
-    bool is_standalone = false;
-};
+using detail::HudState;
+using detail::MetricEntry;
+using detail::Metrics;
+
+/// The HUD's padding from the viewport's work area, before the user's scale.
+constexpr float kViewportPad = 12.0f;
+/// The gap between two metrics, and between a metric's tag and its value.
+constexpr float kMetricGap = 6.0f;
+constexpr float kTagGap = 4.0f;
+
+/// The settings that show the shader-building indicator, when the environment allows it.
+bool ShadersShown(const BbSettings::Values& s, bool compiling) {
+    static const bool env_enabled = !bb_env_off("BB_SHADER_PROGRESS");
+    return compiling && env_enabled && s.fps_hud_show_shaders.load(std::memory_order_relaxed);
+}
+
+/// The shader indicator's fade-out over the 400 ms after compiling stops.
+float CompileAlpha(bool compiling) {
+    if (!compiling) {
+        return 1.0f;
+    }
+    const std::uint32_t decay_ms = BbShaderTracker::GetDecayElapsedMs();
+    if (decay_ms >= 800) {
+        return 0.0f;
+    }
+    if (decay_ms > 400) {
+        return 1.0f - (float(decay_ms - 400) / 400.0f);
+    }
+    return 1.0f;
+}
+
+/// Where the window goes: 0 top-right (the default), 1 top-left, 2 bottom-right, 3 bottom-left.
+void PlaceWindow(int position, float pad, ImVec2& pos, ImVec2& pivot) {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float left = viewport->WorkPos.x + pad;
+    const float top = viewport->WorkPos.y + pad;
+    const float right = viewport->WorkPos.x + viewport->WorkSize.x - pad;
+    const float bottom = viewport->WorkPos.y + viewport->WorkSize.y - pad;
+
+    switch (position) {
+    case 1:
+        pos = ImVec2(left, top);
+        pivot = ImVec2(0.0f, 0.0f);
+        break;
+    case 2:
+        pos = ImVec2(right, bottom);
+        pivot = ImVec2(1.0f, 1.0f);
+        break;
+    case 3:
+        pos = ImVec2(left, bottom);
+        pivot = ImVec2(0.0f, 1.0f);
+        break;
+    case 0:
+    default:
+        pos = ImVec2(right, top);
+        pivot = ImVec2(1.0f, 0.0f);
+        break;
+    }
+}
+
+/// The shaders line: its tag, and "(N)" while N shaders are still building.
+void ShadersLine(const HudState& state, unsigned active) {
+    const char* const tag = UI::L("Shaders", "Shaders", "Шейдеры");
+    if (active > 0) {
+        ImGui::Text("%s (%u)", tag, active);
+    } else {
+        ImGui::TextUnformatted(tag);
+    }
+}
+
+void SpinnerAtCursor(const HudState& state, ImDrawList* draw_list) {
+    detail::DrawShaderSpinner(draw_list, ImGui::GetCursorScreenPos(), state);
+    ImGui::Dummy(ImVec2(detail::SpinnerRadius(state) * 2.0f, ImGui::GetTextLineHeight()));
+}
+
+/// The row layout: every metric separated by "|", the upscaler carrying its resolution.
+void RenderRow(const HudState& state, const Metrics& metrics, unsigned active, ImDrawList* draw_list) {
+    const float gap = kMetricGap * state.user_scale;
+    const auto separator = [&] {
+        ImGui::SameLine(0.0f, gap);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 160, 160, 140));
+        ImGui::TextUnformatted("|");
+        ImGui::PopStyleColor();
+        ImGui::SameLine(0.0f, gap);
+    };
+
+    for (std::size_t i = 0; i < metrics.entries.size(); ++i) {
+        const MetricEntry& entry = metrics.entries[i];
+        if (i > 0) {
+            separator();
+        }
+        if (entry.is_standalone) {
+            ImGui::PushStyleColor(ImGuiCol_Text, entry.tag_col);
+            ImGui::TextUnformatted(entry.value.c_str());
+            ImGui::PopStyleColor();
+            if (std::string_view{entry.tag} == "UP" && !metrics.resolution.empty()) {
+                ImGui::SameLine(0.0f, kTagGap * state.user_scale);
+                ImGui::SetWindowFontScale(state.user_scale * 0.88f);
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(185, 195, 205, 230));
+                ImGui::Text("(%s)", metrics.resolution.c_str());
+                ImGui::PopStyleColor();
+                ImGui::SetWindowFontScale(state.user_scale);
+            }
+            continue;
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, entry.tag_col);
+        ImGui::TextUnformatted(entry.tag);
+        ImGui::PopStyleColor();
+        ImGui::SameLine(0.0f, kTagGap * state.user_scale);
+        ImGui::TextUnformatted(entry.value.c_str());
+    }
+
+    if (!state.is_compiling || !state.show_shaders || state.compile_alpha <= 0.0f) {
+        return;
+    }
+    separator();
+    SpinnerAtCursor(state, draw_list);
+    ImGui::SameLine(0.0f, detail::SpinnerSpacing(state));
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          IM_COL32(180, 235, 255, static_cast<int>(240 * state.compile_alpha)));
+    ShadersLine(state, active);
+    ImGui::PopStyleColor();
+}
+
+/// The column layout: a two-column table (tag, value) with the same rows.
+void RenderColumn(const HudState& state, const Metrics& metrics, unsigned active) {
+    if (!ImGui::BeginTable("##hud_metrics_tbl", 2, ImGuiTableFlags_SizingFixedFit)) {
+        return;
+    }
+    ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthFixed, 48.0f * state.user_scale);
+    ImGui::TableSetupColumn("Val", ImGuiTableColumnFlags_WidthStretch);
+
+    for (const MetricEntry& entry : metrics.entries) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::PushStyleColor(ImGuiCol_Text, entry.tag_col);
+        ImGui::TextUnformatted(entry.tag);
+        ImGui::PopStyleColor();
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(entry.value.c_str());
+        if (std::string_view{entry.tag} == "UP" && !metrics.resolution.empty()) {
+            ImGui::SetWindowFontScale(state.user_scale * 0.88f);
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(185, 195, 205, 230));
+            ImGui::TextUnformatted(metrics.resolution.c_str());
+            ImGui::PopStyleColor();
+            ImGui::SetWindowFontScale(state.user_scale);
+        }
+    }
+
+    if (state.is_compiling && state.show_shaders && state.compile_alpha > 0.0f) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        SpinnerAtCursor(state, ImGui::GetWindowDrawList());
+
+        ImGui::TableSetColumnIndex(1);
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              IM_COL32(180, 235, 255, static_cast<int>(240 * state.compile_alpha)));
+        ShadersLine(state, active);
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndTable();
+}
+
+/// The HUD when only the shader indicator is on (no FPS line).
+void RenderCompilingOnly(const HudState& state, unsigned active) {
+    SpinnerAtCursor(state, ImGui::GetWindowDrawList());
+    ImGui::SameLine(0.0f, detail::SpinnerSpacing(state));
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          IM_COL32(180, 235, 255, static_cast<int>(240 * state.compile_alpha)));
+    if (active > 0) {
+        ImGui::Text("%s (%u)...", UI::L("Compiling shaders", "Compilando shaders", "Компиляция шейдеров"),
+                    active);
+    } else {
+        ImGui::TextUnformatted(
+            UI::L("Compiling shaders...", "Compilando shaders...", "Компиляция шейдеров..."));
+    }
+    ImGui::PopStyleColor();
+}
+
+} // namespace
 
 bool IsVisible() {
     const auto& s = BbSettings::Get();
@@ -33,10 +210,7 @@ bool IsVisible() {
     if (s.show_fps) {
         return true;
     }
-    static const bool env_enabled = !bb_env_off("BB_SHADER_PROGRESS");
-    const bool is_compiling = BbShaderTracker::IsCompiling();
-    const bool show_shaders = env_enabled && s.fps_hud_show_shaders.load(std::memory_order_relaxed);
-    return is_compiling && show_shaders;
+    return ShadersShown(s, BbShaderTracker::IsCompiling());
 }
 
 void Render(const Stats& stats) {
@@ -44,492 +218,70 @@ void Render(const Stats& stats) {
         return;
     }
 
-    const auto& s = BbSettings::Get();
-    const int lang = s.menu_language.load();
-    const bool show_fps = s.show_fps;
+    const BbSettings::Values& s = BbSettings::Get();
     const bool is_compiling = BbShaderTracker::IsCompiling();
-    static const bool env_enabled = !bb_env_off("BB_SHADER_PROGRESS");
-    const bool show_shaders = env_enabled && s.fps_hud_show_shaders.load(std::memory_order_relaxed);
+    const bool show_shaders = ShadersShown(s, is_compiling);
 
-    const float user_scale = std::clamp(s.fps_hud_scale.load(std::memory_order_relaxed), 0.5f, 3.0f);
-    const float base_scale = stats.base_scale * user_scale;
-    const float orig_ms_avg = stats.orig_ms_avg;
-    const float total_ms_avg = stats.total_ms_avg;
-    const auto last_generated_time = stats.last_generated_time;
-
-    // Alpha decay calculation for smooth shader compilation fade out
-    float compile_alpha = 1.0f;
-    if (is_compiling) {
-        const uint32_t decay_ms = BbShaderTracker::GetDecayElapsedMs();
-        if (decay_ms > 400 && decay_ms < 800) {
-            compile_alpha = 1.0f - (float(decay_ms - 400) / 400.0f);
-        } else if (decay_ms >= 800) {
-            compile_alpha = 0.0f;
-        }
-    }
-
-    const float orig_fps = orig_ms_avg > 0.0f ? 1000.0f / orig_ms_avg : 0.0f;
-    const float total_fps = total_ms_avg > 0.0f ? 1000.0f / total_ms_avg : orig_fps;
-    const float display_ms = total_ms_avg > 0.0f ? total_ms_avg : orig_ms_avg;
-
-    // Sample/update background metrics (throttled to 500ms) and ring buffer
-    BbPerfMetrics::Update(display_ms);
-    const auto metrics = BbPerfMetrics::GetSnapshot();
-
-    std::string upscaler_label;
-    if (s.upscaler == BbSettings::UpscalerFsr3) {
-        upscaler_label = "FSR 3.1";
-    } else if (s.upscaler == BbSettings::UpscalerFsr4) {
-        upscaler_label = "FSR 4";
-    } else if (s.upscaler == BbSettings::UpscalerFsr411) {
-        upscaler_label = s.fsr411_fp8.load() ? "FSR 4.1.1 (FP8)" : "FSR 4.1.1";
-    } else if (s.upscaler == BbSettings::UpscalerTaa) {
-        upscaler_label = "TAA";
-    } else if (s.upscaler == BbSettings::UpscalerDlss) {
-        upscaler_label = "DLSS";
-    }
-
-    const bool fg_setting_on = s.frame_generation.load();
-    const auto now = std::chrono::steady_clock::now();
-    const bool fg_active = fg_setting_on ||
-        (last_generated_time.time_since_epoch().count() != 0 &&
-         (now - last_generated_time) < std::chrono::milliseconds(1500));
-
-    if (fg_active) {
-        if (!upscaler_label.empty()) {
-            upscaler_label += " + FG";
-        } else {
-            upscaler_label = "FG";
-        }
-    }
-
-    std::string res_text;
-    if (!upscaler_label.empty()) {
-        const auto out = BbSettings::CurrentOutput();
-        const int rw = s.active_render_width.load(std::memory_order_relaxed);
-        const int rh = s.active_render_height.load(std::memory_order_relaxed);
-        const int final_w = out.width > 0 ? out.width : 1920;
-        const int final_h = out.height > 0 ? out.height : 1080;
-        const int render_w = rw > 0 ? rw : final_w;
-        const int render_h = rh > 0 ? rh : final_h;
-
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%dx%d < %dx%d", final_w, final_h, render_w, render_h);
-        res_text = buf;
-    }
-
-    // Build metric entries
-    std::vector<MetricEntry> entries;
-    if (show_fps) {
-        const bool show_fps_val = s.fps_hud_show_fps.load();
-        const bool show_ft_val = s.fps_hud_show_frametime.load();
-        const char* const ms_unit = BbStrings::Get(BbStrings::StringId::FpsMs, lang);
-
-        if (show_fps_val || show_ft_val) {
-            char fps_buf[128] = {};
-            if (fg_active) {
-                if (show_fps_val && show_ft_val) {
-                    std::snprintf(fps_buf, sizeof(fps_buf), "%.0f \\ %.0f FPS (%.1f %s)",
-                                  orig_fps, total_fps, display_ms, ms_unit);
-                } else if (show_fps_val) {
-                    std::snprintf(fps_buf, sizeof(fps_buf), "%.0f \\ %.0f FPS", orig_fps, total_fps);
-                } else {
-                    std::snprintf(fps_buf, sizeof(fps_buf), "%.1f %s", display_ms, ms_unit);
-                }
-            } else {
-                const float fps = total_fps > 0.0f ? total_fps : orig_fps;
-                if (show_fps_val && show_ft_val) {
-                    std::snprintf(fps_buf, sizeof(fps_buf), "%.0f FPS (%.1f %s)", fps, display_ms, ms_unit);
-                } else if (show_fps_val) {
-                    std::snprintf(fps_buf, sizeof(fps_buf), "%.0f FPS", fps);
-                } else {
-                    std::snprintf(fps_buf, sizeof(fps_buf), "%.1f %s", display_ms, ms_unit);
-                }
-            }
-            entries.push_back(MetricEntry{"FPS", IM_COL32(250, 250, 250, 255), fps_buf, true});
-        }
-
-        if (s.fps_hud_show_gpu.load()) {
-            char gpu_buf[64] = {};
-            std::snprintf(gpu_buf, sizeof(gpu_buf), "%.0f%%", metrics.gpu_percent);
-            entries.push_back(MetricEntry{"GPU", IM_COL32(80, 225, 120, 255), gpu_buf, false});
-        }
-
-        if (s.fps_hud_show_cpu.load()) {
-            char cpu_buf[64] = {};
-            std::snprintf(cpu_buf, sizeof(cpu_buf), "%.0f%%", metrics.cpu_percent);
-            entries.push_back(MetricEntry{"CPU", IM_COL32(80, 190, 255, 255), cpu_buf, false});
-        }
-
-        if (s.fps_hud_show_vram.load()) {
-            char vram_buf[64] = {};
-            const uint64_t proj_vram = metrics.vram_bytes;
-            const uint64_t proj_gtt = metrics.gtt_bytes;
-            const uint64_t total_proc_gpu = proj_vram + proj_gtt;
-            const uint64_t sys_vram = metrics.vram_sys_bytes;
-
-            if (proj_gtt > 0) {
-                // APU or Zero-Copy Host Memory import active: report total process GPU memory and GTT breakdown
-                if (total_proc_gpu >= (1024ULL * 1024 * 1024)) {
-                    std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB (+GTT %lluM)",
-                                  double(total_proc_gpu) / (1024.0 * 1024.0 * 1024.0),
-                                  static_cast<unsigned long long>(proj_gtt >> 20));
-                } else {
-                    std::snprintf(vram_buf, sizeof(vram_buf), "%llu MB (+GTT %lluM)",
-                                  static_cast<unsigned long long>(total_proc_gpu >> 20),
-                                  static_cast<unsigned long long>(proj_gtt >> 20));
-                }
-            } else if (proj_vram >= (1024ULL * 1024 * 1024)) {
-                if (sys_vram > proj_vram) {
-                    std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB (Tot: %.2f)",
-                                  double(proj_vram) / (1024.0 * 1024.0 * 1024.0),
-                                  double(sys_vram) / (1024.0 * 1024.0 * 1024.0));
-                } else {
-                    std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB",
-                                  double(proj_vram) / (1024.0 * 1024.0 * 1024.0));
-                }
-            } else if (proj_vram > 0) {
-                if (sys_vram > proj_vram) {
-                    std::snprintf(vram_buf, sizeof(vram_buf), "%llu MB (Tot: %.2f GB)",
-                                  static_cast<unsigned long long>(proj_vram >> 20),
-                                  double(sys_vram) / (1024.0 * 1024.0 * 1024.0));
-                } else {
-                    std::snprintf(vram_buf, sizeof(vram_buf), "%llu MB",
-                                  static_cast<unsigned long long>(proj_vram >> 20));
-                }
-            } else if (sys_vram > 0) {
-                std::snprintf(vram_buf, sizeof(vram_buf), "%.2f GB",
-                              double(sys_vram) / (1024.0 * 1024.0 * 1024.0));
-            } else {
-                std::snprintf(vram_buf, sizeof(vram_buf), "0 MB");
-            }
-            entries.push_back(MetricEntry{"VRAM", IM_COL32(230, 130, 255, 255), vram_buf, false});
-
-            if (metrics.mem_clock_mhz > 0) {
-                char mem_buf[32] = {};
-                std::snprintf(mem_buf, sizeof(mem_buf), "%u MHz", metrics.mem_clock_mhz);
-                entries.push_back(MetricEntry{"MEM", IM_COL32(240, 160, 255, 255), mem_buf, false});
-            }
-        }
-
-        if (s.fps_hud_show_ram.load()) {
-            char ram_buf[64] = {};
-            const double proc_gb = double(metrics.ram_rss_bytes) / (1024.0 * 1024.0 * 1024.0);
-            if (metrics.ram_sys_total_bytes > 0) {
-                const double sys_used_gb = double(metrics.ram_sys_used_bytes) / (1024.0 * 1024.0 * 1024.0);
-                const double sys_tot_gb = double(metrics.ram_sys_total_bytes) / (1024.0 * 1024.0 * 1024.0);
-                if (proc_gb >= 1.0) {
-                    std::snprintf(ram_buf, sizeof(ram_buf), "%.2f GB (Sys: %.1f/%.0fG)",
-                                  proc_gb, sys_used_gb, sys_tot_gb);
-                } else {
-                    std::snprintf(ram_buf, sizeof(ram_buf), "%llu MB (Sys: %.1f/%.0fG)",
-                                  static_cast<unsigned long long>(metrics.ram_rss_bytes >> 20),
-                                  sys_used_gb, sys_tot_gb);
-                }
-            } else {
-                if (proc_gb >= 1.0) {
-                    std::snprintf(ram_buf, sizeof(ram_buf), "%.2f GB", proc_gb);
-                } else {
-                    std::snprintf(ram_buf, sizeof(ram_buf), "%llu MB",
-                                  static_cast<unsigned long long>(metrics.ram_rss_bytes >> 20));
-                }
-            }
-            entries.push_back(MetricEntry{"RAM", IM_COL32(255, 185, 75, 255), ram_buf, false});
-        }
-
-        if (!upscaler_label.empty()) {
-            entries.push_back(MetricEntry{"UP", IM_COL32(180, 235, 255, 255), upscaler_label, true});
-        }
-    }
-
-    const float spinner_radius = 5.0f * base_scale;
-    const float spinner_spacing = 6.0f * base_scale;
-    const uint32_t active_compiles = BbShaderTracker::GetActiveCount();
-    const char* const shader_tag = UI::L("Shaders", "Shaders", "Шейдеры");
-
-    // Determine window placement
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float pad = 12.0f * stats.base_scale;
-    const int pos_mode = std::clamp(s.fps_hud_position.load(), 0, 3);
-    const int layout_mode = std::clamp(s.fps_hud_layout.load(), 0, 1); // 0=Horizontal (Linha), 1=Vertical (Coluna)
-    const bool show_graph = show_fps && s.fps_hud_show_graph.load();
-
-    ImVec2 win_pos, win_pivot;
-    switch (pos_mode) {
-    case 1: // Top-Left
-        win_pos = ImVec2(viewport->WorkPos.x + pad, viewport->WorkPos.y + pad);
-        win_pivot = ImVec2(0.0f, 0.0f);
-        break;
-    case 2: // Bottom-Right
-        win_pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - pad,
-                         viewport->WorkPos.y + viewport->WorkSize.y - pad);
-        win_pivot = ImVec2(1.0f, 1.0f);
-        break;
-    case 3: // Bottom-Left
-        win_pos = ImVec2(viewport->WorkPos.x + pad, viewport->WorkPos.y + viewport->WorkSize.y - pad);
-        win_pivot = ImVec2(0.0f, 1.0f);
-        break;
-    case 0: // Top-Right (Default)
-    default:
-        win_pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - pad, viewport->WorkPos.y + pad);
-        win_pivot = ImVec2(1.0f, 0.0f);
-        break;
-    }
-
-    ImGui::SetNextWindowPos(win_pos, ImGuiCond_Always, win_pivot);
-    const float bg_alpha = std::clamp(s.fps_hud_bg_opacity.load(), 0.0f, 1.0f);
-    ImGui::SetNextWindowBgAlpha(bg_alpha);
-
-    ImGui::Begin("##fps", nullptr,
-                 ImGuiWindowFlags_NoDecoration |
-                     ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
-                     ImGuiWindowFlags_NoFocusOnAppearing);
-
-    ImGui::SetWindowFontScale(user_scale);
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-    auto DrawSpinner = [&](ImVec2 pos, float alpha) {
-        const float line_height = ImGui::GetTextLineHeight();
-        const ImVec2 center = ImVec2(pos.x + spinner_radius, pos.y + line_height * 0.5f);
-        draw_list->AddCircle(center, spinner_radius, IM_COL32(255, 255, 255, static_cast<int>(40 * alpha)), 16, 1.5f * base_scale);
-        const float t = static_cast<float>(ImGui::GetTime());
-        const float spin_angle = t * 7.5f;
-        constexpr int kSegments = 16;
-        constexpr float kArcLen = 3.14159265f * 1.35f;
-        draw_list->PathClear();
-        for (int i = 0; i <= kSegments; ++i) {
-            const float a = spin_angle + (float(i) / float(kSegments)) * kArcLen;
-            draw_list->PathLineTo(ImVec2(center.x + std::cos(a) * spinner_radius, center.y + std::sin(a) * spinner_radius));
-        }
-        draw_list->PathStroke(IM_COL32(0, 220, 255, static_cast<int>(240 * alpha)), 0, 2.0f * base_scale);
+    HudState state{
+        .settings = s,
+        .lang = s.menu_language.load(),
+        .show_fps = s.show_fps,
+        .show_shaders = show_shaders,
+        .is_compiling = is_compiling,
+        .user_scale = std::clamp(s.fps_hud_scale.load(std::memory_order_relaxed), 0.5f, 3.0f),
+        .base_scale = stats.base_scale,
+        .compile_alpha = CompileAlpha(is_compiling),
     };
 
-    if (show_fps && !entries.empty()) {
-        if (layout_mode == 0) {
-            // Modo Linha (Horizontal) - no overlap guaranteed
-            for (size_t i = 0; i < entries.size(); ++i) {
-                if (i > 0) {
-                    ImGui::SameLine(0.0f, 6.0f * user_scale);
-                    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 160, 160, 140));
-                    ImGui::TextUnformatted("|");
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine(0.0f, 6.0f * user_scale);
-                }
+    state.orig_fps = stats.orig_ms_avg > 0.0f ? 1000.0f / stats.orig_ms_avg : 0.0f;
+    state.total_fps = stats.total_ms_avg > 0.0f ? 1000.0f / stats.total_ms_avg : state.orig_fps;
+    state.display_ms = stats.total_ms_avg > 0.0f ? stats.total_ms_avg : stats.orig_ms_avg;
 
-                if (entries[i].is_standalone) {
-                    if (std::string(entries[i].tag) == "UP") {
-                        ImGui::PushStyleColor(ImGuiCol_Text, entries[i].tag_col);
-                        ImGui::TextUnformatted(entries[i].value.c_str());
-                        ImGui::PopStyleColor();
-                        if (!res_text.empty()) {
-                            ImGui::SameLine(0.0f, 4.0f * user_scale);
-                            ImGui::SetWindowFontScale(user_scale * 0.88f);
-                            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(185, 195, 205, 230));
-                            ImGui::Text("(%s)", res_text.c_str());
-                            ImGui::PopStyleColor();
-                            ImGui::SetWindowFontScale(user_scale);
-                        }
-                    } else {
-                        ImGui::TextUnformatted(entries[i].value.c_str());
-                    }
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Text, entries[i].tag_col);
-                    ImGui::TextUnformatted(entries[i].tag);
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine(0.0f, 4.0f * user_scale);
-                    ImGui::TextUnformatted(entries[i].value.c_str());
-                }
-            }
+    // Sample/update the background metrics (throttled) and the frametime ring buffer.
+    BbPerfMetrics::Update(state.display_ms);
 
-            // Shader Compilation Indicator in Horizontal Mode
-            if (is_compiling && show_shaders && compile_alpha > 0.0f) {
-                ImGui::SameLine(0.0f, 6.0f * user_scale);
-                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 160, 160, static_cast<int>(140 * compile_alpha)));
-                ImGui::TextUnformatted("|");
-                ImGui::PopStyleColor();
-                ImGui::SameLine(0.0f, 6.0f * user_scale);
+    const auto now = std::chrono::steady_clock::now();
+    state.fg_active = s.frame_generation.load() ||
+                      (stats.last_generated_time.time_since_epoch().count() != 0 &&
+                       (now - stats.last_generated_time) < std::chrono::milliseconds(1500));
 
-                const ImVec2 spinner_pos = ImGui::GetCursorScreenPos();
-                DrawSpinner(spinner_pos, compile_alpha);
-                ImGui::Dummy(ImVec2(spinner_radius * 2.0f, ImGui::GetTextLineHeight()));
-                ImGui::SameLine(0.0f, spinner_spacing);
+    const Metrics metrics = detail::BuildMetrics(state);
+    const unsigned active_compiles = BbShaderTracker::GetActiveCount();
 
-                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(180, 235, 255, static_cast<int>(240 * compile_alpha)));
-                if (active_compiles > 0) {
-                    ImGui::Text("%s (%u)", shader_tag, active_compiles);
-                } else {
-                    ImGui::TextUnformatted(shader_tag);
-                }
-                ImGui::PopStyleColor();
-            }
+    ImVec2 win_pos, win_pivot;
+    PlaceWindow(std::clamp(s.fps_hud_position.load(), 0, 3), kViewportPad * state.base_scale, win_pos,
+                win_pivot);
+    ImGui::SetNextWindowPos(win_pos, ImGuiCond_Always, win_pivot);
+    ImGui::SetNextWindowBgAlpha(std::clamp(s.fps_hud_bg_opacity.load(), 0.0f, 1.0f));
+    ImGui::Begin("##fps", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::SetWindowFontScale(state.user_scale);
+    ImDrawList* const draw_list = ImGui::GetWindowDrawList();
+
+    const bool has_metrics = state.show_fps && !metrics.entries.empty();
+    if (has_metrics) {
+        if (std::clamp(s.fps_hud_layout.load(), 0, 1) == 0) {
+            RenderRow(state, metrics, active_compiles, draw_list);
         } else {
-            // Modo Coluna (Vertical) - clean 2-column table, zero overlap
-            if (ImGui::BeginTable("##hud_metrics_tbl", 2, ImGuiTableFlags_SizingFixedFit)) {
-                ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthFixed, 48.0f * user_scale);
-                ImGui::TableSetupColumn("Val", ImGuiTableColumnFlags_WidthStretch);
-
-                for (const auto& entry : entries) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::PushStyleColor(ImGuiCol_Text, entry.tag_col);
-                    ImGui::TextUnformatted(entry.tag);
-                    ImGui::PopStyleColor();
-
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(entry.value.c_str());
-                    if (std::string_view(entry.tag) == "UP" && !res_text.empty()) {
-                        ImGui::SetWindowFontScale(user_scale * 0.88f);
-                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(185, 195, 205, 230));
-                        ImGui::TextUnformatted(res_text.c_str());
-                        ImGui::PopStyleColor();
-                        ImGui::SetWindowFontScale(user_scale);
-                    }
-                }
-
-                // Shader Compilation row in Column Mode
-                if (is_compiling && show_shaders && compile_alpha > 0.0f) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    const ImVec2 spinner_pos = ImGui::GetCursorScreenPos();
-                    DrawSpinner(spinner_pos, compile_alpha);
-                    ImGui::Dummy(ImVec2(spinner_radius * 2.0f, ImGui::GetTextLineHeight()));
-
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(180, 235, 255, static_cast<int>(240 * compile_alpha)));
-                    if (active_compiles > 0) {
-                        ImGui::Text("%s (%u)", shader_tag, active_compiles);
-                    } else {
-                        ImGui::TextUnformatted(shader_tag);
-                    }
-                    ImGui::PopStyleColor();
-                }
-
-                ImGui::EndTable();
-            }
+            RenderColumn(state, metrics, active_compiles);
         }
-    } else if (is_compiling && show_shaders && compile_alpha > 0.0f) {
-        // Only compiling shaders is active
-        const ImVec2 spinner_pos = ImGui::GetCursorScreenPos();
-        DrawSpinner(spinner_pos, compile_alpha);
-        ImGui::Dummy(ImVec2(spinner_radius * 2.0f, ImGui::GetTextLineHeight()));
-        ImGui::SameLine(0.0f, spinner_spacing);
-
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(180, 235, 255, static_cast<int>(240 * compile_alpha)));
-        if (active_compiles > 0) {
-            ImGui::Text("%s (%u)...", UI::L("Compiling shaders", "Compilando shaders", "Компиляция шейдеров"), active_compiles);
-        } else {
-            ImGui::TextUnformatted(UI::L("Compiling shaders...", "Compilando shaders...", "Компиляция шейдеров..."));
-        }
-        ImGui::PopStyleColor();
+    } else if (state.is_compiling && state.show_shaders && state.compile_alpha > 0.0f) {
+        RenderCompilingOnly(state, active_compiles);
     }
 
-    // Customizable Frametime Graph (holds 240 samples = 1 to 4 full seconds)
-    if (show_graph) {
-        const float* samples = nullptr;
-        size_t count = 0;
-        size_t offset = 0;
-        BbPerfMetrics::GetFrameHistory(samples, count, offset);
-
-        if (count > 1) {
-            const float user_gw = std::clamp(s.fps_hud_graph_width.load(std::memory_order_relaxed), 100.0f, 600.0f);
-            const float user_gh = std::clamp(s.fps_hud_graph_height.load(std::memory_order_relaxed), 16.0f, 120.0f);
-            const float user_th = std::clamp(s.fps_hud_graph_thickness.load(std::memory_order_relaxed), 0.5f, 5.0f);
-
-            const float graph_w = std::max(user_gw * user_scale, ImGui::GetContentRegionAvail().x);
-            const float graph_h = user_gh * user_scale;
-            const float line_thick = user_th * user_scale;
-
-            // Explicit separation to prevent any overlap with text
-            ImGui::Dummy(ImVec2(0.0f, 4.0f * user_scale));
-
-            const ImVec2 p0 = ImGui::GetCursorScreenPos();
-            const ImVec2 p1 = ImVec2(p0.x + graph_w, p0.y + graph_h);
-
-            // Subtle dark background & thin border
-            draw_list->AddRectFilled(p0, p1, IM_COL32(16, 18, 22, 210), 3.0f);
-            draw_list->AddRect(p0, p1, IM_COL32(255, 255, 255, 25), 3.0f);
-
-            // Target reference lines: 16.6ms (60 FPS) and 33.3ms (30 FPS)
-            constexpr float kMaxMs = 50.0f;
-            auto MsToY = [&](float ms) -> float {
-                const float clamped = std::clamp(ms, 0.0f, kMaxMs);
-                return p1.y - 2.0f - (clamped / kMaxMs) * (graph_h - 4.0f);
-            };
-
-            const float y60 = MsToY(16.67f);
-            draw_list->AddLine(ImVec2(p0.x, y60), ImVec2(p1.x, y60), IM_COL32(0, 220, 120, 60), 1.0f);
-
-            const float y30 = MsToY(33.33f);
-            draw_list->AddLine(ImVec2(p0.x, y30), ImVec2(p1.x, y30), IM_COL32(240, 190, 40, 60), 1.0f);
-
-            // Polyline connecting the chronological frametimes (240 samples)
-            const float step_x = graph_w / float(BbPerfMetrics::kFrameHistoryCapacity - 1);
-            for (size_t i = 1; i < count; ++i) {
-                const size_t idx_prev = (count < BbPerfMetrics::kFrameHistoryCapacity) ?
-                    (i - 1) : ((offset + i - 1) % BbPerfMetrics::kFrameHistoryCapacity);
-                const size_t idx_curr = (count < BbPerfMetrics::kFrameHistoryCapacity) ?
-                    i : ((offset + i) % BbPerfMetrics::kFrameHistoryCapacity);
-
-                const float v_prev = samples[idx_prev];
-                const float v_curr = samples[idx_curr];
-
-                const ImVec2 pt0(p0.x + float(i - 1) * step_x, MsToY(v_prev));
-                const ImVec2 pt1(p0.x + float(i) * step_x, MsToY(v_curr));
-
-                ImU32 col = IM_COL32(0, 225, 255, 240);
-                if (v_curr > 33.4f) {
-                    col = IM_COL32(255, 75, 75, 240); // Warning Red
-                } else if (v_curr > 16.8f) {
-                    col = IM_COL32(240, 200, 50, 230); // Yellow
-                }
-
-                draw_list->AddLine(pt0, pt1, col, line_thick);
-            }
-
-            ImGui::Dummy(ImVec2(graph_w, graph_h));
-        }
+    if (state.show_fps && s.fps_hud_show_graph.load()) {
+        detail::DrawFrameGraph(state, draw_list);
+    }
+    if (state.is_compiling && state.show_shaders && state.compile_alpha > 0.0f) {
+        detail::DrawCompileBeam(state, draw_list);
     }
 
-    // Animated loading line along bottom border when compiling shaders
-    if (is_compiling && show_shaders && compile_alpha > 0.0f) {
-        const ImVec2 win_pos_curr = ImGui::GetWindowPos();
-        const ImVec2 win_size = ImGui::GetWindowSize();
-        const float line_y = win_pos_curr.y + win_size.y - 2.5f * base_scale;
-        const float x0 = win_pos_curr.x + 8.0f * base_scale;
-        const float x1 = win_pos_curr.x + win_size.x - 8.0f * base_scale;
-        const float span = x1 - x0;
-
-        if (span > 10.0f) {
-            draw_list->AddLine(ImVec2(x0, line_y), ImVec2(x1, line_y),
-                               IM_COL32(255, 255, 255, static_cast<int>(25 * compile_alpha)),
-                               2.0f * base_scale);
-
-            const float t = static_cast<float>(ImGui::GetTime());
-            const float beam_len = span * 0.35f;
-            const float travel = span + beam_len;
-            const float cycle = std::fmod(t * 1.3f, 1.0f);
-            const float beam_start = (x0 - beam_len) + travel * cycle;
-            const float bx0 = std::max(x0, beam_start);
-            const float bx1 = std::min(x1, beam_start + beam_len);
-
-            if (bx1 > bx0) {
-                draw_list->AddLine(ImVec2(bx0, line_y), ImVec2(bx1, line_y),
-                                   IM_COL32(0, 180, 255, static_cast<int>(60 * compile_alpha)),
-                                   4.5f * base_scale);
-                draw_list->AddLine(ImVec2(bx0, line_y), ImVec2(bx1, line_y),
-                                   IM_COL32(0, 225, 255, static_cast<int>(240 * compile_alpha)),
-                                   2.0f * base_scale);
-            }
-        }
-    }
-
-    if (fg_active && ImGui::IsItemHovered()) {
+    if (state.fg_active && ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s: %.0f FPS | %s: %.0f FPS",
-                          UI::L("Original Frames", "Quadros Originais", "Исходные кадры"),
-                          orig_fps,
-                          UI::L("Total Frames", "Quadros Totais", "Всего кадров"),
-                          total_fps);
+                          UI::L("Original Frames", "Quadros Originais", "Исходные кадры"), state.orig_fps,
+                          UI::L("Total Frames", "Quadros Totais", "Всего кадров"), state.total_fps);
     }
     ImGui::SetWindowFontScale(1.0f);
     ImGui::End();

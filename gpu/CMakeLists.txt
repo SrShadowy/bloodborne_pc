@@ -413,6 +413,24 @@ add_executable(camera-matrices-test EXCLUDE_FROM_ALL ../tests/test_camera_matric
 target_compile_options(camera-matrices-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(camera-matrices-test PRIVATE ..)
 
+# The mouse camera's angle fold (extra/core/camera/bbport_mouse_camera_internal.h). The guest is
+# not needed: the fold is a pure function, and this is the regression test for the freeze it caused
+# (a loop that never ended for an infinity -- see SHADOW_CHANGES.md entry 125).
+add_executable(mouse-camera-angle-test EXCLUDE_FROM_ALL ../tests/test_mouse_camera_angle.cpp)
+target_compile_options(mouse-camera-angle-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(mouse-camera-angle-test PRIVATE ../extra/core/camera)
+
+# The stall report's thread dump (gpu/platform/win32/posix_win32.cpp, bb_win32_dump_threads). Only
+# runs on a stall in the real program, so this is the only place it is exercised: it must list the
+# threads and walk through the system DLLs to the frames of this exe (SHADOW_CHANGES.md entry 124).
+if(WIN32)
+    add_executable(stall-dump-test EXCLUDE_FROM_ALL ../tests/test_stall_dump_threads.cpp
+        platform/win32/posix_win32.cpp)
+    target_compile_options(stall-dump-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(stall-dump-test PRIVATE . shim platform/win32/include)
+    target_link_libraries(stall-dump-test PRIVATE psapi winmm pthread)
+endif()
+
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include)
 # The test's Vulkan-Hpp inline methods have a different set of platform extensions

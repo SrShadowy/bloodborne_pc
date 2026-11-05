@@ -26,6 +26,7 @@
 #include <SDL3/SDL.h>
 #include "bbport_guest_hooks.h"
 #include "bbport_settings.h"
+#include "common/logging/log.h"
 #include <fmt/format.h>
 
 namespace BbGameMenu {
@@ -853,6 +854,7 @@ u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
 
 extern "C" void PS4_SYSV_ABI TitleExitCallback(void* /*action_arg*/) {
     std::printf("Game menu: Title Menu 'Exit Game' selected, terminating smoothly...\n");
+    Common::Log::Flush(); // [extra] _exit skips the log's batch
     std::fflush(stdout);
     _exit(0);
 }

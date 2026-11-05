@@ -7,7 +7,6 @@
 #include <atomic>
 #include <chrono>
 #include <ctime>
-#include <thread>
 #include <cstdlib>
 #include <limits>
 
@@ -20,6 +19,7 @@
 #include "bbport_timeline.h"
 #include "bbport_toggles.h"
 #include "common/path_util.h"
+#include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "extra/core/screenshot/bbport_screenshot.h"
 #include "extra/hooks.h" // [extra]
@@ -724,9 +724,22 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool) {
         LowLatency::Get().PresentEnd(frame->present_id, true);
         if (presented) {
             const double at_ms = interval_ms * double(i + 1) / double(generated + 1);
-            std::this_thread::sleep_until(now + std::chrono::duration_cast<Clock::duration>(
-                                                    std::chrono::duration<double, std::milli>(
-                                                        std::clamp(at_ms, 1.0, 50.0))));
+            const auto target = now + std::chrono::duration_cast<Clock::duration>(
+                                          std::chrono::duration<double, std::milli>(
+                                              std::clamp(at_ms, 1.0, 50.0)));
+            // [extra] Common::SleepUntil, not std::this_thread::sleep_until: on Windows MinGW's
+            // sleep_until sleeps in whole milliseconds (truncated), so each generated frame landed
+            // up to 1 ms late and the interpolation juddered by that much. The last 200 us are
+            // spun (pause) because the OS timer's own wake-up jitter is of the same order.
+            const auto spin_from = target - std::chrono::microseconds(200);
+            Common::SleepUntil(spin_from);
+#if (defined(__x86_64__) || defined(_M_X64)) && (defined(__clang__) || defined(__GNUC__))
+            while (Clock::now() < target) {
+                __builtin_ia32_pause();
+            }
+#else
+            Common::SleepUntil(target);
+#endif
         }
     }
     LowLatency::Get().PresentStart(blank ? 0 : frame->present_id, false);
