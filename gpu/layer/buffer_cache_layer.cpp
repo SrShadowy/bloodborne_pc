@@ -348,6 +348,7 @@ bool BufferCache::LayerMergeAcross(u64 first, u64 end) {
             BbStats::residency_alloc_bytes.fetch_sub(old.size, std::memory_order_relaxed);
             layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
         }
+        layer_mirror_born.erase(old.base); // it is gone: its start may be reused by another mirror
     }
     Layer().AddMirror(start, bytes, merged->Handle(), merged->BufferDeviceAddress(), merged.get());
     layer_mirrors.emplace(start, std::move(merged));
@@ -417,6 +418,7 @@ u64 BufferCache::LayerPromoteInto(u64 first, u64 end, u64 lo, u64 hi,
                 BbStats::residency_alloc_bytes.fetch_sub(old.size, std::memory_order_relaxed);
                 layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
             }
+            layer_mirror_born.erase(old.base); // it is gone: its start may be reused by another mirror
         }
         Layer().AddMirror(start, bytes, target->Handle(), target->BufferDeviceAddress(), target);
         layer_mirrors.emplace(start, std::move(mirror));
@@ -556,6 +558,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
             BbStats::residency_alloc_bytes.fetch_sub(mirror.size, std::memory_order_relaxed);
             layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
         }
+        layer_mirror_born.erase(mirror.base); // it is gone: its start may be reused by another mirror
     }
     ++layer_generation;
 }
