@@ -420,6 +420,13 @@ add_executable(mouse-camera-angle-test EXCLUDE_FROM_ALL ../tests/test_mouse_came
 target_compile_options(mouse-camera-angle-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(mouse-camera-angle-test PRIVATE ../extra/core/camera)
 
+# When a mirror is made again over its valid blocks only (gpu/layer/layer_mirror_policy.h). Pure,
+# no Vulkan device: the regression test for the default run of 0.7 that compacted nothing at all
+# (SHADOW_CHANGES.md entry 126).
+add_executable(layer-mirror-policy-test EXCLUDE_FROM_ALL ../tests/test_layer_mirror_policy.cpp)
+target_compile_options(layer-mirror-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(layer-mirror-policy-test PRIVATE .)
+
 # The stall report's thread dump (gpu/platform/win32/posix_win32.cpp, bb_win32_dump_threads). Only
 # runs on a stall in the real program, so this is the only place it is exercised: it must list the
 # threads and walk through the system DLLs to the frames of this exe (SHADOW_CHANGES.md entry 124).
