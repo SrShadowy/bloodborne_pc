@@ -427,6 +427,13 @@ add_executable(layer-mirror-policy-test EXCLUDE_FROM_ALL ../tests/test_layer_mir
 target_compile_options(layer-mirror-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(layer-mirror-policy-test PRIVATE .)
 
+# Where the texture collector's marks sit for a budget (gpu/textures/texture_cache_marks.h). Pure,
+# no Vulkan device: the regression test for the "apu" preset on a 2 GB card, where the marks were
+# 80 % of the nominal 2048 MiB while the driver reported 1378-1499 MiB (a log from a GTX 1050).
+add_executable(texture-cache-marks-test EXCLUDE_FROM_ALL ../tests/test_texture_cache_marks.cpp)
+target_compile_options(texture-cache-marks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(texture-cache-marks-test PRIVATE .)
+
 # The stall report's thread dump (gpu/platform/win32/posix_win32.cpp, bb_win32_dump_threads). Only
 # runs on a stall in the real program, so this is the only place it is exercised: it must list the
 # threads and walk through the system DLLs to the frames of this exe (SHADOW_CHANGES.md entry 124).

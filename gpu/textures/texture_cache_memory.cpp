@@ -3,6 +3,7 @@
 // The texture cache: write-backs of GPU-written images and the collector that evicts images
 // and samplers when memory runs short.
 #include "textures/texture_cache.h"
+#include "textures/texture_cache_marks.h"
 #include "shim/bb_env.h"
 #include "textures/image_spares.h"
 
@@ -47,17 +48,28 @@ void TextureCache::UpdateMemoryBudget(u64 budget) {
         critical_gc_memory = DefaultCriticalMemory;
         return;
     }
-    const s64 local = s64(budget != 0 ? budget : instance.GetTotalMemoryBudget());
-    // [extra] memoryDev VRAM budget & swap to RAM:
-    const u64 dev_limit = BbMemoryDev::GetVramLimitBytes() != 0
-                              ? BbMemoryDev::GetVramLimitBytes()
-                              : (BbMemoryDev::IsLow() ? (2048ULL << 20) : 0);
-    if (dev_limit > 0 || instance.IsIntegrated()) {
-        const u64 effective_budget = dev_limit > 0 ? dev_limit : u64(local);
-        trigger_gc_memory = effective_budget / 2;             // ~1000 MB on 2GB limit (half of VRAM)
-        pressure_gc_memory = effective_budget * 65 / 100;     // ~1300 MB on 2GB limit
-        critical_gc_memory = effective_budget * 80 / 100;     // ~1600 MB on 2GB limit (critical clamp)
-        return;
+    const u64 live = budget != 0 ? budget : instance.GetTotalMemoryBudget();
+    const s64 local = s64(live);
+    // [extra] memoryDev VRAM budget & swap to RAM. The preset's budget (2048 MiB on "apu"/low,
+    // 5500 MiB on medium), BB_VRAM_LIMIT or a test's BB_GC_BUDGET_MB; 0 means no fixed budget.
+    const u64 fixed_budget = BbMemoryDev::GetGcBudgetBytes();
+    // That budget is a cap on the memory the card has now, never a raise: a 2 GB card ("apu",
+    // 2048 MiB) whose driver reported 1378 MiB used to keep "critical 1638", 260 MiB above its
+    // whole budget, so the level that evicts images used a moment ago could only run after the
+    // driver had begun paging (1946 of 1378 MiB in use). On a card of 4 GB or less the marks also
+    // keep the 75 %/85 % room an area load needs, as the once-a-second refresh below does. The gate
+    // is the card's total budget, not the momentary one, so a larger card under contention keeps
+    // the plain percentages (75 % of a shrunken budget would sit above 80 % of it).
+    const bool small_card =
+        !instance.IsIntegrated() && instance.GetTotalMemoryBudget() <= (u64{4} << 30);
+    if (fixed_budget > 0 || instance.IsIntegrated()) {
+        const TextureMarks::Marks marks = TextureMarks::ForLimit(fixed_budget, live, small_card);
+        if (marks.critical != 0) {
+            trigger_gc_memory = marks.trigger;
+            pressure_gc_memory = marks.pressure;
+            critical_gc_memory = marks.critical;
+            return;
+        }
     }
     const s64 threshold = std::min<s64>(local, TargetThreshold);
     // Pressure: 60 % of the threshold free, but on cards under 16 GB 30 % of the budget (at least
@@ -82,6 +94,17 @@ void TextureCache::UpdateMemoryBudget(u64 budget) {
     }();
     pressure_gc_memory = std::min<u64>(pressure_gc_memory, u64(local) / 100 * caps.first);
     critical_gc_memory = std::min<u64>(critical_gc_memory, u64(local) / 100 * caps.second);
+    // A card of 4 GB or less with no fixed budget (the "high" preset): the fractions above keep the
+    // 75 %/85 % room an area load needs, as the once-a-second refresh of the fixed-budget path does.
+    if (small_card) {
+        const TextureMarks::Marks marks = TextureMarks::WithRoomForAreaLoad(
+            TextureMarks::Marks{.trigger = 0,
+                                .pressure = pressure_gc_memory,
+                                .critical = critical_gc_memory},
+            live);
+        pressure_gc_memory = marks.pressure;
+        critical_gc_memory = marks.critical;
+    }
     // The collector runs at any usage: below the pressure mark it only evicts images unused for
     // BB_GC_IDLE_SECONDS (an area left behind). It used to start at (budget - 8 GB) / 2 (4 GB on
     // a 16 GB card): such images stayed. BB_GC_TRIGGER_MB=N: from N MiB on, as a test.
@@ -181,21 +204,11 @@ void TextureCache::GarbageCollectImages() {
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
         // Integrated GPUs (Steam Deck): the usage covers system memory heaps holding much more
-        // than images, over the startup budget: the marks follow the driver's current budget.
-        // BB_GC_BUDGET_MB=N or BbMemoryDev::GetGcBudgetBytes(): so on any GPU with a fixed budget (tests or low-end presets).
-        const u64 dev_limit = BbMemoryDev::GetVramLimitBytes();
-        const u64 forced_budget = dev_limit != 0
-                                      ? dev_limit
-                                      : (BbMemoryDev::GetGcBudgetBytes() != 0
-                                             ? BbMemoryDev::GetGcBudgetBytes()
-                                             : (static_cast<u64>(bb_env_int("BB_GC_BUDGET_MB", 0)) << 20));
-        if (instance.IsIntegrated() || forced_budget || BbMemoryDev::IsLow()) {
-            const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
-            if (budget != 0) {
-                trigger_gc_memory = budget / 2;         // ~1000MB on 2GB limit (half of VRAM)
-                pressure_gc_memory = budget * 65 / 100; // ~1300MB
-                critical_gc_memory = budget * 80 / 100; // ~1600MB
-            }
+        // than images, over the startup budget, so the marks follow the driver's current budget.
+        // A discrete card's marks are the ones recomputed once a second below: recomputing them
+        // here, from the preset's limit alone, used to undo the room left for an area load.
+        if (instance.IsIntegrated()) {
+            UpdateMemoryBudget(instance.GetDeviceMemoryBudgetNow());
         }
     }
     BbStats::gc_used_bytes.store(total_used_memory, std::memory_order_relaxed);
@@ -227,16 +240,17 @@ void TextureCache::GarbageCollectImages() {
         // Small discrete cards: the marks follow the driver's current budget (the startup one was
         // 1.57 GB on the 2 GB laptop, 1.75-1.83 GB later: textures were evicted at 1.1-1.3 GB,
         // 30-75 a second, while 0.4 GB stayed free; 2026-10-25). BB_GC_LIVE_BUDGET=0: startup one.
+        // This is the only place a discrete card recomputes its marks. It used to be undone: the
+        // top of this function called UpdateMemoryBudget with the preset's limit on every call
+        // (hundreds a second), which put the limit's numbers back right after this ran.
         static const bool live_budget = !bb_env_off("BB_GC_LIVE_BUDGET");
         if (live_budget && instance.CanReportMemoryUsage() && !instance.IsIntegrated() &&
             instance.GetTotalMemoryBudget() <= (u64{4} << 30)) {
             if (const u64 now_budget = instance.GetDeviceMemoryBudgetNow(); now_budget != 0) {
+                // This applies the preset's cap on the budget the card has now and, on a card of
+                // 4 GB or less, the 75 %/85 % room an area load needs (300-400 MiB of new mirrors
+                // and staging at once; VRAM went to 2 GB of 1.75 on the laptop, the driver paging).
                 UpdateMemoryBudget(now_budget);
-                // With room for an area load on top (new mirrors and staging before the old ones go:
-                // 300-400 MiB at once): 75 % and 85 % of the current budget, not 80 % and 90 %
-                // (VRAM went to 2 GB of 1.75 on the laptop, the driver paging).
-                pressure_gc_memory = std::min<u64>(pressure_gc_memory, now_budget / 100 * 75);
-                critical_gc_memory = std::min<u64>(critical_gc_memory, now_budget / 100 * 85);
             }
         }
         // Freed images kept for reuse (HostImage::TrimRecycled): an eighth of the budget at most, a
