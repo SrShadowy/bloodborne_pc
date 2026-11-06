@@ -692,7 +692,7 @@ def combo_row(title, subtitle, choices, current):
     model = Gtk.StringList.new([tr(choice[0]) for choice in choices])
     row = Adw.ComboRow(title=title, model=model, factory=whole_label_factory())
     values = [choice[1] for choice in choices]
-    notes = [tr(choice[2]) if len(choice) > 2 else None for choice in choices]
+    notes = [tr(choice[2]) if len(choice) > 2 and choice[2] else None for choice in choices]
 
     def show_note(*_):
         selected = row.get_selected()

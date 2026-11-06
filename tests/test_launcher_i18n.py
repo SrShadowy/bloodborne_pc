@@ -37,6 +37,16 @@ class LauncherI18nTests(unittest.TestCase):
                             if (node.args and isinstance(node.args[0], ast.Constant)
                                     and isinstance(node.args[0].value, str)):
                                 cls.tr_strings.add(node.args[0].value)
+                    elif isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            if isinstance(target, ast.Name) and target.id == "GUEST_MEMORY_MODES":
+                                if isinstance(node.value, ast.List):
+                                    for elt in node.value.elts:
+                                        if isinstance(elt, ast.Tuple):
+                                            if len(elt.elts) > 0 and isinstance(elt.elts[0], ast.Constant) and isinstance(elt.elts[0].value, str):
+                                                cls.tr_strings.add(elt.elts[0].value)
+                                            if len(elt.elts) > 2 and isinstance(elt.elts[2], ast.Constant) and isinstance(elt.elts[2].value, str):
+                                                cls.tr_strings.add(elt.elts[2].value)
 
     @classmethod
     def tearDownClass(cls):
@@ -72,6 +82,26 @@ class LauncherI18nTests(unittest.TestCase):
                 len(s_fields), len(trans_fields),
                 f"Format placeholder count mismatch for key {repr(s)}: expected {len(s_fields)}, got {len(trans_fields)}"
             )
+
+    def test_guest_memory_strings_localized(self):
+        keys = [
+            "Режим памяти гостя (BB_GUEST_MEMORY)",
+            "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer",
+            "host: импорт памяти хоста (VK_EXT_external_memory_host)",
+            "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)",
+            "dmabuf: выделение разделяемой памяти через dma-buf",
+            "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows",
+            "private: приватные области для каждого прямого выделения",
+            "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc",
+            "placed: отображение памяти Vulkan по адресам игры",
+            "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает",
+        ]
+        for lang in ("en", "pt_BR", "pt", "zh_CN", "fr_FR"):
+            bbport_i18n.set_language(lang)
+            for k in keys:
+                trans = bbport_i18n.tr(k)
+                has_cyrillic = any("\u0400" <= ch <= "\u04FF" for ch in trans)
+                self.assertFalse(has_cyrillic, f"Untranslated Russian in {lang} for key: {k}")
 
     def test_online_page_screenshot_strings_localized(self):
         bbport_i18n.set_language("pt_BR")
