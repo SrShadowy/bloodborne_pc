@@ -76,7 +76,7 @@ find_package(tsl-robin-map QUIET) # [extra] REQUIRED -> QUIET + FetchContent
 if(NOT tsl-robin-map_FOUND)
     # [extra] Header-only; MSYS2 clang64 has no package for it (same pattern as magic_enum above).
     include(FetchContent)
-    FetchContent_Declare(tsl-robin-map GIT_REPOSITORY https://github.com/Tessil/robin-map.git GIT_TAG v1.4.1)
+    FetchContent_Declare(tsl-robin-map GIT_REPOSITORY https://github.com/Tessil/robin-map.git GIT_TAG v1.4.1 GIT_SUBMODULES "") # [extra]
     FetchContent_MakeAvailable(tsl-robin-map)
 endif()
 find_package(xbyak QUIET) # [extra]
@@ -84,7 +84,7 @@ if(NOT xbyak_FOUND)
     # [extra] Header-only x86-64 JIT assembler; Linux gets it from the system (libxbyak-dev),
     # MSYS2 clang64 has no package (same pattern as magic_enum above).
     include(FetchContent)
-    FetchContent_Declare(xbyak GIT_REPOSITORY https://github.com/herumi/xbyak.git GIT_TAG v7.44)
+    FetchContent_Declare(xbyak GIT_REPOSITORY https://github.com/herumi/xbyak.git GIT_TAG v7.44 GIT_SUBMODULES "") # [extra]
     FetchContent_MakeAvailable(xbyak)
 endif()
 if(TARGET xbyak::xbyak AND NOT TARGET xbyak)
