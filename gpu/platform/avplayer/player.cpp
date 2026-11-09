@@ -10,6 +10,7 @@
 #include "common/logging/log.h"
 #include "common/thread.h"
 #include "platform/avplayer/player.h"
+#include <thread> // [extra] C-008: std::this_thread no trace
 
 namespace BbAvPlayer {
 
@@ -74,9 +75,10 @@ bool Player::SetState(State next) {
 
 void Player::Emit(AvPlayerEvents event, void* data) {
     if (Tracing()) {
-        std::printf("AvPlayer trace: event %d to the game%s (state %d)\n", int(event),
+        std::printf("AvPlayer trace: event %d to the game%s (state %d) tid %zu\n", int(event),
                     auto_start && event == AvPlayerEvents::StateReady ? " (auto start instead)" : "",
-                    int(state.load()));
+                    int(state.load()),
+                    std::hash<std::thread::id>{}(std::this_thread::get_id()) % 100000); // [extra] C-008: tid
     }
     if (auto_start && event == AvPlayerEvents::StateReady) {
         AutoStart(); // the player starts itself instead of telling the game

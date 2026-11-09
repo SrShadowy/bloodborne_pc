@@ -731,7 +731,46 @@ EN = {
     "Золотой": "Gold",
     "Серебряный": "Silver",
     "Бронзовый": "Bronze",
-
+    # Guest Memory (BB_GUEST_MEMORY)
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "Guest Memory Mode (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "How to allocate direct game memory. On Wine/Proton+AMD choose placed or dmabuf, otherwise staging buffer crashes",
+    "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host: Host memory import (VK_EXT_external_memory_host)",
+    "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)":
+        "Fastest on NVIDIA and native Windows; crashes on Wine/Proton+AMD (CS rejected)",
+    "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf: Shared memory allocation via dma-buf",
+    "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows":
+        "Works on Linux/AMD without GPU faults; slightly slower than host on Windows",
+    "private: приватные области для каждого прямого выделения": "private: Private regions for each direct allocation",
+    "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc":
+        "For Windows drivers that do not import sections/memfd, only VirtualAlloc",
+    "placed: отображение памяти Vulkan по адресам игры": "placed: Vulkan memory mapped to game addresses",
+    "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает":
+        "VK_EXT_map_memory_placed; needed on Wine/Proton+AMD where host crashes",
+    # Shader Cache & Grimoire (extra)
+    "Кэш шейдеров и Grimório": "Shader Cache & Grimoire",
+    "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório": "Vulkan shader cache management, precompilation and Grimoire",
+    "Pré-compilar Shaders": "Precompile Shaders",
+    "Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo": "Precompiles and warms up Grimoire pipelines in the GPU driver before launch",
+    "Pré-compilar…": "Precompile…",
+    "Pré-compilando…": "Precompiling…",
+    "Catálogo Estático": "Static Catalog",
+    "Extrair…": "Extract…",
+    "Extraindo…": "Extracting…",
+    "Catálogo estático extraído com sucesso! 4.376 shaders indexados.": "Static catalog extracted successfully! 4,376 shaders indexed.",
+    "Erro durante a extração do catálogo estático.": "Error during static catalog extraction.",
+    "Shaders pré-compilados com sucesso! Grimório atualizado.": "Shaders precompiled successfully! Grimoire updated.",
+    "Erro durante a pré-compilação de shaders.": "Error during shader precompilation.",
+    "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Cannot precompile while the game is running. Close the game first.",
+    "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Cannot extract while the game is running. Close the game first.",
+    "Catálogo ativo: {} shaders únicos ({} instâncias)": "Active catalog: {} unique shaders ({} instances)",
+    "Catálogo estático presente": "Static catalog present",
+    "Catálogo não extraído": "Catalog not extracted",
+    "Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar.":
+        "Invalid game folder: eboot.bin was not found.\nSelect the game folder in the General tab before starting.",
+    "Sem permissão de escrita no diretório de dados: {}": "No write permission in data directory: {}",
+    "shadPS4 0.20 (Gen 20)": "shadPS4 0.20 (Gen 20)",
+    "shadp2p / Windows BBSC (Gen 19)": "shadp2p / Windows BBSC (Gen 19)",
 }
 
 PT = {
@@ -1232,6 +1271,46 @@ PT = {
     "Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%": "Ultra Performance (360p) corta mais de 55% da carga de shaders",
     "Прямой импорт памяти (Zero-Copy Host Import)": "Importação Direta de Memória (Zero-Copy Host)",
     "Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV": "Usa VK_EXT_external_memory_host sem interceptações SIGSEGV na CPU",
+    # Memória Convidada (BB_GUEST_MEMORY)
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "Modo de memória convidada (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "Como alocar a memória direta do jogo. No Wine/Proton+AMD escolha placed ou dmabuf, senão haverá falhas no staging buffer",
+    "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host: Importação de memória host (VK_EXT_external_memory_host)",
+    "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)":
+        "Mais rápido na NVIDIA e no Windows puro; falha no Wine/Proton+AMD (CS rejected)",
+    "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf: Alocação de memória compartilhada via dma-buf",
+    "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows":
+        "Funciona no Linux/AMD sem falhas de GPU; ligeiramente mais lento que host no Windows",
+    "private: приватные области для каждого прямого выделения": "private: Áreas privadas para cada alocação direta",
+    "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc":
+        "Para drivers do Windows que não importam seções/memfd, apenas VirtualAlloc",
+    "placed: отображение памяти Vulkan по адресам игры": "placed: Mapeamento de memória Vulkan nos endereços do jogo",
+    "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает":
+        "VK_EXT_map_memory_placed; necessária no Wine/Proton+AMD onde o host falha",
+    # Cache de Shaders & Grimório
+    "Кэш шейдеров и Grimório": "Cache de Shaders & Grimório",
+    "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório": "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório",
+    "Pré-compilar Shaders": "Pré-compilar Shaders",
+    "Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo": "Reconstrói e pré-aquece as pipelines do Grimório na GPU antes de abrir o jogo",
+    "Pré-compilar…": "Pré-compilar…",
+    "Pré-compilando…": "Pré-compilando…",
+    "Catálogo Estático": "Catálogo Estático",
+    "Extrair…": "Extrair…",
+    "Extraindo…": "Extraindo…",
+    "Catálogo estático extraído com sucesso! 4.376 shaders indexados.": "Catálogo estático extraído com sucesso! 4.376 shaders indexados.",
+    "Erro durante a extração do catálogo estático.": "Erro durante a extração do catálogo estático.",
+    "Shaders pré-compilados com sucesso! Grimório atualizado.": "Shaders pré-compilados com sucesso! Grimório atualizado.",
+    "Erro durante a pré-compilação de shaders.": "Erro durante a pré-compilação de shaders.",
+    "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.",
+    "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.",
+    "Catálogo ativo: {} shaders únicos ({} instâncias)": "Catálogo ativo: {} shaders únicos ({} instâncias)",
+    "Catálogo estático presente": "Catálogo estático presente",
+    "Catálogo não extraído": "Catálogo não extraído",
+    "Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar.":
+        "Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar.",
+    "Sem permissão de escrita no diretório de dados: {}": "Sem permissão de escrita no diretório de dados: {}",
+    "shadPS4 0.20 (Gen 20)": "shadPS4 0.20 (Gen 20)",
+    "shadp2p / Windows BBSC (Gen 19)": "shadp2p / Windows BBSC (Gen 19)",
 }
 
 PT_BR = {
@@ -1983,6 +2062,45 @@ PT_BR = {
     "Золотой": "Ouro",
     "Серебряный": "Prata",
     "Бронзовый": "Bronze",
+    "Кэш шейдеров и Grimório": "Cache de Shaders & Grimório",
+    "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório": "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório",
+    "Pré-compilar Shaders": "Pré-compilar Shaders",
+    "Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo": "Reconstrói e pré-aquece as pipelines do Grimório na GPU antes de abrir o jogo",
+    "Pré-compilar…": "Pré-compilar…",
+    "Pré-compilando…": "Pré-compilando…",
+    "Catálogo Estático": "Catálogo Estático",
+    "Extrair…": "Extrair…",
+    "Extraindo…": "Extraindo…",
+    "Catálogo estático extraído com sucesso! 4.376 shaders indexados.": "Catálogo estático extraído com sucesso! 4.376 shaders indexados.",
+    "Erro durante a extração do catálogo estático.": "Erro durante a extração do catálogo estático.",
+    "Shaders pré-compilados com sucesso! Grimório atualizado.": "Shaders pré-compilados com sucesso! Grimório atualizado.",
+    "Erro durante a pré-compilação de shaders.": "Erro durante a pré-compilação de shaders.",
+    "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.",
+    "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.",
+    # Memória Guest (BB_GUEST_MEMORY)
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "Modo de Memória Guest (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "Como alocar a memória direta do jogo. No Wine/Proton+AMD escolha placed ou dmabuf, senão causará crash no staging buffer",
+    "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host: Importação de memória host (VK_EXT_external_memory_host)",
+    "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)":
+        "Mais rápido na NVIDIA e no Windows puro; crasha no Wine/Proton+AMD (CS rejected)",
+    "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf: Alocação de memória compartilhada via dma-buf",
+    "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows":
+        "Funciona no Linux/AMD sem GPU fault; ligeiramente mais lento que host no Windows",
+    "private: приватные области для каждого прямого выделения": "private: Áreas privadas para cada alocação direta",
+    "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc":
+        "Para drivers do Windows que não importam seções/memfd, apenas VirtualAlloc",
+    "placed: отображение памяти Vulkan по адресам игры": "placed: Mapeamento de memória Vulkan nos endereços do jogo",
+    "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает":
+        "VK_EXT_map_memory_placed; necessária no Wine/Proton+AMD onde o host falha",
+    "Catálogo ativo: {} shaders únicos ({} instâncias)": "Catálogo ativo: {} shaders únicos ({} instâncias)",
+    "Catálogo estático presente": "Catálogo estático presente",
+    "Catálogo não extraído": "Catálogo não extraído",
+    "Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar.":
+        "Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar.",
+    "Sem permissão de escrita no diretório de dados: {}": "Sem permissão de escrita no diretório de dados: {}",
+    "shadPS4 0.20 (Gen 20)": "shadPS4 0.20 (Gen 20)",
+    "shadp2p / Windows BBSC (Gen 19)": "shadp2p / Windows BBSC (Gen 19)",
 }
 
 
@@ -2460,6 +2578,46 @@ ZH_CN = {
     "Ultra Performance (360p) снижает нагрузку на шейдеры более чем на 55%": "极致性能 (360p) 可减少 55% 以上的着色器负载",
     "Прямой импорт памяти (Zero-Copy Host Import)": "零拷贝主机内存直接导入 (Zero-Copy Host Import)",
     "Использует VK_EXT_external_memory_host без перехвата страниц SIGSEGV": "使用 VK_EXT_external_memory_host 避免 CPU 端 SIGSEGV 页错误拦截",
+    # 客户机内存 (BB_GUEST_MEMORY)
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "客户机内存模式 (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "如何分配游戏的直接内存。在 Wine/Proton+AMD 上请选择 placed 或 dmabuf，否则暂存缓冲区会崩溃",
+    "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host：主机内存导入 (VK_EXT_external_memory_host)",
+    "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)":
+        "在 NVIDIA 和原生 Windows 上最快；在 Wine/Proton+AMD 上会崩溃 (CS rejected)",
+    "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf：通过 dma-buf 分配共享内存",
+    "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows":
+        "在 Linux/AMD 上正常运行无 GPU 故障；在 Windows 上略慢于 host",
+    "private: приватные области для каждого прямого выделения": "private：每个直接分配使用私有区域",
+    "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc":
+        "适用于不导入 sections/memfd 的 Windows 驱动程序，仅使用 VirtualAlloc",
+    "placed: отображение памяти Vulkan по адресам игры": "placed：在游戏地址上映射 Vulkan 内存",
+    "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает":
+        "VK_EXT_map_memory_placed；在 host 崩溃的 Wine/Proton+AMD 上必需",
+    # Shader Cache & Grimoire
+    "Кэш шейдеров и Grimório": "着色器缓存与 Grimório",
+    "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório": "Vulkan 着色器缓存管理、提前预编译和 Grimório",
+    "Pré-compilar Shaders": "预编译着色器",
+    "Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo": "启动游戏前在 GPU 驱动中预编译并预热 Grimório 管线",
+    "Pré-compilar…": "预编译…",
+    "Pré-compilando…": "正在预编译…",
+    "Catálogo Estático": "静态目录",
+    "Extrair…": "提取…",
+    "Extraindo…": "正在提取…",
+    "Catálogo estático extraído com sucesso! 4.376 shaders indexados.": "静态目录提取成功！已索引 4,376 个着色器。",
+    "Erro durante a extração do catálogo estático.": "提取静态目录时出错。",
+    "Shaders pré-compilados com sucesso! Grimório atualizado.": "着色器预编译成功！Grimório 已更新。",
+    "Erro durante a pré-compilação de shaders.": "预编译着色器时出错。",
+    "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.": "游戏运行时无法预编译。请先关闭游戏。",
+    "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.": "游戏运行时无法提取。请先关闭游戏。",
+    "Catálogo ativo: {} shaders únicos ({} instâncias)": "活跃目录：{} 个唯一着色器（{} 个实例）",
+    "Catálogo estático presente": "静态目录已存在",
+    "Catálogo não extraído": "目录未提取",
+    "Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar.":
+        "无效的游戏文件夹：未找到 eboot.bin。\n启动前请在“常规”标签中选择游戏文件夹。",
+    "Sem permissão de escrita no diretório de dados: {}": "数据目录没有写入权限：{}",
+    "shadPS4 0.20 (Gen 20)": "shadPS4 0.20 (Gen 20)",
+    "shadp2p / Windows BBSC (Gen 19)": "shadp2p / Windows BBSC (Gen 19)",
 }
 
 # New French Translation by @Sarxzer
@@ -2834,6 +2992,46 @@ FR_FR = {
     "Слои валидации Vulkan": "Couches de validation Vulkan",
     "Сильно замедляет": "Ralentit beaucoup",
     "Доп. переменные (ИМЯ=значение через пробел)": "Variables supplémentaires (NOM=valeur, séparées par des espaces)",
+    # Mémoire invité (BB_GUEST_MEMORY)
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "Mode de mémoire invité (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "Comment allouer la mémoire directe du jeu. Sur Wine/Proton+AMD, choisissez placed ou dmabuf, sinon plantage sur le staging buffer",
+    "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host : Importation de la mémoire hôte (VK_EXT_external_memory_host)",
+    "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)":
+        "Le plus rapide sur NVIDIA et Windows pur ; plante sur Wine/Proton+AMD (CS rejected)",
+    "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf : Allocation de mémoire partagée via dma-buf",
+    "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows":
+        "Fonctionne sur Linux/AMD sans plantage du GPU ; un peu plus lent que host sous Windows",
+    "private: приватные области для каждого прямого выделения": "private : Régions privées pour chaque allocation directe",
+    "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc":
+        "Pour les pilotes Windows qui n'importent pas de sections/memfd, uniquement VirtualAlloc",
+    "placed: отображение памяти Vulkan по адресам игры": "placed : Mappage de la mémoire Vulkan aux adresses du jeu",
+    "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает":
+        "VK_EXT_map_memory_placed ; requis sur Wine/Proton+AMD où host plante",
+    # Cache de shaders & Grimoire
+    "Кэш шейдеров и Grimório": "Cache de shaders et Grimoire",
+    "Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório": "Gestion du cache de shaders Vulkan, précompilation et Grimoire",
+    "Pré-compilar Shaders": "Précompiler les shaders",
+    "Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo": "Précompile et préchauffe les pipelines du Grimoire sur le GPU avant de lancer le jeu",
+    "Pré-compilar…": "Précompiler…",
+    "Pré-compilando…": "Précompilation…",
+    "Catálogo Estático": "Catalogue statique",
+    "Extrair…": "Extraire…",
+    "Extraindo…": "Extraction…",
+    "Catálogo estático extraído com sucesso! 4.376 shaders indexados.": "Catalogue statique extrait avec succès ! 4 376 shaders indexés.",
+    "Erro durante a extração do catálogo estático.": "Erreur lors de l'extraction du catalogue statique.",
+    "Shaders pré-compilados com sucesso! Grimório atualizado.": "Shaders précompilés avec succès ! Grimoire mis à jour.",
+    "Erro durante a pré-compilação de shaders.": "Erreur lors de la précompilation des shaders.",
+    "Não é possível pré-compilar enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Impossible de précompiler pendant que le jeu est en cours d'exécution. Fermez d'abord le jeu.",
+    "Não é possível extrair enquanto o jogo estiver em execução. Feche o jogo primeiro.": "Impossible d'extraire pendant que le jeu est en cours d'exécution. Fermez d'abord le jeu.",
+    "Catálogo ativo: {} shaders únicos ({} instâncias)": "Catalogue actif : {} shaders uniques ({} instances)",
+    "Catálogo estático presente": "Catalogue statique présent",
+    "Catálogo não extraído": "Catalogue non extrait",
+    "Pasta do jogo inválida: eboot.bin não foi encontrado.\nSelecione a pasta do jogo na aba Geral antes de iniciar.":
+        "Dossier de jeu invalide : eboot.bin introuvable.\nSélectionnez le dossier du jeu dans l'onglet Général avant de démarrer.",
+    "Sem permissão de escrita no diretório de dados: {}": "Aucune autorisation d'écriture dans le répertoire de données : {}",
+    "shadPS4 0.20 (Gen 20)": "shadPS4 0.20 (Gen 20)",
+    "shadp2p / Windows BBSC (Gen 19)": "shadp2p / Windows BBSC (Gen 19)",
 }
 
 

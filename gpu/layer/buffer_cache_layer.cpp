@@ -44,6 +44,7 @@
 #include "bblayer_gpu_memory.h"
 #include "bblayer_write_traps.h"
 #include "layer/buffer_cache_layer_internal.h"
+#include "layer/layer_mirror_policy.h"
 
 namespace VideoCore {
 
@@ -347,6 +348,7 @@ bool BufferCache::LayerMergeAcross(u64 first, u64 end) {
             BbStats::residency_alloc_bytes.fetch_sub(old.size, std::memory_order_relaxed);
             layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
         }
+        layer_mirror_born.erase(old.base); // it is gone: its start may be reused by another mirror
     }
     Layer().AddMirror(start, bytes, merged->Handle(), merged->BufferDeviceAddress(), merged.get());
     layer_mirrors.emplace(start, std::move(merged));
@@ -416,6 +418,7 @@ u64 BufferCache::LayerPromoteInto(u64 first, u64 end, u64 lo, u64 hi,
                 BbStats::residency_alloc_bytes.fetch_sub(old.size, std::memory_order_relaxed);
                 layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
             }
+            layer_mirror_born.erase(old.base); // it is gone: its start may be reused by another mirror
         }
         Layer().AddMirror(start, bytes, target->Handle(), target->BufferDeviceAddress(), target);
         layer_mirrors.emplace(start, std::move(mirror));
@@ -555,6 +558,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
             BbStats::residency_alloc_bytes.fetch_sub(mirror.size, std::memory_order_relaxed);
             layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
         }
+        layer_mirror_born.erase(mirror.base); // it is gone: its start may be reused by another mirror
     }
     ++layer_generation;
 }
@@ -756,11 +760,15 @@ void BufferCache::LayerMaintain() {
         return u32(std::max<long>(env && *env ? std::strtol(env, nullptr, 10) : 1, 1));
     }();
     static u32 compacted_second = 0;
-    // Waste no compaction could free (valid blocks closer than its Bridge): not tried again until
-    // more of it comes (the mirrors were made again every second, 0 MiB freed).
+    // Waste no compaction could free last time: it is not tried again until more of it comes,
+    // or kRetrySeconds pass. The time matters because the mirrors that were too young (or whose
+    // waste sits between their valid blocks) become eligible as they grow older and lose blocks;
+    // without it a run with nothing to compact rescanned every mirror every second for nothing.
     static u64 stuck_waste = 0;
+    static u32 retry_after = 0;
     if (const u32 second = BbStats::coarse_second.load(std::memory_order_relaxed);
         compact_at != 0 && second - compacted_second >= compact_every) {
+        const bool retry_due = second >= retry_after;
         compacted_second = second;
         u64 waste = 0;
         for (const auto& [start, mirror] : layer_mirrors) {
@@ -769,11 +777,23 @@ void BufferCache::LayerMaintain() {
                                  [&](u64 a, u64 b) { valid += b - a; });
             waste += mirror->SizeBytes() - (valid << block_shift);
         }
+        // The floor only goes down with the waste: the growth is what justifies another look.
         if (waste < stuck_waste) {
             stuck_waste = waste;
         }
-        if (waste >= compact_at && waste >= stuck_waste + compact_at / 2) {
-            stuck_waste = LayerCompactMirrors(waste) == 0 ? waste : 0;
+        // Either more waste came (compact_at / 2 of it), or the retry is due: the same waste
+        // seen again later may now be in mirrors old enough to be made again.
+        if (waste >= compact_at &&
+            (retry_due || waste >= stuck_waste + compact_at / 2)) {
+            // One call takes a bounded share of the waste: the copies it costs then spread over
+            // the seconds that follow instead of landing in one long frame.
+            if (LayerCompactMirrors(LayerPolicy::CompactBudget(waste)) == 0) {
+                stuck_waste = waste;
+                retry_after = second + LayerPolicy::kRetrySeconds;
+            } else {
+                stuck_waste = 0;
+                retry_after = 0;
+            }
         }
     }
     // Retired mirrors the GPU is done with. BB_LAYER_CHECK=1: no page table entry may still point
@@ -1106,10 +1126,11 @@ void BufferCache::NoteDirectUse(VAddr address, u64 size) {
 
 u64 BufferCache::LayerCompactMirrors(u64 wanted) {
     // Mirror memory without valid blocks (sent back in place, unmapped, handed out anew, the room
-    // to grow) stays allocated as long as its mirror lives. Mirrors with at least MinWaste of it,
-    // the most first, are made again over their valid blocks only: one new mirror per run of
-    // valid blocks (runs closer than Bridge stay in one), their data copied over, the old mirror
-    // retired as in a merge. No copy is lost.
+    // to grow) stays allocated as long as its mirror lives. Mirrors with enough of it, the most
+    // first, are made again over their valid blocks only: one new mirror per run of valid blocks
+    // (the heads and tails always come off; a hole between two runs pays for the mirror it needs,
+    // see LayerPolicy::MirrorSegments), their data copied over, the old mirror retired as in a
+    // merge. No copy is lost.
     // Mirrors younger than BB_MIRROR_COMPACT_AGE seconds (30) are left alone unless VRAM is past the
     // texture collector's critical mark: on the 2 GB laptop compaction cut the room a mirror had
     // just grown, the next run grew it again (80, 52, 112, 64 MiB within seconds), 411 mirrors of
@@ -1122,19 +1143,30 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
     const u64 critical = BbStats::gc_critical_bytes.load(std::memory_order_relaxed);
     const bool emergency =
         critical != 0 && BbStats::gc_used_bytes.load(std::memory_order_relaxed) >= critical;
-    constexpr u64 MinWaste = 8_MB, Bridge = 4_MB;
     std::vector<std::pair<u64, VAddr>> wasteful; // bytes without valid blocks, start
+    // Why a pass could not act, for the log: a default run that compacts nothing has to say which
+    // filter stopped it (the age gate, the per-mirror threshold, waste between valid blocks, no
+    // room), or every acceptance run ends in the same guess.
+    size_t young = 0, below = 0, whole = 0, noroom = 0;
+    u32 oldest_young = 0; // the age of the mirror the age gate held back the longest
     for (const auto& [start, mirror] : layer_mirrors) {
         if (const auto born = layer_mirror_born.find(start);
             !emergency && born != layer_mirror_born.end() && now - born->second < min_age) {
+            ++young;
+            oldest_young = std::max(oldest_young, now - born->second);
             continue;
         }
-        const u64 lo = start >> block_shift, hi = (start + mirror->SizeBytes()) >> block_shift;
+        const u64 size = mirror->SizeBytes();
+        const u64 lo = start >> block_shift, hi = (start + size) >> block_shift;
         u64 valid = 0;
         Layer().ForEachValid(lo, hi, [&](u64 a, u64 b) { valid += b - a; });
-        const u64 waste = mirror->SizeBytes() - (valid << block_shift);
-        if (waste >= MinWaste) {
+        const u64 waste = size - (valid << block_shift);
+        // The threshold follows the mirror's size: a fixed 8 MiB was more than a whole mirror of
+        // the default run (7.8 MiB), so nothing was ever compacted there.
+        if (waste >= LayerPolicy::MirrorMinWaste(size)) {
             wasteful.emplace_back(waste, start);
+        } else {
+            ++below;
         }
     }
     std::ranges::sort(wasteful, std::greater{});
@@ -1146,20 +1178,19 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
         }
         const u64 old_size = layer_mirrors.at(start)->SizeBytes();
         const u64 lo = start >> block_shift, hi = (start + old_size) >> block_shift;
-        std::vector<std::pair<u64, u64>> segments;
-        u64 remade = 0;
-        Layer().ForEachValid(lo, hi, [&](u64 a, u64 b) {
-            if (!segments.empty() && ((a - segments.back().second) << block_shift) < Bridge) {
-                segments.back().second = b;
-            } else {
-                segments.emplace_back(a, b);
-            }
-        });
-        for (const auto& [a, b] : segments) {
-            remade += (b - a) << block_shift;
-        }
-        if (old_size - remade < MinWaste) {
-            continue; // its waste lies between valid blocks: copies for nothing
+        std::vector<LayerPolicy::Segment> runs;
+        Layer().ForEachValid(lo, hi, [&](u64 a, u64 b) { runs.push_back({a, b}); });
+        const auto segments = LayerPolicy::MirrorSegments(
+            runs, block_shift, LayerPolicy::MirrorMinHole(old_size),
+            LayerPolicy::kMaxSegmentsPerMirror);
+        const u64 remade = LayerPolicy::SegmentsBytes(segments, block_shift);
+        // What it would actually free. The per-mirror threshold is asked again here: a mirror
+        // whose waste lies between its valid blocks comes back whole (the head and the tail are
+        // all it can drop), and copying it for a few KiB is the failure of 2026-10-25 (411
+        // mirrors in 8 minutes for 0.4 GB of data on the 2 GB laptop).
+        if (old_size - remade < LayerPolicy::MirrorMinWaste(old_size)) {
+            ++whole;
+            continue;
         }
         // The new mirrors first: without room in VRAM for all of them this one stays as it is.
         std::vector<std::unique_ptr<Buffer>> made;
@@ -1173,6 +1204,7 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
             made.push_back(std::move(mirror));
         }
         if (made.size() != segments.size()) {
+            ++noroom;
             continue;
         }
         auto node = layer_mirrors.extract(start);
@@ -1213,6 +1245,19 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
         std::printf("Layer memory: %zu mirrors made again over their valid blocks, "
                     "%llu MiB freed\n",
                     compacted, (unsigned long long)(freed >> 20));
+    } else if (!layer_mirrors.empty()) {
+        // Nothing came back, and the run needs to say why instead of leaving it to the next
+        // acceptance run to guess: too young (the age gate), under the per-mirror threshold, waste
+        // all between valid blocks (it would come back whole), or no room for the new mirrors.
+        // Rate limited: the VRAM pressure path can call this every frame while it is short.
+        static u32 printed = 0; // coarse seconds; 0 = not yet
+        if (printed == 0 || now - printed >= 10) {
+            printed = now;
+            std::printf("Layer memory: nothing compacted: %zu young (age gate %u s, oldest %u s), "
+                        "%zu under the per-mirror waste, %zu waste between valid blocks, %zu without "
+                        "room\n",
+                        young, min_age, oldest_young, below, whole, noroom);
+        }
     }
     return freed;
 }

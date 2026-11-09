@@ -29,6 +29,10 @@
 #include "bbport_timeline.h"
 #include "bbport_toggles.h"
 #include "bbport_write_log.h"
+#include "bbgpu.h"
+#ifdef _WIN32
+#include "bbport_win32.h"
+#endif
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/polyfill_thread.h"
@@ -394,6 +398,18 @@ void CommandProcessor::ReportStall(const char* why) {
     std::fflush(stdout);
     Diagnostics::DumpRolledBackLabels(40);
     std::fflush(stderr);
+#ifdef _WIN32
+    // No /proc and no SIGUSR2 here: the threads are read directly (suspending each for the read),
+    // so the guest's stack says where the game stopped, as the Linux dump does.
+    static const bool all_threads = !bb_env_off("BB_STALL_THREADS");
+    if (all_threads && !bb_env("BB_STALL_THREADS_DONE")) {
+        setenv("BB_STALL_THREADS_DONE", "1", 1); // once per run
+        std::fputs("  all threads follow (image-relative: where each is, then the port's and the game's frames):\n", stdout);
+        std::fflush(stdout);
+        bb_win32_dump_threads(bbgpu_get_guest_image_base(), bbgpu_get_guest_image_base() +
+                                                             bbgpu_get_guest_image_size());
+    }
+#endif
 #ifndef _WIN32
     if (thread_tid != 0) {
         syscall(SYS_tgkill, getpid(), thread_tid, SIGUSR2);

@@ -550,7 +550,8 @@ private:
     void LayerProcessIdle();
     /// VRAM near the texture collector's critical mark: idle mirrors go back in place.
     void LayerYieldToImages(u32 now);
-    /// Makes mirrors with memory left without valid blocks again over those blocks only.
+    /// Makes mirrors with memory left without valid blocks again over those blocks only
+    /// (gpu/layer/layer_mirror_policy.h: the per-mirror threshold and the segments).
     u64 LayerCompactMirrors(u64 wanted);
     /// The GPU writes [address, address + size) in the submission being recorded (write ticks).
     void NoteWriteTick(VAddr address, u64 size);

@@ -119,6 +119,10 @@ public:
 private:
     BreakpointManager() = default;
 
+    // breakpoint_worker.cpp
+    void TrackWatchedValue(uintptr_t address);
+    void CheckStuckThreads();
+
     mutable std::mutex mutex;
     std::atomic<bool> initialized{false};
 

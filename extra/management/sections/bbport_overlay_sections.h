@@ -2,6 +2,9 @@
 
 #include "bbport_settings.h"
 
+// The settings menu's sections, split by the thing they configure (bbport_overlay_section_*.cpp);
+// bbport_overlay_menu.cpp decides the order they appear in. `lang` is a BbSettings::Language and
+// `dirty` is set when a widget changed a setting (saved when the menu closes).
 namespace BbOverlaySections {
 
 // Renders the Photo Mode controls (freeze world, hide HUD, screenshot, quick reset).

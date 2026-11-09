@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/mman.h>
+#include <time.h> // [extra] C-008: clock_gettime no trace de kickoff
 #ifndef _WIN32
 #include <asm/prctl.h>
 #endif
@@ -49,7 +50,55 @@ typedef struct GuestThread {
     struct GuestThread *next;
     unsigned char *stack_memory; /* the low stack it runs on (Windows: switched to at its start) */
     size_t stack_bytes;
+    double create_ms; /* [extra] C-008: instante do pthread_create (BB_THREAD_START_TRACE) */
 } GuestThread;
+
+/* [extra] C-008 diagnóstico: latência de primeiro agendamento das threads guest (a race do
+ * DL mutex do movie é fechada por latência de printf no AvPlayer — medir o delta
+ * create->started para discriminar "mutex init após create" de "boot da thread lento").
+ * Ligado por BB_THREAD_START_TRACE=1 (off por padrão: zero custo). */
+static int start_trace_on(void) {
+    static int on=-1;
+    if (on<0) { const char *v=getenv("BB_THREAD_START_TRACE"); on = v && v[0]=='1'; }
+    return on;
+}
+static double mono_ms(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts);
+    return ts.tv_sec*1000.0+ts.tv_nsec/1e6;
+}
+/* [extra] C-008: PS4 timeslice approximation at kickoff. On the PS4 a just-created thread of
+ * the same priority cannot outrun its creator until the creator yields; here a fresh host
+ * thread starts on a free core immediately, and the game's movie system lost its
+ * create->(mutex init) window to Mv_AudioPlayThread ~3/4 of the time (C-008 matrix:
+ * DL_PANIC "Mutex is not initialized" / PthreadMutex EINVAL right after the thread's
+ * STARTED; the survivor shows the creator's init (heap grow) landing first). Waiting a
+ * creator-quantum here closes that window by construction. BB_THREAD_START_DELAY_MS:
+ * milliseconds (default 1, clamped 0..50; 0 restores the old immediate start). The cost is
+ * on the created thread only (creators never wait), so boot stays pipelined. */
+static int start_delay_ms(void) {
+    static int ms=-1;
+    if (ms<0) {
+        const char *v=getenv("BB_THREAD_START_DELAY_MS");
+        ms = v ? atoi(v) : 0; /* [extra] C-008 rev2: 0 default — H-A reprovada na matriz (5/5 crash) */
+        if (ms<0) ms=0; else if (ms>50) ms=50;
+    }
+    return ms;
+}
+/* [extra] C-008 fix: o criador dorme 2 ms apos o pthread_create — no boot da thread o jogo
+ * inicializa o mutex da maquina de movie NA CRIADA (Mv_AudioPlayThread), e o proximo passo do
+ * criador (Lock) chegava antes (~0,3 ms de janela; PS4 da essa folga naturalmente). Matriz:
+ * criador=2 -> 6/6 vivo (titulo, CSChr/CSCloth); criador=0 -> 2/3 crash (baseline ~5/5).
+ * BB_THREAD_CREATOR_DELAY_MS (default 2, clamp 0-50; 0 = comportamento antigo). Custo: 2 ms
+ * no RETORNO de cada create (~80 threads de boot => pipelined, sem efeito visivel medido). */
+static int creator_delay_ms(void) {
+    static int ms=-1;
+    if (ms<0) {
+        const char *v=getenv("BB_THREAD_CREATOR_DELAY_MS");
+        ms = v ? atoi(v) : 2;
+        if (ms<0) ms=0; else if (ms>50) ms=50;
+    }
+    return ms;
+}
 
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static ThreadAttr *attributes;
@@ -267,6 +316,13 @@ static void run_guest(void *p) {
 void runtime_re_watch_thread(void);
 static void *host_start(void *p) {
     GuestThread *t=p;
+    const int kickoff_delay=start_delay_ms(); // [extra] C-008
+    if (kickoff_delay>0) {
+        const struct timespec quantum={kickoff_delay/1000,(long)(kickoff_delay%1000)*1000000L};
+        nanosleep(&quantum,NULL);
+    }
+    if (start_trace_on()) printf("Runtime: thread '%s' STARTED (+%.3f ms from create)\n", // [extra] C-008
+                                 t->name,mono_ms()-t->create_ms);
     attach(t);
     runtime_re_watch_thread();
     set_host_name(t->name);
@@ -309,12 +365,19 @@ static int32_t create(GuestThread **out,ThreadAttr **attr_slot,GuestEntry entry,
     publish(t);
     /* Publish the handle before the thread can run and inspect itself. */
     *out=t;
+    t->create_ms=start_trace_on()?mono_ms():0; // [extra] C-008
     int e=pthread_create(&t->host,&host,host_start,t);
     pthread_attr_destroy(&host);
     if (e) { fprintf(stderr,"STOP: host pthread_create failed: %d\n",e); exit(21); }
+    const int creator_delay=creator_delay_ms(); // [extra] C-008
+    if (creator_delay>0) {
+        const struct timespec q={creator_delay/1000,(long)(creator_delay%1000)*1000000L};
+        nanosleep(&q,NULL);
+    }
     if (t->detached) pthread_detach(t->host);
     pthread_mutex_lock(&lock); ++created; pthread_mutex_unlock(&lock);
     printf("Runtime: guest thread '%s' created (stack=%llu, prio=%d)\n",t->name,(unsigned long long)stack,t->attr.prio);
+    if (start_trace_on()) printf("Runtime: thread '%s' create-returned (+%.3f ms)\n",t->name,mono_ms()-t->create_ms); // [extra] C-008
     return 0;
 }
 static ABI int32_t thread_create(GuestThread **out,ThreadAttr **attr,GuestEntry entry,void *argument,const char *name) {

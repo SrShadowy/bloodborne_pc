@@ -276,20 +276,15 @@ bool Usable(const Vulkan::Instance& instance) {
         }
 #endif
 #ifdef _WIN32
-        const bool host_first = !force_dmabuf; // no dma-buf on Windows
         static const bool is_wine = [] {
             HMODULE ntdll = GetModuleHandleA("ntdll.dll");
             return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
         }();
-        if (is_wine) {
-            // Reached only when the player forced a model (the Wine defaults in extra/ pick private
-            // before this). Host memory import does work under Wine, but on AMD the kernel behind it
-            // rejects command submissions over the port's write traps, so keep them off.
-            std::printf("Guest memory: [Note] Windows build under Wine/Proton. Host memory import "
-                        "works there, but on AMD (0x1002) the kernel behind it (radv/amdgpu) rejects "
-                        "submissions over pages the write traps made read-only: use "
-                        "BB_GUEST_MEMORY=private with BB_IMAGE_TRAPS=0 and BB_LAYER_WRITE_TRAPS=0 "
-                        "(the port's Wine defaults), or the native Linux build (run.sh).\n");
+        const bool host_first = !force_dmabuf && !(is_wine && instance.GetVendorID() == 0x1002); // [extra]
+        if (is_wine && instance.GetVendorID() == 0x1002) {
+            std::printf("Guest memory: [Note] Running Windows build under Wine/Proton on AMD GPU (0x1002). "
+                        "Wine lacks VK_EXT_external_memory_host (0x80) on buffer creation, and AMDGPU kernel "
+                        "rejects CS on imported host memory. Please use the native Linux build (run.sh)!\n");
         }
 #else
         const bool host_first =

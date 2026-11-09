@@ -1,6 +1,7 @@
 out/
 __pycache__/
 user/
+.venv/
 *.mp4
 bbport.ini
 fsr4_shaders/
@@ -41,3 +42,5 @@ MyGUIDELINES.md
 docs/FRAME_RATE_AND_SHADERS_ANALYSIS.md
 gpu/third_party/fsr-vulkan
 *.last
+packaging/windows/installer/
+

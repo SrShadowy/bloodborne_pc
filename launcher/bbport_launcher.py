@@ -136,6 +136,12 @@ from bbport_launcher_online import OnlinePage
 from bbport_launcher_trophies import TrophiesPage
 from bbport_launcher_upscalers import UpscalerFiles
 from bbport_gamepad import GamepadNavigator
+from bbport_cache import CacheMixin
+# [extra] C-007: per-OS process specialists (bbport_proc dispatches win/linux) and the
+# F2 log drain that keeps pipes from filling (bbport_log_pump). Single source for both
+# LauncherWindow (this file, the live path) and GameRunnerMixin.
+from bbport_log_pump import start_log_pump
+from bbport_proc import kill_tree, spawn_argv, stop_tree
 
 
 def setup_fonts():
@@ -197,7 +203,7 @@ def setup_icons():
 
 
 # The window's pages and lists live in the bbport_launcher_*.py modules (mixins).
-class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFiles,
+class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFiles, CacheMixin,
                      Adw.ApplicationWindow):
     def __init__(self, app):
         setup_fonts()
@@ -450,6 +456,7 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.update_game_status()
         self.update_user_status()
         self.update_upscaler_status()
+        self.update_cache_status()
         if hasattr(self, "gamepad_nav") and self.gamepad_nav and self.gamepad_nav.pad_handle:
             self.set_gamepad_hints_visible(True, self.gamepad_nav.pad_name)
 
@@ -459,6 +466,8 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.section_name = row.section
         if row.section == "trophies":
             self.refresh_trophies()  # the game may have unlocked some since
+        elif row.section == "graphics":
+            self.update_cache_status()
         self.stack.set_visible_child_name(row.section)
         self.content_page.set_title(self.section_titles[row.section])
         self.split.set_show_content(True)
@@ -783,6 +792,34 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         sec["graphics"].add(upscaler)
         sec["graphics"].add(quality)
         sec["graphics"].add(libraries)
+
+        # Shader Cache & Precompilation (Grimório)
+        shader_cache = Adw.PreferencesGroup(
+            title=tr("Кэш шейдеров и Grimório"),
+            description=tr("Gerenciamento do cache Vulkan, pré-compilação antecipada e Grimório")
+        )
+        self.precompile_cache_row = Adw.ActionRow(
+            title=tr("Pré-compilar Shaders"),
+            subtitle=tr("Pré-compila e aquece os pipelines do Grimório na GPU antes de abrir o jogo")
+        )
+        self.precompile_cache_button = Gtk.Button(label=tr("Pré-compilar…"), valign=Gtk.Align.CENTER)
+        self.precompile_cache_button.connect("clicked", self.on_precompile_shaders)
+        self.precompile_cache_row.add_suffix(self.precompile_cache_button)
+        shader_cache.add(self.precompile_cache_row)
+
+        self.clear_cache_row = Adw.ActionRow(title=tr("Кэш шейдеров"))
+        self.clear_cache_button = Gtk.Button(label=tr("Очистить…"), valign=Gtk.Align.CENTER)
+        self.clear_cache_button.connect("clicked", self.on_clear_shaders)
+        self.clear_cache_row.add_suffix(self.clear_cache_button)
+        shader_cache.add(self.clear_cache_row)
+
+        self.static_catalog_row = Adw.ActionRow(title=tr("Catálogo Estático"))
+        self.static_catalog_button = Gtk.Button(label=tr("Extrair…"), valign=Gtk.Align.CENTER)
+        self.static_catalog_button.connect("clicked", self.on_extract_static_catalog)
+        self.static_catalog_row.add_suffix(self.static_catalog_button)
+        shader_cache.add(self.static_catalog_row)
+
+        sec["graphics"].add(shader_cache)
 
         effects = Adw.PreferencesGroup(title=tr("Эффекты игры"),
                                        description=tr("Патчи игры, применяются при запуске"))
@@ -1416,16 +1453,16 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
         launcher.set_cwd(str(PORT_DIR))
         try:
-            # On Windows run.py prepares and starts the game; on Linux setsid bash run.sh is used.
-            if sys.platform == "win32":
-                self.process = launcher.spawnv([sys.executable, str(PORT_DIR / "run.py")])
-            else:
-                self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
+            # [extra] Spawn argv comes from the platform specialist (C-007):
+            # Windows: python run.py / POSIX: setsid bash run.sh (bbport_proc.py).
+            self.process = launcher.spawnv(spawn_argv(PORT_DIR))
         except GLib.Error as error:
             self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
             return
         self.stream = Gio.DataInputStream.new(self.process.get_stdout_pipe())
-        self.read_line()
+        # [extra] C-007/F2: dedicated drain thread + bounded queue + batched publish
+        # (backpressure on the Windows pipes froze bb-probe before its first frame).
+        start_log_pump(self)
         self.process.wait_async(None, self.on_exit)
         self.update_launch_button()
         if hasattr(self, "log_status_badge"):
@@ -1438,41 +1475,25 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             self.log_status_icon.set_from_icon_name("media-playback-start-symbolic")
         self.select_section("log")
 
-    def read_line(self):
-        self.stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_line)
-
-    def on_line(self, stream, result):
-        try:
-            line, _length = stream.read_line_finish_utf8(result)
-        except GLib.Error:
-            return
-        if line is None:
-            return
-        self.append_log(line + "\n")
-        self.read_line()
+    # [extra] read_line/on_line were removed (C-007/F2): per-line read_line_async on the GTK
+    # main loop saturated under telemetry bursts and back-pressured the game into the black
+    # screen. bbport_log_pump.start_log_pump(self) replaces them (drain thread + batch publish).
 
     def stop_game(self):
         if not self.process:
             return
         pid = int(self.process.get_identifier())
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(pid, signal.SIGTERM)
-            except OSError:
-                self.process.force_exit()
-        else:
-            self.process.force_exit()
+        # [extra] Graceful tree stop via the platform specialist (C-007): POSIX signals the
+        # setsid group; Windows walks the tree with taskkill /T (no /F: bb-probe's window
+        # receives WM_CLOSE and can flush its shader cache).
+        stop_tree(pid, self.process)
         GLib.timeout_add_seconds(3, self.kill_if_running, pid)
 
     def kill_if_running(self, pid):
         if self.process:
-            if hasattr(os, "killpg"):
-                try:
-                    os.killpg(pid, signal.SIGKILL)
-                except OSError:
-                    pass
-            else:
-                self.process.force_exit()
+            # [extra] Forced fallback after 3 s, platform specialist (C-007):
+            # SIGKILL the group (POSIX) / taskkill /T /F + force_exit (Windows).
+            kill_tree(pid, self.process)
         return False
 
     def on_exit(self, process, result):

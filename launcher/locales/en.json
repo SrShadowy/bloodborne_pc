@@ -253,6 +253,14 @@
   "Предустановка графики": "Graphics Preset",
   "Автоматически настраивает апскейлер, эффекты, детализацию и память": "Automatically configures upscaler, effects, LOD and memory management",
   "Применена предустановка: {}": "Preset applied: {}",
-  "Режим памяти гостя (BB_GUEST_MEMORY)": "Guest memory mode (BB_GUEST_MEMORY)",
-  "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer": "How to allocate direct game memory. On Wine/Proton+AMD choose placed or dmabuf to avoid staging buffer crashes"
+  "Режим памяти гостя (BB_GUEST_MEMORY)": "Guest Memory Mode (BB_GUEST_MEMORY)",
+  "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer": "How to allocate direct game memory. On Wine/Proton+AMD choose placed or dmabuf, otherwise staging buffer crashes",
+  "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host: Host memory import (VK_EXT_external_memory_host)",
+  "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)": "Fastest on NVIDIA and native Windows; crashes on Wine/Proton+AMD (CS rejected)",
+  "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf: Shared memory allocation via dma-buf",
+  "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows": "Works on Linux/AMD without GPU faults; slightly slower than host on Windows",
+  "private: приватные области для каждого прямого выделения": "private: Private regions for each direct allocation",
+  "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc": "For Windows drivers that do not import sections/memfd, only VirtualAlloc",
+  "placed: отображение памяти Vulkan по адресам игры": "placed: Vulkan memory mapped to game addresses",
+  "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает": "VK_EXT_map_memory_placed; needed on Wine/Proton+AMD where host crashes"
 }

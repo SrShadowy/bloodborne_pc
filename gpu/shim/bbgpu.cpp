@@ -311,6 +311,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        Common::Log::Flush(); // [extra] _Exit skips the log's batch
         std::fflush(stdout);
         std::_Exit(0);
     });

@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string_view>
+#include <thread> // [extra] C-008: std::this_thread no trace
 
 #include "common/logging/log.h"
 #include "core/libraries/libs.h"
@@ -41,7 +42,8 @@ void Trace(const char* format, ...) {
     va_start(args, format);
     std::vsnprintf(text, sizeof(text), format, args);
     va_end(args);
-    std::printf("AvPlayer trace %.1f ms: %s\n", ms, text);
+    std::printf("AvPlayer trace %.1f ms: tid %zu: %s\n", ms,
+                std::hash<std::thread::id>{}(std::this_thread::get_id()) % 100000, text); // [extra] C-008: thread id
 }
 
 /// The player that plays now (the game has one at a time): a key press stops it (bbgpu_video_skip).

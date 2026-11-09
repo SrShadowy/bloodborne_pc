@@ -72,7 +72,21 @@ if(NOT magic_enum_FOUND)
     FetchContent_Declare(magic_enum GIT_REPOSITORY https://github.com/Neargye/magic_enum.git GIT_TAG v0.9.7 GIT_SUBMODULES "") # [extra]
     FetchContent_MakeAvailable(magic_enum)
 endif()
-find_package(tsl-robin-map REQUIRED)
+find_package(tsl-robin-map QUIET) # [extra] REQUIRED -> QUIET + FetchContent
+if(NOT tsl-robin-map_FOUND)
+    # [extra] Header-only; MSYS2 clang64 has no package for it (same pattern as magic_enum above).
+    include(FetchContent)
+    FetchContent_Declare(tsl-robin-map GIT_REPOSITORY https://github.com/Tessil/robin-map.git GIT_TAG v1.4.1)
+    FetchContent_MakeAvailable(tsl-robin-map)
+endif()
+find_package(xbyak QUIET) # [extra]
+if(NOT xbyak_FOUND)
+    # [extra] Header-only x86-64 JIT assembler; Linux gets it from the system (libxbyak-dev),
+    # MSYS2 clang64 has no package (same pattern as magic_enum above).
+    include(FetchContent)
+    FetchContent_Declare(xbyak GIT_REPOSITORY https://github.com/herumi/xbyak.git GIT_TAG v7.44)
+    FetchContent_MakeAvailable(xbyak)
+endif()
 find_package(VulkanMemoryAllocator CONFIG QUIET)
 if (NOT TARGET GPUOpen::VulkanMemoryAllocator)
     # The header alone, without its CMake package (MSYS2: include/vma/vk_mem_alloc.h).
@@ -324,7 +338,7 @@ else()
     message(STATUS "Trophy names: off (OpenSSL's libcrypto missing; unlocks shown by number)")
 endif()
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-    tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+    tsl::robin_map xbyak GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit) # [extra] +xbyak
 if (NOT WIN32)
     target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
 endif()
@@ -371,6 +385,10 @@ target_include_directories(cp-decoder-test PRIVATE cp)
 add_executable(fx-init-clear-test EXCLUDE_FROM_ALL ../tests/test_fx_init_clear.cpp cp/cp_decoder.cpp)
 target_compile_options(fx-init-clear-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(fx-init-clear-test PRIVATE . shim)
+# [extra] F0a: the assert artifact writer (site sanitize, name/dedup); no GPU.
+add_executable(assert-dump-test EXCLUDE_FROM_ALL ../tests/test_assert_dump.cpp render/assert_dump.cpp)
+target_compile_options(assert-dump-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(assert-dump-test PRIVATE . shim)
 add_executable(effect-flags-test EXCLUDE_FROM_ALL ../tests/test_effect_flags.cpp)
 target_compile_options(effect-flags-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(effect-flags-test PRIVATE shim)
@@ -394,6 +412,38 @@ target_link_libraries(assembler-pattern-test PRIVATE bbgpu)
 add_executable(camera-matrices-test EXCLUDE_FROM_ALL ../tests/test_camera_matrices.cpp)
 target_compile_options(camera-matrices-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(camera-matrices-test PRIVATE ..)
+
+# The mouse camera's angle fold (extra/core/camera/bbport_mouse_camera_internal.h). The guest is
+# not needed: the fold is a pure function, and this is the regression test for the freeze it caused
+# (a loop that never ended for an infinity -- see SHADOW_CHANGES.md entry 125).
+add_executable(mouse-camera-angle-test EXCLUDE_FROM_ALL ../tests/test_mouse_camera_angle.cpp)
+target_compile_options(mouse-camera-angle-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(mouse-camera-angle-test PRIVATE ../extra/core/camera)
+
+# When a mirror is made again over its valid blocks only (gpu/layer/layer_mirror_policy.h). Pure,
+# no Vulkan device: the regression test for the default run of 0.7 that compacted nothing at all
+# (SHADOW_CHANGES.md entry 126).
+add_executable(layer-mirror-policy-test EXCLUDE_FROM_ALL ../tests/test_layer_mirror_policy.cpp)
+target_compile_options(layer-mirror-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(layer-mirror-policy-test PRIVATE .)
+
+# Where the texture collector's marks sit for a budget (gpu/textures/texture_cache_marks.h). Pure,
+# no Vulkan device: the regression test for the "apu" preset on a 2 GB card, where the marks were
+# 80 % of the nominal 2048 MiB while the driver reported 1378-1499 MiB (a log from a GTX 1050).
+add_executable(texture-cache-marks-test EXCLUDE_FROM_ALL ../tests/test_texture_cache_marks.cpp)
+target_compile_options(texture-cache-marks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(texture-cache-marks-test PRIVATE .)
+
+# The stall report's thread dump (gpu/platform/win32/posix_win32.cpp, bb_win32_dump_threads). Only
+# runs on a stall in the real program, so this is the only place it is exercised: it must list the
+# threads and walk through the system DLLs to the frames of this exe (SHADOW_CHANGES.md entry 124).
+if(WIN32)
+    add_executable(stall-dump-test EXCLUDE_FROM_ALL ../tests/test_stall_dump_threads.cpp
+        platform/win32/posix_win32.cpp)
+    target_compile_options(stall-dump-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(stall-dump-test PRIVATE . shim platform/win32/include)
+    target_link_libraries(stall-dump-test PRIVATE psapi winmm pthread)
+endif()
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include)
@@ -518,6 +568,9 @@ add_executable(shader-corpus-test EXCLUDE_FROM_ALL ../tests/test_shader_corpus.c
 target_include_directories(shader-corpus-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_options(shader-corpus-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(shader-corpus-test PRIVATE bbgpu)
+if(WIN32) # [extra] posix_win32.cpp in bbgpu needs these on Windows (winmm+winpthreads)
+    target_link_libraries(shader-corpus-test PRIVATE winmm pthread)
+endif()
 
 add_executable(srt-walker-fault-test EXCLUDE_FROM_ALL ../tests/test_srt_walker_fault.cpp
     ../tests/test_gpu_runtime_stubs.cpp)
@@ -527,14 +580,14 @@ target_link_libraries(srt-walker-fault-test PRIVATE bbgpu)
 
 add_executable(shader-discovery-test EXCLUDE_FROM_ALL ../tests/test_shader_discovery.cpp # [extra]
     ../tests/test_gpu_runtime_stubs.cpp) # [extra]
-target_include_directories(shader-discovery-test PRIVATE .. . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
-target_compile_options(shader-discovery-test PRIVATE -UNDEBUG -fPIC) # [extra]
+target_include_directories(shader-discovery-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
+target_compile_options(shader-discovery-test PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/.. -UNDEBUG -fPIC) # [extra]
 target_link_libraries(shader-discovery-test PRIVATE bbgpu) # [extra]
 
 add_executable(pipeline-reconstruct-test EXCLUDE_FROM_ALL ../tests/test_pipeline_reconstruct.cpp # [extra]
     ../tests/test_gpu_runtime_stubs.cpp) # [extra]
-target_include_directories(pipeline-reconstruct-test PRIVATE .. . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
-target_compile_options(pipeline-reconstruct-test PRIVATE -UNDEBUG -fPIC) # [extra]
+target_include_directories(pipeline-reconstruct-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
+target_compile_options(pipeline-reconstruct-test PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/.. -UNDEBUG -fPIC) # [extra]
 target_link_libraries(pipeline-reconstruct-test PRIVATE bbgpu) # [extra]
 set_target_properties(pipeline-reconstruct-test PROPERTIES # [extra]
     BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib" # [extra]
@@ -542,7 +595,13 @@ set_target_properties(pipeline-reconstruct-test PROPERTIES # [extra]
 
 add_executable(shader-pack-test EXCLUDE_FROM_ALL ../tests/test_shader_pack.cpp # [extra]
     ../tests/test_gpu_runtime_stubs.cpp) # [extra]
-target_include_directories(shader-pack-test PRIVATE .. . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
-target_compile_options(shader-pack-test PRIVATE -UNDEBUG -fPIC) # [extra]
+target_include_directories(shader-pack-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include) # [extra]
+target_compile_options(shader-pack-test PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/.. -UNDEBUG -fPIC) # [extra]
 target_link_libraries(shader-pack-test PRIVATE bbgpu) # [extra]
+
+if (WIN32)
+    target_link_libraries(pipeline-reconstruct-test PRIVATE -mconsole pthread winmm onecore bcrypt)
+    target_link_libraries(shader-discovery-test PRIVATE -mconsole pthread winmm onecore bcrypt)
+    target_link_libraries(shader-pack-test PRIVATE -mconsole pthread winmm onecore bcrypt)
+endif()
 

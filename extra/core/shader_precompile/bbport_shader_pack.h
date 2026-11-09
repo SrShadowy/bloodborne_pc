@@ -74,6 +74,9 @@ ArchiveStats GetArchiveStats(const std::filesystem::path& cache_dir);
 // Packs loose shadPS4 files (.spv, .meta, .key) in cache_dir into the 3 archive files
 bool PackDirectory(const std::filesystem::path& cache_dir, const std::string& title_id = "CUSA03173");
 
+// Extracts loose shadPS4 files (.spv, .meta, .key) from the 3 archive files into cache_dir
+bool UnpackArchive(const std::filesystem::path& cache_dir);
+
 // Verify integrity of the 3-file archive
 bool VerifyArchive(const std::filesystem::path& cache_dir);
 

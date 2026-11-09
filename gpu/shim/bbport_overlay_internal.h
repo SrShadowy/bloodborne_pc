@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 bbport contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 // bbport: what the overlay's files share (bbport_overlay.cpp: the window, input and drawing;
-// bbport_overlay_sections.cpp: the menu's sections).
+// bbport_overlay_sections.cpp: the menu's sections; the sections themselves live in
+// extra/management/sections/bbport_overlay_section_*.cpp).
 #pragma once
 
 #include <atomic>
@@ -55,7 +56,8 @@ void ProblemText(const char* text);
 // In-game settings overlay menu (bbport_overlay_menu.cpp).
 void Menu();
 
-// The menu's sections (bbport_overlay_sections.cpp).
+// The menu's sections, declared in extra/management/sections/bbport_overlay_sections.h and split by
+// topic (bbport_overlay_section_*.cpp).
 void ShadersSection();
 bool UpscalerSection(BbSettings::Values& s);
 void ReactiveMaskSection(BbSettings::Values& s, bool taa);

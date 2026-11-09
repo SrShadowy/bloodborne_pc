@@ -252,5 +252,13 @@
   "Автоматически настраивает апскейлер, эффекты, детализацию и память": "Автоматически настраивает апскейлер, эффекты, детализацию и память",
   "Применена предустановка: {}": "Применена предустановка: {}",
   "Режим памяти гостя (BB_GUEST_MEMORY)": "Режим памяти гостя (BB_GUEST_MEMORY)",
-  "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer": "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer"
+  "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer": "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer",
+  "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host: импорт памяти хоста (VK_EXT_external_memory_host)",
+  "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)": "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)",
+  "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf: выделение разделяемой памяти через dma-buf",
+  "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows": "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows",
+  "private: приватные области для каждого прямого выделения": "private: приватные области для каждого прямого выделения",
+  "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc": "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc",
+  "placed: отображение памяти Vulkan по адресам игры": "placed: отображение памяти Vulkan по адресам игры",
+  "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает": "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает"
 }

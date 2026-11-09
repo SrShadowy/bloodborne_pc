@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -40,6 +41,7 @@
 #endif
 
 #include "common/hash.h"
+#include "common/assert.h" // [extra] BbAssertLogEnabled (BB_SHADER_ASSERT_LOG=1); merge-path offender echo
 #include "common/path_util.h"
 #include "common/serdes.h"
 #include "render/pipeline.h"
@@ -82,6 +84,14 @@ void PredictSignal(int sig) {
 #endif
 /// Why SpecWith failed: 1 memory not mappable, 2 a fault, 3 an exception, 4 another flat user data size.
 int predict_fail = 0;
+
+// [extra] W0.1 (NextStep, debate 2026-11-03): a translate throw here is swallowed per donor,
+// so without a record the failing (target, donor) pair was lost the moment MergeMetas removed
+// previous/ (shader_rebuild.cpp). They are now collected here and written to
+// <cache_dir>/merge.failed by MergeMetas ("target donor" per line, hex) — same resilience
+// pattern as import.failed (shader_rebuild.cpp:802-816).
+std::mutex g_merge_fail_mutex;
+std::vector<std::pair<u64, u64>> g_merge_fail_pairs;
 
 /// A recipe permutation's input with its program code and the programs its memory held.
 std::optional<BbShaderCapture::Input> RecipeInput(const RecipeProgram& program, size_t perm_idx,
@@ -169,6 +179,18 @@ std::optional<PredictedSpec> SpecWith(const BbShaderCapture::Input& donor, u64 h
     } catch (const std::exception&) {
         ok = false;
         predict_fail = 3;
+        // [extra] Enumeration runs (BB_SHADER_ASSERT_LOG=1): the merge path swallows a failed
+        // translate here, so without this line its offenders never reach the [AssertLog] tally
+        // the pipeline catches produce. `hash` is the program the translator rejected.
+        if (BbAssertLogEnabled()) {
+            std::fprintf(stderr, "[AssertLog] merge spec for program %#llx failed: translate threw (donor skipped)\n",
+                         (unsigned long long)hash);
+            std::fflush(stderr);
+        }
+        // [extra] Always remembered (cheap, few): donor.pgm_hash still holds the donor program,
+        // `hash` the target; dumped to merge.failed by MergeMetas.
+        std::scoped_lock lock{g_merge_fail_mutex};
+        g_merge_fail_pairs.emplace_back(hash, donor.pgm_hash);
     }
 #ifndef _WIN32
     predict_recover = nullptr;
@@ -725,6 +747,11 @@ int MergeMetas(const char* cache_dir, const char* pack, const char* game_dir, co
                 "files), %zu donors in %zu programs\n",
                 targets.size(), unreadable, not_in_game, donors.size(), programs.size());
     std::fflush(stdout);
+    {
+        // [extra] merge.failed bookkeeping: this run's pairs, dumped before returning.
+        std::scoped_lock lock{g_merge_fail_mutex};
+        g_merge_fail_pairs.clear();
+    }
     fs::create_directories(work_dir);
 #ifndef _WIN32
     for (int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE}) {
@@ -989,6 +1016,20 @@ int MergeMetas(const char* cache_dir, const char* pack, const char* game_dir, co
                 have, found_meta, found_own, found_other, none, more_keys.size(), key_merge.added,
                 key_merge.known, key_merge.dropped, programs.size(), perm_count, keys.size(),
                 out_pack, written / 1024);
+    {
+        // [extra] Persist the (target, donor) pairs whose translate threw during this merge
+        // (SpecWith catch), BEFORE the caller removes previous/: the offender list must survive
+        // the merge that found it (NextStep W0.1; debate 2026-11-03).
+        std::scoped_lock lock{g_merge_fail_mutex};
+        if (!g_merge_fail_pairs.empty()) {
+            std::ofstream out{fs::path{cache_dir} / "merge.failed", std::ios::app};
+            for (const auto& [target, donor] : g_merge_fail_pairs) {
+                out << std::hex << target << ' ' << donor << '\n';
+            }
+            std::printf("merge: %zu translate failures remembered in merge.failed\n",
+                        g_merge_fail_pairs.size());
+        }
+    }
     return written ? 0 : 1;
 }
 

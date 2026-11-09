@@ -405,6 +405,19 @@ static void watchdog(int sig, siginfo_t *info, void *context) {
     _exit(128 + sig);
 }
 #endif
+#ifdef _WIN32
+/* [extra] --timeout on Windows (NextStep D3): no SIGALRM and no /proc here, so a sleeping
+ * thread ends the process instead. Exit code 124 (GNU timeout's) marks a watchdog stop, which a
+ * test harness tells apart from a crash. Stack dumping stays POSIX-only (dump_frames). */
+static DWORD WINAPI watchdog(LPVOID param) {
+    Sleep((DWORD)(uintptr_t)param * 1000u);
+    const char head[] = "STOP: watchdog timeout (Windows)\n";
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), head, (DWORD)(sizeof(head) - 1), &written, NULL);
+    _exit(124);
+    return 0;
+}
+#endif
 /* param.sfo lookup: string or integer value of key, 0 when absent. */
 static int sfo_value(const char *path, const char *key, char *text, size_t text_size, uint32_t *number) {
     FILE *f=fopen(path,"rb");
@@ -679,6 +692,11 @@ int main(int argc, char **argv) {
         struct sigaction alarm_action = {0}; alarm_action.sa_sigaction = watchdog; alarm_action.sa_flags = SA_SIGINFO;
         sigemptyset(&alarm_action.sa_mask); sigaction(SIGALRM, &alarm_action, NULL);
         alarm(timeout_seconds);
+    }
+#else
+    if (timeout_seconds > 0) { /* [extra] watchdog thread above; alarm() does not exist here */
+        HANDLE wd = CreateThread(NULL, 0, watchdog, (LPVOID)(uintptr_t)timeout_seconds, 0, NULL);
+        if (wd) CloseHandle(wd);
     }
 #endif
     FILE *f = fopen(argv[1], "rb");

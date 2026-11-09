@@ -58,9 +58,9 @@ if [[ ! -f "$BUILD_DIR/build.ninja" ]]; then
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 fi
 
-# 2. Build game executable and online module (bb-probe.exe, bbnet20.dll)
-echo "--> Building bb-probe.exe and bbnet20.dll..."
-ninja -j "$NINJA_JOBS" -C "$BUILD_DIR" bb-probe bbnet20
+# 2. Build game executable and online module (bb-probe.exe, bbnet20.dll, pipeline-reconstruct-test.exe)
+echo "--> Building bb-probe.exe, bbnet20.dll and pipeline-reconstruct-test.exe..."
+ninja -j "$NINJA_JOBS" -C "$BUILD_DIR" bb-probe bbnet20 pipeline-reconstruct-test
 
 # 3. Build GPU capabilities tool
 echo "--> Building bb-gpu-capabilities.exe..."
@@ -69,17 +69,18 @@ clang -std=c11 -O2 -Wall -Wextra "$ROOT/tools/gpu_capabilities.c" \
 
 if [[ $DEV_BUILD -eq 1 ]]; then
     # [extra] Copy binaries into a minimal dist dir so the game runs without packaging.
-    # Symlinks/junctions need admin on Windows; a plain copy of 3 files is instant.
+    # Symlinks/junctions need admin on Windows; a plain copy of files is instant.
     DIST_BIN="$ROOT/dist/BBPort-dev/bin"
     mkdir -p "$DIST_BIN"
     cp -f "$BUILD_DIR/bb-probe.exe" "$DIST_BIN/" 2>/dev/null || true
     cp -f "$BUILD_DIR/bbnet20.dll" "$DIST_BIN/" 2>/dev/null || true
     cp -f "$BUILD_DIR/bb-gpu-capabilities.exe" "$DIST_BIN/" 2>/dev/null || true
+    cp -f "$BUILD_DIR/pipeline-reconstruct-test.exe" "$DIST_BIN/" 2>/dev/null || true
     # Collect MSYS2 runtime DLLs so bb-probe.exe runs outside the MSYS2 shell.
     python "$HERE/collect_dlls.py" "$DIST_BIN" "/clang64/bin" >/dev/null 2>&1 \
         && echo "--> Runtime DLLs collected into $DIST_BIN" || true
     echo "=== DEV build done ==="
-    echo "Artifacts: $BUILD_DIR/bb-probe.exe"
+    echo "Artifacts: $BUILD_DIR/bb-probe.exe, $BUILD_DIR/pipeline-reconstruct-test.exe"
     echo "Copied:    bb-probe.exe, bbnet20.dll, bb-gpu-capabilities.exe -> $DIST_BIN"
     echo "Skipped:   launcher (PyInstaller), packaging, zip."
     exit 0
@@ -127,6 +128,7 @@ pyinstaller --noconfirm --windowed --name Bloodborne \
     --hidden-import trophy_list \
     --hidden-import patches \
     --hidden-import run \
+    --hidden-import bbport_proc_win \
     -i "$WIN_ROOT/packaging/bbport.ico" \
     "$WIN_ROOT/launcher/bbport_launcher.py"
 
@@ -144,6 +146,7 @@ cp "$LAUNCHER_OUT/dist/Bloodborne/Bloodborne.exe" "$STAGE/"
 cp -r "$LAUNCHER_OUT/dist/Bloodborne/_internal" "$STAGE/"
 cp "$BUILD_DIR/bb-probe.exe" "$STAGE/bin/"
 cp "$BUILD_DIR/bb-gpu-capabilities.exe" "$STAGE/bin/"
+[[ -f "$BUILD_DIR/pipeline-reconstruct-test.exe" ]] && cp "$BUILD_DIR/pipeline-reconstruct-test.exe" "$STAGE/bin/" 2>/dev/null || true
 [[ -f "$BUILD_DIR/bbnet20.dll" ]] && cp "$BUILD_DIR/bbnet20.dll" "$STAGE/online/" 2>/dev/null || true
 [[ -f "$BUILD_DIR/bbnet20.dll" ]] && cp "$BUILD_DIR/bbnet20.dll" "$STAGE/bin/" 2>/dev/null || true
 

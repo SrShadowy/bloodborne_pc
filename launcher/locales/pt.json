@@ -253,6 +253,14 @@
   "Предустановка графики": "Predefinição Gráfica",
   "Автоматически настраивает апскейлер, эффекты, детализацию и память": "Ajusta automaticamente o upscaler, efeitos, LOD e gerenciamento de VRAM",
   "Применена предустановка: {}": "Predefinição aplicada: {}",
-  "Режим памяти гостя (BB_GUEST_MEMORY)": "Modo de memória convidada (BB_GUEST_MEMORY)",
-  "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer": "Como alocar a memória direta do jogo. No Wine/Proton+AMD selecione placed ou dmabuf para evitar crash no staging buffer"
+  "Режим памяти гостя (BB_GUEST_MEMORY)": "Modo de Memória Guest (BB_GUEST_MEMORY)",
+  "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer": "Como alocar a memória direta do jogo. No Wine/Proton+AMD escolha placed ou dmabuf, senão causará crash no staging buffer",
+  "host: импорт памяти хоста (VK_EXT_external_memory_host)": "host: Importação de memória host (VK_EXT_external_memory_host)",
+  "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)": "Mais rápido na NVIDIA e no Windows puro; crasha no Wine/Proton+AMD (CS rejected)",
+  "dmabuf: выделение разделяемой памяти через dma-buf": "dmabuf: Alocação de memória compartilhada via dma-buf",
+  "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows": "Funciona no Linux/AMD sem GPU fault; ligeiramente mais lento que host no Windows",
+  "private: приватные области для каждого прямого выделения": "private: Áreas privadas para cada alocação direta",
+  "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc": "Para drivers do Windows que não importam seções/memfd, apenas VirtualAlloc",
+  "placed: отображение памяти Vulkan по адресам игры": "placed: Mapeamento de memória Vulkan nos endereços do jogo",
+  "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает": "VK_EXT_map_memory_placed; necessária no Wine/Proton+AMD onde o host falha"
 }

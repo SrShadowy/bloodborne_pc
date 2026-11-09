@@ -17,19 +17,8 @@ fail=0
 # Recorded size debt (<lines> <path>). Embedded in this script on purpose: extra/tools/ is not
 # versioned and a side file (audit_baseline.txt) here vanished twice; the debt list can only
 # change by a deliberate edit anyway — the same review that pays it down updates this block.
-baseline_debt='566 extra/core/debugger/breakpoint.cpp
-305 extra/core/debugger/mem_scanner.cpp
-314 extra/ui/tabs/tab_scanner.cpp
-466 extra/ui/views/view_disasm.cpp
-307 extra/ui/keyboard/bbport_keyboard.cpp
-448 extra/management/prompts/bbport_pad_hook.h
-655 extra/management/prompts/bbport_button_prompts.cpp
-538 extra/management/hud/bbport_fps_hud.cpp
-1086 extra/management/sections/bbport_overlay_sections.cpp
-729 extra/management/i18n/bbport_strings.cpp
-711 extra/contact/rpc/bbport_discord_rpc.cpp
-821 extra/contact/game_data/bbport_game_data.cpp
-391 extra/memoryDev/bbport_memory_dev.cpp'
+# Empty: every extra/ file is at or below the 300-line target.
+baseline_debt=''
 
 echo "== [1] extra/ file sizes (target <= 300, hard limit <= 400, ratchet)"
 while IFS= read -r f; do

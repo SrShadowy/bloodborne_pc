@@ -4,11 +4,8 @@
 // (render/shader_capture.h) again and compares the output with the recorded one: SPIR-V word
 // for word, the shader info's serialized form and the bindings. The guest memory the compiler
 // read is mapped back at its addresses. Usage: shader-corpus-test <dir|file>... [-v]
-#include <signal.h>
-#include <sys/mman.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
+// [extra] Windows: guest memory via VirtualAlloc at the recorded addresses; the crash-report
+// signal handler and --make-variants (fork per variant) stay POSIX-only.
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -18,6 +15,15 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "common/serdes.h"
 #include "shader/backend/bindings.h"
@@ -65,10 +71,19 @@ struct Region {
 class GuestMemory {
 public:
     bool Map(const std::vector<Region>& regions) {
+        // [extra] VirtualAlloc reserves at 64 KiB granularity (guest pages are 4 KiB): the
+        // quantum is 64 KiB on Windows so a requested base is acceptable there.
+        const u64 gmask = ~u64{
+#ifdef _WIN32
+            0xFFFF
+#else
+            0xFFF
+#endif
+        };
         std::map<u64, u64> pages; // first page -> end
         for (const auto& region : regions) {
-            const u64 first = region.address & ~u64{0xFFF};
-            const u64 end = (region.address + region.bytes.size() + 0xFFF) & ~u64{0xFFF};
+            const u64 first = region.address & gmask;
+            const u64 end = (region.address + region.bytes.size() + ~gmask) & gmask;
             pages[first] = std::max(pages[first], end);
         }
         // Merge overlapping page spans.
@@ -81,8 +96,15 @@ public:
             }
         }
         for (const auto& [first, end] : spans) {
+#ifdef _WIN32
+            // [extra] VirtualAlloc at the exact recorded address fails if taken (as
+            // MAP_FIXED_NOREPLACE's mismatch did).
+            void* at = VirtualAlloc(reinterpret_cast<void*>(first), end - first,
+                                    MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
             void* at = mmap(reinterpret_cast<void*>(first), end - first, PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+#endif
             if (at != reinterpret_cast<void*>(first)) {
                 std::fprintf(stderr, "cannot map guest memory at %#llx\n",
                              (unsigned long long)first);
@@ -98,7 +120,12 @@ public:
     }
     ~GuestMemory() {
         for (const auto& [address, size] : mapped) {
+#ifdef _WIN32
+            VirtualFree(reinterpret_cast<void*>(address), 0, MEM_RELEASE); // [extra]
+            (void)size;
+#else
             munmap(reinterpret_cast<void*>(address), size);
+#endif
         }
     }
 
@@ -364,6 +391,65 @@ Outcome Replay(const std::string& path, bool verbose, u32 repeat) {
         return Shader::Backend::SPIRV::EmitSPIRV(profile, rt, program, target_bindings);
     };
     if (variant_dir) {
+#ifdef _WIN32
+        // [extra] One child per variant (a compiler assertion ends only it) is POSIX-only; on
+        // Windows run the variants in this process (an assertion ends the run, like the game's
+        // own recipe import did).
+        for (const auto& variant : variants) {
+            Shader::Profile vprofile = profile;
+            Shader::RuntimeInfo vrt = pristine_runtime_info;
+            variant.apply(vprofile, vrt);
+            Shader::Info vinfo{hw_stage, sw_stage,
+                               Shader::ShaderParams{std::span<const u32, 16>{user_data},
+                                                    guest_code, pgm_hash}};
+            Shader::Backend::Bindings vbindings = pristine_bindings;
+            auto rt = vrt;
+            const auto program = Shader::TranslateProgram(guest_code, pools, vinfo, rt, vprofile);
+            const auto vspv = Shader::Backend::SPIRV::EmitSPIRV(vprofile, rt, program, vbindings);
+            Serialization::Archive archive;
+            vinfo.Serialize(archive);
+            const auto vinfo_bytes = archive.TakeOff();
+            Out out;
+            out.Raw("BBSC", 4);
+            out.Value(u32{2});
+            out.Value(Shader::MotionVectors::params_address);
+            out.Value(Shader::MotionVectors::positions_address);
+            out.Value(u32(hw_stage));
+            out.Value(u32(sw_stage));
+            out.Value(pgm_hash);
+            out.Value(u64(0));
+            out.Value(pgm_base);
+            out.Value(user_data);
+            out.Words(code);
+            auto stored_rt = vrt;
+            if (hw_stage == Shader::HwStage::Geometry) {
+                stored_rt.hw.gs.vs_copy = {};
+            }
+            out.Value(stored_rt);
+            out.Words(vs_copy);
+            out.Value(vprofile);
+            out.Value(pristine_bindings);
+            out.Value(u32(recorded_regions.size()));
+            for (const auto& region : recorded_regions) {
+                out.Value(region.address);
+                out.Value(u32(region.bytes.size()));
+                out.Raw(region.bytes.data(), region.bytes.size());
+            }
+            out.Words(vspv);
+            out.Value(u64(vinfo_bytes.size()));
+            out.Raw(vinfo_bytes.data(), vinfo_bytes.size());
+            out.Value(vbindings);
+            const std::string name = std::string{variant_dir} + "/" +
+                                     std::filesystem::path(path).stem().string() + "_" +
+                                     variant.name + ".bbsc";
+            std::ofstream file{name, std::ios::binary};
+            file.write(reinterpret_cast<const char*>(out.bytes.data()), out.bytes.size());
+            if (!file) {
+                std::printf("%s: variant %s could not be written\n", path.c_str(), variant.name);
+            }
+        }
+        return Outcome::Same;
+#else
         // Each variant in a child process: an assertion of the compiler ends only that one.
         for (const auto& variant : variants) {
             const pid_t child = fork();
@@ -426,6 +512,7 @@ Outcome Replay(const std::string& path, bool verbose, u32 repeat) {
             }
         }
         return Outcome::Same;
+#endif
     }
     const auto out_spv = compile(info, bindings);
     // Determinism: the same compilation again, with the heap laid out differently.
@@ -489,6 +576,7 @@ Outcome Replay(const std::string& path, bool verbose, u32 repeat) {
 /// The record being replayed, for the fault report.
 const char* current_record = "";
 
+#ifndef _WIN32
 void OnFault(int, siginfo_t* info, void*) {
     char text[512];
     const int n = std::snprintf(text, sizeof(text), "%s: fault reading %p (memory not recorded)\n",
@@ -496,6 +584,10 @@ void OnFault(int, siginfo_t* info, void*) {
     write(2, text, n);
     _exit(3);
 }
+#endif
+// [extra] No POSIX fault handler on Windows: an access violation ends the test with a nonzero
+// exit and `current_record`'s path stays the last progress line's subject only under -v; crash
+// isolation there is the runner's job (one file per invocation when bisecting).
 
 /// --aux: hashes of the generated auxiliary shaders (rect/quad tessellation, clip distance
 /// discard) over a set of inputs, to compare implementations.
@@ -554,10 +646,12 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--aux") {
         return AuxHashes();
     }
+#ifndef _WIN32
     struct sigaction action{};
     action.sa_sigaction = OnFault;
     action.sa_flags = SA_SIGINFO;
     sigaction(SIGSEGV, &action, nullptr);
+#endif
     bool verbose = false;
     u32 repeat = 0;
     std::vector<std::string> files;
@@ -572,7 +666,7 @@ int main(int argc, char** argv) {
         } else if (std::filesystem::is_directory(arg)) {
             for (const auto& entry : std::filesystem::directory_iterator(arg)) {
                 if (entry.path().extension() == ".bbsc") {
-                    files.push_back(entry.path());
+                    files.push_back(entry.path().string()); // [extra] path is wide on Windows
                 }
             }
         } else {

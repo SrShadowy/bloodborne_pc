@@ -120,7 +120,7 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_VIDEO_BACKEND` | =x11 / wayland: forced video backend for game window |
 | `BB_VRAM_LIMIT` | VRAM memory limit in MiB |
 
-## Tuning (239)
+## Tuning (241)
 
 Defaults to change on a machine where they misbehave, workarounds, and switches that turn a fix off for comparison.
 
@@ -341,6 +341,8 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_THD_SERVER` | The Hunter's Dream session service URL |
 | `BB_THD_STUN` | =host[:port] / off: STUN server (default: the server's host on 3478) |
 | `BB_THD_VERIFY_TLS` | =0: The Hunter's Dream TLS certificates not checked |
+| `BB_THREAD_CREATOR_DELAY_MS` | =ms (default 2, 0: off, max 50): the creating thread sleeps after pthread_create, the PS4 slack the movie system's mutex init needs (C-008) |
+| `BB_THREAD_START_DELAY_MS` | =ms (default 0, max 50): a created guest thread waits before its first guest instruction (C-008 diagnostic) |
 | `BB_TILE_BIND_VRAM` | =0: tiled data read in place over the bus instead of from a VRAM copy |
 | `BB_TIMELINE_POLL_US` | =N (default 50): timeline semaphore poll interval |
 | `BB_TITLE_EXIT` | =1: exit to desktop when choosing exit from title screen |
@@ -366,13 +368,14 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_VULKANINFO` | path of vulkaninfo for the launcher |
 | `BB_WORK_RETIRED` | =0: the recording thread and fences do not wait for retired work |
 
-## Diagnostics (279)
+## Diagnostics (284)
 
 Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame time; none is meant for playing.
 
 | Variable | What it does |
 |---|---|
 | `BB_ARENA_VRAM_ONLY` | =1 (tests): the arena in VRAM only, as NVIDIA's sparse buffers |
+| `BB_ASSERT_DUMP` | =dir: a failed shader check's compilation inputs written to <dir>/<check>/<hash>-<perm>.bin (shader-corpus-test replays them) |
 | `BB_AUDIO_DUMP` | =dir: raw converted PCM per audio port |
 | `BB_AUDIO_STATS` | set: audio port statistics |
 | `BB_AUDIO_TRACE` | =1: Ajm instance configurations and jobs that fail |
@@ -599,6 +602,7 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_SECTIONS_SLOW` | =1 (with BB_SECTIONS): slow frames' sections at each flip |
 | `BB_SEQUENCE_DUMP_COUNT` | =N (default 16): images per BB_SEQUENCE_DUMP_TRIGGER |
 | `BB_SEQUENCE_DUMP_TRIGGER` | =file: creating it saves the next images shown (frame generation checks) |
+| `BB_SHADER_ASSERT_LOG` | =1: a failed shader check is logged ([AssertLog]) and its pipeline skipped, not fatal (enumeration runs) |
 | `BB_SHADER_CAPTURE` | =dir: shader inputs captured there |
 | `BB_SHADER_COLD_RUN` | =1: simulate first cold run without pipeline cache |
 | `BB_SHADER_DISCOVERY` | =1: discover and collect shaders during gameplay |
@@ -609,10 +613,12 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_SPEC_MATCH_CHECK` | set: the built specialization must find the same one |
 | `BB_STALL_REPORT` | =0: no report when the queues stop making progress |
 | `BB_STALL_THREADS` | =0: a stall report covers the command thread only |
+| `BB_STDOUT_FILE` | =1 (run.py): the game's stdout mirrored to a file under the run's log dir (repro of the two-pipe backpressure, C-007) |
 | `BB_STREAM_STATS` | =1: what a frame streams |
 | `BB_TAA_DIAGNOSTICS` | set: TAA diagnostic image dumps |
 | `BB_TEST_VPAD` | =1 (tests): a virtual Xbox-like gamepad |
 | `BB_THD_TRACE` | =1: every The Hunter's Dream datagram and callback |
+| `BB_THREAD_START_TRACE` | =1: each guest thread's create->STARTED latency (C-008 diagnostic) |
 | `BB_TICK_LOG` | set: ranges marked written by the GPU most often, per 5 s |
 | `BB_TILE_BACK_LOG` | set: which shader a 'Tile back' line is for |
 | `BB_TIMELINE` | =file: a timeline of frames on their way to the GPU |
@@ -640,6 +646,7 @@ Logs, dumps, traces, probes and experiments, for finding bugs. Most cost frame t
 | `BB_VK_MARKERS` | =1: the game's debug labels as Vulkan markers |
 | `BB_VK_VALIDATION` | =1: Vulkan validation layers |
 | `BB_VK_VALIDATION_SYNC` | =1: Vulkan synchronization validation |
+| `BB_VQ_STATS` | =1: cost of the VirtualQueries SaveProtections/Carve run ([BB VQ] every 4096 and at exit; D-019 triage) |
 | `BB_VRAM_ACCESS_TRAP` | set: blocks moved to VRAM are closed to the CPU |
 | `BB_VRAM_TRAP_RANGE` | =addr:size: BB_VRAM_ACCESS_TRAP only over that range |
 | `BB_WAIT_LOG` | =file: the game's kernel waits written there |

@@ -190,7 +190,7 @@ O BBPort captura o `target` do swapchain exatamente **após** o blit da cena 3D 
 
 ## 6. Interface do Usuário, Atalhos e Toast Notifications
 
-### Arquivos: `gpu/shim/bbport_overlay.cpp`, `bbport_overlay_sections.cpp` e `bbport_settings.h`
+### Arquivos: `gpu/shim/bbport_overlay.cpp`, `bbport_overlay_section_photo.cpp` e `bbport_settings.h`
 
 A nova seção **Modo Foto (Photo Mode)** foi posicionada no topo do menu de configurações do jogo.
 

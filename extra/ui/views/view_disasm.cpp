@@ -1,465 +1,214 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: the x86-64 disassembler view's state and navigation -- where the table starts, which
+// instruction was clicked (and copied), what was patched, and stepping from one instruction to the
+// next. view_disasm_render.cpp draws it and view_disasm_menu.cpp holds the row's context menu.
 #include "view_disasm.h"
-#include "modal_patch_inst.h"
-#include "ui_strings.h"
-#include "view_memviewer.h"
-#include "ui_manager.h"
-#include "breakpoint.h"
-#include "mem_scanner.h"
-#include "symbol_manager.h"
-#include "common/decoder.h"
 
-#include <imgui.h>
-#include <SDL3/SDL.h>
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
-#include <unordered_map>
-#include <algorithm>
+
+#include <imgui.h>
+
+#include "breakpoint.h"
+#include "common/decoder.h"
+#include "mem_scanner.h"
+#include "ui_manager.h"
+#include "view_disasm_internal.h"
+#include "view_memviewer.h"
+#include "ui_strings.h"
 
 namespace UI {
+namespace {
 
-static uintptr_t disasm_current_addr = 0x00400000;
-static uintptr_t s_selected_disasm_addr = 0;
-static std::string s_selected_line_copy;
-static bool s_disasm_show_symbols = true;
-static std::string patch_status_msg;
-static std::unordered_map<uintptr_t, std::vector<uint8_t>> patched_instructions;
+using DisasmDetail::kMaxInstructionBytes;
 
-uintptr_t ViewDisasm::GetDisasmAddress() { return disasm_current_addr; }
-void ViewDisasm::SetDisasmAddress(uintptr_t addr) { disasm_current_addr = addr; }
-uintptr_t ViewDisasm::GetSelectedAddress() { return s_selected_disasm_addr; }
-void ViewDisasm::SetSelectedAddress(uintptr_t addr) { s_selected_disasm_addr = addr; }
-bool ViewDisasm::GetShowSymbols() { return s_disasm_show_symbols; }
-void ViewDisasm::SetShowSymbols(bool show) { s_disasm_show_symbols = show; }
-bool ViewDisasm::HasPatch(uintptr_t addr) { return patched_instructions.find(addr) != patched_instructions.end(); }
+DisasmDetail::State g_state;
 
-void ViewDisasm::ApplyPatch(uintptr_t addr, const std::vector<uint8_t>& new_bytes, const std::vector<uint8_t>& orig_bytes) {
-    if (patched_instructions.find(addr) == patched_instructions.end()) patched_instructions[addr] = orig_bytes;
+} // namespace
+
+namespace DisasmDetail {
+
+State& GetState() {
+    return g_state;
+}
+
+std::uintptr_t ToRuntime(std::uintptr_t address) {
+    return (address >= kEbootBase && address < kRuntimeBase) ? ((address - kEbootBase) + kRuntimeBase)
+                                                             : address;
+}
+
+std::size_t InstructionLength(const void* instruction) {
+    if (!instruction) {
+        return 1;
+    }
+    std::uint8_t code[kMaxInstructionBytes + 1] = {};
+    std::copy_n(static_cast<const std::uint8_t*>(instruction), kMaxInstructionBytes, code);
+    ZydisDecodedInstruction inst;
+    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
+    if (!ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(inst, operands, code,
+                                                                    kMaxInstructionBytes))) {
+        return 1;
+    }
+    return (inst.length > 0 && inst.length <= kMaxInstructionBytes) ? inst.length : 1;
+}
+
+} // namespace DisasmDetail
+
+using DisasmDetail::GetState;
+using DisasmDetail::kCodeChunkBytes;
+using DisasmDetail::kEbootBase;
+using DisasmDetail::kMaxInstructionBytes;
+using DisasmDetail::kMinFollowable;
+using DisasmDetail::kRowTextBytes;
+using DisasmDetail::kRuntimeBase;
+using DisasmDetail::kSymbolSpan;
+using DisasmDetail::ToRuntime;
+
+uintptr_t ViewDisasm::GetDisasmAddress() {
+    return GetState().current;
+}
+
+void ViewDisasm::SetDisasmAddress(uintptr_t addr) {
+    GetState().current = addr;
+}
+
+uintptr_t ViewDisasm::GetSelectedAddress() {
+    return GetState().selected;
+}
+
+void ViewDisasm::SetSelectedAddress(uintptr_t addr) {
+    GetState().selected = addr;
+}
+
+bool ViewDisasm::GetShowSymbols() {
+    return GetState().show_symbols;
+}
+
+void ViewDisasm::SetShowSymbols(bool show) {
+    GetState().show_symbols = show;
+}
+
+bool ViewDisasm::HasPatch(uintptr_t addr) {
+    return GetState().patched.find(addr) != GetState().patched.end();
+}
+
+void ViewDisasm::ApplyPatch(uintptr_t addr, const std::vector<uint8_t>& new_bytes,
+                            const std::vector<uint8_t>& orig_bytes) {
+    auto& patched = GetState().patched;
+    if (patched.find(addr) == patched.end()) {
+        patched[addr] = orig_bytes;
+    }
     if (Debugger::MemoryScanner::WriteMemory(addr, new_bytes.data(), new_bytes.size())) {
-        char msg[96]; std::snprintf(msg, sizeof(msg), "Patched %zu byte(s) at 0x%012llx", new_bytes.size(), static_cast<unsigned long long>(addr));
-        patch_status_msg = msg; UiManager::SetStatus(msg);
+        char msg[96];
+        std::snprintf(msg, sizeof(msg), "Patched %zu byte(s) at 0x%012llx", new_bytes.size(),
+                      static_cast<unsigned long long>(addr));
+        GetState().patch_status = msg;
+        UiManager::SetStatus(msg);
     }
 }
 
 bool ViewDisasm::RestoreInstruction(uintptr_t addr) {
-    auto it = patched_instructions.find(addr);
-    if (it == patched_instructions.end()) return false;
-    bool ok = Debugger::MemoryScanner::WriteMemory(addr, it->second.data(), it->second.size());
-    if (ok) patched_instructions.erase(it);
+    auto& patched = GetState().patched;
+    auto it = patched.find(addr);
+    if (it == patched.end()) {
+        return false;
+    }
+    const bool ok = Debugger::MemoryScanner::WriteMemory(addr, it->second.data(), it->second.size());
+    if (ok) {
+        patched.erase(it);
+    }
     return ok;
 }
 
 bool ViewDisasm::NopInstruction(uintptr_t addr) {
-    uint8_t code_buf[16] = {0};
-    if (!Debugger::MemoryScanner::ReadMemory(addr, code_buf, sizeof(code_buf))) return false;
+    std::uint8_t code[kCodeChunkBytes] = {};
+    if (!Debugger::MemoryScanner::ReadMemory(addr, code, sizeof(code))) {
+        return false;
+    }
     ZydisDecodedInstruction inst;
     ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-    if (!ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(inst, operands, code_buf, sizeof(code_buf)))) return false;
-    const size_t len = (inst.length > 0 && inst.length <= 15) ? inst.length : 1;
-    std::vector<uint8_t> orig(code_buf, code_buf + len);
-    std::vector<uint8_t> nops(len, 0x90);
-    if (Debugger::MemoryScanner::WriteMemory(addr, nops.data(), len)) {
-        if (patched_instructions.find(addr) == patched_instructions.end()) patched_instructions[addr] = orig;
-        return true;
+    if (!ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(inst, operands, code,
+                                                                    sizeof(code)))) {
+        return false;
     }
-    return false;
+    const std::size_t len = DisasmDetail::InstructionLength(code);
+    std::vector<uint8_t> orig(code, code + len);
+    std::vector<uint8_t> nops(len, 0x90);
+    if (!Debugger::MemoryScanner::WriteMemory(addr, nops.data(), len)) {
+        return false;
+    }
+    auto& patched = GetState().patched;
+    if (patched.find(addr) == patched.end()) {
+        patched[addr] = orig;
+    }
+    return true;
 }
 
 uintptr_t ViewDisasm::FindPreviousInstruction(uintptr_t addr) {
-    if (addr == 0) return 0;
-    for (int step = 1; step <= 15; ++step) {
-        if (addr < static_cast<uintptr_t>(step)) break;
-        uintptr_t candidate = addr - step;
-        uint8_t buf[16];
-        if (Debugger::MemoryScanner::ReadMemory(candidate, buf, sizeof(buf))) {
-            ZydisDecodedInstruction inst;
-            ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-            if (ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(inst, operands, buf, sizeof(buf)))) {
-                if (inst.length == step) return candidate;
-            }
+    if (addr == 0) {
+        return 0;
+    }
+    for (std::size_t step = 1; step <= kMaxInstructionBytes; ++step) {
+        if (addr < step) {
+            break;
+        }
+        const uintptr_t candidate = addr - step;
+        std::uint8_t code[kMaxInstructionBytes + 1] = {};
+        if (Debugger::MemoryScanner::ReadMemory(candidate, code, kMaxInstructionBytes) &&
+            DisasmDetail::InstructionLength(code) == step) {
+            return candidate;
         }
     }
-    return (addr >= 4) ? (addr - 4) : (addr - 1);
+    return addr >= 4 ? addr - 4 : addr - 1;
 }
 
 uintptr_t ViewDisasm::FindNextInstruction(uintptr_t addr) {
-    uint8_t buf[16];
-    if (Debugger::MemoryScanner::ReadMemory(addr, buf, sizeof(buf))) {
-        ZydisDecodedInstruction inst;
-        ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-        if (ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(inst, operands, buf, sizeof(buf)))) {
-            const size_t len = (inst.length > 0 && inst.length <= 15) ? inst.length : 1;
-            return addr + len;
-        }
+    std::uint8_t code[kMaxInstructionBytes + 1] = {};
+    if (!Debugger::MemoryScanner::ReadMemory(addr, code, kMaxInstructionBytes)) {
+        return addr + 1;
     }
-    return addr + 1;
-}
-
-static std::vector<uintptr_t> ExtractAddressesFromText(const std::string& text) {
-    std::vector<uintptr_t> results;
-    size_t pos = 0;
-    while ((pos = text.find("0x", pos)) != std::string::npos) {
-        size_t end = pos + 2;
-        while (end < text.size() && std::isxdigit(static_cast<unsigned char>(text[end]))) {
-            end++;
-        }
-        if (end > pos + 2) {
-            std::string hex_str = text.substr(pos, end - pos);
-            try {
-                uintptr_t val = std::strtoull(hex_str.c_str(), nullptr, 16);
-                if (val >= 0x10000) {
-                    if (std::find(results.begin(), results.end(), val) == results.end()) {
-                        results.push_back(val);
-                    }
-                }
-            } catch (...) {}
-        }
-        pos = end;
-    }
-    return results;
+    return addr + DisasmDetail::InstructionLength(code);
 }
 
 void ViewDisasm::RenderDisassemblerView(uintptr_t& cur_addr, float height, bool standalone) {
-    auto& bp = Debugger::BreakpointManager::Get();
-
-    if (!standalone) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s",
-                           L("x86-64 Disassembler (Live View):", "Desassemblador x86-64 (Visao em Tempo Real):", "Дизассемблер x86-64 (В реальном времени):"));
-    }
-
-    ImGui::SetNextItemWidth(150.0f);
-    char addr_buf[32];
-    std::snprintf(addr_buf, sizeof(addr_buf), "0x%llx", static_cast<unsigned long long>(cur_addr));
-    auto ToRuntime = [](uintptr_t a) {
-        return (a >= 0x00400000ULL && a < 0x800000000ULL) ? ((a - 0x00400000ULL) + 0x800000000ULL) : a;
-    };
-    const char* input_id = standalone ? "##MemviewDisasmAddr" : "##DisasmAddr";
-    if (ImGui::InputText(input_id, addr_buf, sizeof(addr_buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-        cur_addr = ToRuntime(std::strtoull(addr_buf, nullptr, 16));
-    }
-    ImGui::SameLine();
-    if (ImGui::SmallButton(standalone ? "RIP##mv" : "Jump to RIP")) {
-        const uintptr_t rip = bp.GetLastHitRip();
-        if (rip) cur_addr = rip;
-    }
-    ImGui::SetItemTooltip("%s", L("Jump to the address of the latest captured execution/write",
-                                  "Pular para o endereco da ultima execucao/escrita capturada",
-                                  "Перейти к адресу последнего события"));
-
-    ImGui::SameLine();
-    if (ImGui::SmallButton(standalone ? "eboot##mv_d" : "eboot##disasm")) {
-        cur_addr = ToRuntime(0x00400000ULL);
-    }
-    ImGui::SetItemTooltip("%s", L("Jump to game executable base (0x00400000)",
-                                  "Pular para a base do executavel do jogo (0x00400000)",
-                                  "Перейти к базе исполняемого файла игры (0x00400000)"));
-
-    ImGui::SameLine();
-    ImGui::Checkbox(L("Symbols", "Simbolos", "Символы"), &s_disasm_show_symbols);
-    ImGui::SetItemTooltip("%s", L("Resolve function and global variable symbols in disassembly",
-                                  "Resolver nomes de funcoes e variaveis globais no desassemblador",
-                                  "Разрешать символы функций и глобальных переменных"));
-
-    if (!patch_status_msg.empty()) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "[OK] %s", patch_status_msg.c_str());
-    }
-
-    uint8_t code_chunk[512];
-    const bool read_ok = Debugger::MemoryScanner::ReadMemory(cur_addr, code_chunk, sizeof(code_chunk));
-    if (!read_ok) {
-        ImGui::TextDisabled("%s (0x%012llx)",
-                            L("Cannot read memory at this address (unmapped or protected page)",
-                              "Nao foi possivel ler a memoria neste endereco (pagina nao mapeada ou protegida)",
-                              "Невозможно прочитать память по этому адресу"),
-                            static_cast<unsigned long long>(cur_addr));
+    std::uint8_t code[DisasmDetail::kCodeChunkBytes];
+    if (!DisasmDetail::RenderToolbar(cur_addr, standalone, code)) {
         return;
     }
 
     const char* child_id = standalone ? "DisasmChildMV" : "DisasmChildTab";
-    ImGui::BeginChild(child_id, ImVec2(0, height), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::BeginChild(child_id, ImVec2(0, height), false,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) {
-        float wheel = ImGui::GetIO().MouseWheel;
+        const float wheel = ImGui::GetIO().MouseWheel;
         if (wheel > 0.0f) {
-            int steps = std::max(1, static_cast<int>(wheel));
-            for (int i = 0; i < steps; ++i) cur_addr = FindPreviousInstruction(cur_addr);
+            const int steps = std::max(1, static_cast<int>(wheel));
+            for (int i = 0; i < steps; ++i) {
+                cur_addr = ViewDisasm::FindPreviousInstruction(cur_addr);
+            }
         } else if (wheel < 0.0f) {
-            int steps = std::max(1, static_cast<int>(-wheel));
-            for (int i = 0; i < steps; ++i) cur_addr = FindNextInstruction(cur_addr);
-        }
-    }
-
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-            if (!s_selected_line_copy.empty()) {
-                ImGui::SetClipboardText(s_selected_line_copy.c_str());
-                UiManager::SetStatus(L("Copied selected instruction to clipboard", "Instrucao selecionada copiada", "Инструкция скопирована"));
+            const int steps = std::max(1, static_cast<int>(-wheel));
+            for (int i = 0; i < steps; ++i) {
+                cur_addr = ViewDisasm::FindNextInstruction(cur_addr);
             }
         }
     }
 
-    const char* table_id = standalone ? "DisasmTableMV" : "DisasmTable";
-    if (ImGui::BeginTable(table_id, 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, height))) {
-        ImGui::TableSetupColumn(L("Address", "Endereco", "Адрес"), ImGuiTableColumnFlags_WidthFixed, 160.0f);
-        ImGui::TableSetupColumn(L("Bytes", "Bytes", "Байты"), ImGuiTableColumnFlags_WidthFixed, 130.0f);
-        ImGui::TableSetupColumn(L("Instruction", "Instrucao", "Инструкция"), ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableHeadersRow();
-
-        uintptr_t cur_pc = cur_addr;
-        size_t offset = 0;
-        const uintptr_t last_rip = bp.GetLastHitRip();
-        int inst_count = 0;
-        const int max_insts = (height > 500.0f) ? 60 : ((height > 300.0f) ? 40 : 25);
-
-        while (offset < sizeof(code_chunk) && inst_count < max_insts) {
-            ZydisDecodedInstruction inst;
-            ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-            const size_t rem_size = sizeof(code_chunk) - offset;
-            const ZyanStatus status = Common::Decoder::Instance()->decodeInstruction(inst, operands, code_chunk + offset, rem_size);
-
-            if (!ZYAN_SUCCESS(status)) {
-                const bool is_selected_bad = (s_selected_disasm_addr != 0 && cur_pc == s_selected_disasm_addr);
-                ImGui::TableNextRow();
-                if (is_selected_bad) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImColor(25, 75, 140, 210));
-
-                ImGui::TableSetColumnIndex(0);
-                char bad_pc_str[32];
-                std::snprintf(bad_pc_str, sizeof(bad_pc_str), "0x%012llx", static_cast<unsigned long long>(cur_pc));
-                ImGui::Text("%s", bad_pc_str);
-
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextDisabled("%02X", code_chunk[offset]);
-
-                ImGui::TableSetColumnIndex(2);
-                char db_str[32];
-                std::snprintf(db_str, sizeof(db_str), "db 0x%02X##db_%08llx", code_chunk[offset], static_cast<unsigned long long>(cur_pc));
-                if (ImGui::Selectable(db_str, is_selected_bad, ImGuiSelectableFlags_SpanAllColumns)) {
-                    s_selected_disasm_addr = cur_pc;
-                    char bad_line[128];
-                    std::snprintf(bad_line, sizeof(bad_line), "%s  %02X  db 0x%02X", bad_pc_str, code_chunk[offset], code_chunk[offset]);
-                    s_selected_line_copy = bad_line;
-                }
-                offset += 1; cur_pc += 1; inst_count++;
-                continue;
-            }
-
-            const size_t inst_len = (inst.length > 0 && inst.length <= 15) ? inst.length : 1;
-            const bool is_rip = (last_rip != 0 && cur_pc == last_rip);
-            const bool is_selected = (s_selected_disasm_addr != 0 && cur_pc == s_selected_disasm_addr);
-            const bool is_patched = (patched_instructions.find(cur_pc) != patched_instructions.end());
-            const bool has_bp = bp.HasBreakpoint(cur_pc);
-
-            ImGui::TableNextRow();
-            if (is_rip) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImColor(80, 20, 20, 200));
-            } else if (is_selected) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImColor(25, 75, 140, 210));
-            } else if (is_patched) {
-                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImColor(20, 60, 40, 180));
-            }
-
-            std::string raw_text = Common::Decoder::Instance()->disassembleInst(inst, operands, cur_pc);
-            std::string text = s_disasm_show_symbols ? Debugger::SymbolManager::Get().AnnotateInstruction(raw_text, cur_pc) : raw_text;
-
-            char pc_str[32];
-            std::snprintf(pc_str, sizeof(pc_str), "0x%012llx", static_cast<unsigned long long>(cur_pc));
-
-            char bytes_str[64] = "";
-            int bpos = 0;
-            for (size_t b = 0; b < inst_len; ++b) {
-                bpos += std::snprintf(bytes_str + bpos, sizeof(bytes_str) - bpos, "%02X ", code_chunk[offset + b]);
-            }
-
-            char full_line_buf[384];
-            std::snprintf(full_line_buf, sizeof(full_line_buf), "%s  %-24s  %s", pc_str, bytes_str, text.c_str());
-
-            // Column 0: Address & Symbol Name
-            ImGui::TableSetColumnIndex(0);
-            std::string exact_sym = s_disasm_show_symbols ? Debugger::SymbolManager::Get().GetExactName(cur_pc) : "";
-            const char* prefix = is_rip ? "=> " : (is_selected ? ">  " : (is_patched ? "*  " : (has_bp ? "●  " : "   ")));
-
-            if (is_rip) {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s%s", prefix, pc_str);
-            } else if (is_selected) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 1.0f, 1.0f), "%s%s", prefix, pc_str);
-            } else if (is_patched) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "%s%s", prefix, pc_str);
-            } else if (has_bp) {
-                ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s%s", prefix, pc_str);
-            } else if (!exact_sym.empty()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s<%s>", prefix, exact_sym.c_str());
-            } else {
-                ImGui::Text("%s%s", prefix, pc_str);
-            }
-
-            if (ImGui::IsItemHovered()) {
-                std::string resolved_sym = Debugger::SymbolManager::Get().Resolve(cur_pc, true, 0x1000);
-                if (!resolved_sym.empty()) {
-                    ImGui::SetTooltip("%s (0x%012llx)\n%s", resolved_sym.c_str(), static_cast<unsigned long long>(cur_pc),
-                                      L("Double-click to patch bytes | Right-click for options",
-                                        "Clique duplo para editar bytes | Botao direito p/ opcoes",
-                                        "Двойной клик: патч | ПКМ: меню"));
-                } else {
-                    ImGui::SetTooltip("0x%012llx\n%s", static_cast<unsigned long long>(cur_pc),
-                                      L("Double-click to patch bytes | Right-click for options",
-                                        "Clique duplo para editar bytes | Botao direito p/ opcoes",
-                                        "Двойной клик: патч | ПКМ: меню"));
-                }
-            }
-
-            // Column 1: Bytes
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextDisabled("%s", bytes_str);
-
-            // Column 2: Instruction
-            ImGui::TableSetColumnIndex(2);
-            char row_label[256];
-            std::snprintf(row_label, sizeof(row_label), "%s##row_%08llx", text.c_str(), static_cast<unsigned long long>(cur_pc));
-            bool row_selected = is_selected;
-            bool row_clicked = ImGui::Selectable(row_label, row_selected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns);
-            if (row_clicked) {
-                s_selected_disasm_addr = cur_pc;
-                s_selected_line_copy = full_line_buf;
-            }
-            if ((row_clicked && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) ||
-                (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))) {
-                ModalPatchInst::Open(cur_pc, inst_len, code_chunk + offset, raw_text);
-            }
-
-            if (ImGui::BeginPopupContextItem()) {
-                s_selected_disasm_addr = cur_pc;
-                s_selected_line_copy = full_line_buf;
-
-                std::string sym_name = Debugger::SymbolManager::Get().Resolve(cur_pc, true, 0x1000);
-                if (!sym_name.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s (0x%012llx)", sym_name.c_str(), static_cast<unsigned long long>(cur_pc));
-                } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "0x%012llx", static_cast<unsigned long long>(cur_pc));
-                }
-                ImGui::Separator();
-
-                if (ImGui::MenuItem(L("Copy Address", "Copiar Endereco", "Копировать адрес"), "Ctrl+C")) {
-                    ImGui::SetClipboardText(pc_str);
-                }
-                if (ImGui::MenuItem(L("Copy Instruction", "Copiar Instrucao", "Копировать инструкцию"))) {
-                    ImGui::SetClipboardText(text.c_str());
-                }
-                if (ImGui::MenuItem(L("Copy Hex Bytes", "Copiar Bytes Hex", "Копировать байты Hex"))) {
-                    ImGui::SetClipboardText(bytes_str);
-                }
-                if (ImGui::MenuItem(L("Copy Full Line", "Copiar Linha Completa", "Копировать всю строку"))) {
-                    ImGui::SetClipboardText(full_line_buf);
-                }
-                ImGui::Separator();
-
-                if (ImGui::MenuItem(L("Follow in Hex View", "Seguir na Visao Hex", "Перейти в Hex"))) {
-                    ViewMemViewer::NavigateHex(cur_pc);
-                }
-
-                std::vector<uintptr_t> targets = ExtractAddressesFromText(raw_text);
-                if (!targets.empty()) {
-                    ImGui::Separator();
-                    for (uintptr_t target : targets) {
-                        std::string t_sym = Debugger::SymbolManager::Get().Resolve(target, true, 0x1000);
-                        char target_hex_lbl[128];
-                        char target_disasm_lbl[128];
-                        if (!t_sym.empty()) {
-                            std::snprintf(target_hex_lbl, sizeof(target_hex_lbl), "%s: 0x%llx <%s>",
-                                          L("Follow Target in Hex", "Seguir Alvo no Hex", "В Hex по цели"),
-                                          static_cast<unsigned long long>(target), t_sym.c_str());
-                            std::snprintf(target_disasm_lbl, sizeof(target_disasm_lbl), "%s: 0x%llx <%s>",
-                                          L("Follow Target in Disasm", "Seguir Alvo no Disasm", "В Дизасм по цели"),
-                                          static_cast<unsigned long long>(target), t_sym.c_str());
-                        } else {
-                            std::snprintf(target_hex_lbl, sizeof(target_hex_lbl), "%s: 0x%llx",
-                                          L("Follow Target in Hex", "Seguir Alvo no Hex", "В Hex по цели"),
-                                          static_cast<unsigned long long>(target));
-                            std::snprintf(target_disasm_lbl, sizeof(target_disasm_lbl), "%s: 0x%llx",
-                                          L("Follow Target in Disasm", "Seguir Alvo no Disasm", "В Дизасм по цели"),
-                                          static_cast<unsigned long long>(target));
-                        }
-                        if (ImGui::MenuItem(target_hex_lbl)) {
-                            ViewMemViewer::NavigateHex(target);
-                        }
-                        if (ImGui::MenuItem(target_disasm_lbl)) {
-                            cur_addr = target;
-                            ViewDisasm::SetDisasmAddress(target);
-                        }
-                    }
-                }
-
-                const auto regs = bp.GetLastRegisters();
-                if (regs.valid) {
-                    ImGui::Separator();
-                    if (ImGui::BeginMenu(L("Follow Register...", "Seguir Registrador...", "Перейти по регистру..."))) {
-                        auto ShowRegMenu = [&](const char* name, uint64_t val) {
-                            if (val == 0) return;
-                            char lbl[64];
-                            std::string r_sym = Debugger::SymbolManager::Get().Resolve(val, true, 0x1000);
-                            if (!r_sym.empty()) {
-                                std::snprintf(lbl, sizeof(lbl), "%s: 0x%llx <%s>", name, static_cast<unsigned long long>(val), r_sym.c_str());
-                            } else {
-                                std::snprintf(lbl, sizeof(lbl), "%s: 0x%llx", name, static_cast<unsigned long long>(val));
-                            }
-                            if (ImGui::BeginMenu(lbl)) {
-                                if (ImGui::MenuItem(L("Follow in Hex", "Seguir no Hex", "В Hex"))) {
-                                    ViewMemViewer::NavigateHex(val);
-                                }
-                                if (ImGui::MenuItem(L("Follow in Disasm", "Seguir no Disasm", "В Дизасм"))) {
-                                    cur_addr = val;
-                                    ViewDisasm::SetDisasmAddress(val);
-                                }
-                                ImGui::EndMenu();
-                            }
-                        };
-
-                        ShowRegMenu("RAX", regs.rax);
-                        ShowRegMenu("RBX", regs.rbx);
-                        ShowRegMenu("RCX", regs.rcx);
-                        ShowRegMenu("RDX", regs.rdx);
-                        ShowRegMenu("RSI", regs.rsi);
-                        ShowRegMenu("RDI", regs.rdi);
-                        ShowRegMenu("RBP", regs.rbp);
-                        ShowRegMenu("RSP", regs.rsp);
-                        ShowRegMenu("R8",  regs.r8);
-                        ShowRegMenu("R9",  regs.r9);
-                        ShowRegMenu("R10", regs.r10);
-                        ShowRegMenu("R11", regs.r11);
-                        ShowRegMenu("R12", regs.r12);
-                        ShowRegMenu("R13", regs.r13);
-                        ShowRegMenu("R14", regs.r14);
-                        ShowRegMenu("R15", regs.r15);
-                        ShowRegMenu("RIP", regs.rip);
-                        ImGui::EndMenu();
-                    }
-                }
-
-                ImGui::Separator();
-                if (ImGui::MenuItem(L("Edit Instruction / Patch Bytes...", "Editar Instrucao / Patch de Bytes...", "Редактировать байты..."))) {
-                    ModalPatchInst::Open(cur_pc, inst_len, code_chunk + offset, raw_text);
-                }
-                if (is_patched && ImGui::MenuItem(L("Restore Original Bytes", "Restaurar Bytes Originais", "Восстановить байты"))) {
-                    ViewDisasm::RestoreInstruction(cur_pc);
-                    UiManager::SetStatus(L("Restored original instruction", "Instrucao original restaurada", "Восстановлена инструкция"));
-                }
-                if (ImGui::MenuItem(L("NOP Instruction", "Preencher com NOP (0x90)", "Заполнить NOP"))) {
-                    ViewDisasm::NopInstruction(cur_pc);
-                    UiManager::SetStatus(L("NOP applied", "NOP aplicado", "NOP применен"));
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem(has_bp ? L("Remove Breakpoint", "Remover Breakpoint", "Удалить точку") : L("Add Breakpoint", "Adicionar Breakpoint", "Добавить точку"))) {
-                    if (has_bp) bp.RemoveBreakpoint(cur_pc); else bp.AddBreakpoint(cur_pc, "Disasm BP");
-                }
-                ImGui::EndPopup();
-            }
-
-            offset += inst_len; cur_pc += inst_len; inst_count++;
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl &&
+        ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+        if (!GetState().selected_line.empty()) {
+            ImGui::SetClipboardText(GetState().selected_line.c_str());
+            UiManager::SetStatus(L("Copied selected instruction to clipboard",
+                                   "Instrucao selecionada copiada", "Инструкция скопирована"));
         }
-        ImGui::EndTable();
     }
+
+    DisasmDetail::RenderTable(cur_addr, code, height, standalone);
     ImGui::EndChild();
 }
 
