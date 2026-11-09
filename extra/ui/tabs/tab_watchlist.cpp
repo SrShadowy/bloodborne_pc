@@ -138,7 +138,7 @@ void TabWatchlist::Render() {
                     std::snprintf(addr_str, sizeof(addr_str), "[P] -> 0x%010llx", static_cast<unsigned long long>(resolved));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.80f, 0.35f, 1.0f));
                 } else {
-                    std::snprintf(addr_str, sizeof(addr_str), "[P] -> (Null/??)");
+                    std::snprintf(addr_str, sizeof(addr_str), "[P] -> (Null/?\\?)");
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.45f, 0.45f, 1.0f));
                 }
             } else {

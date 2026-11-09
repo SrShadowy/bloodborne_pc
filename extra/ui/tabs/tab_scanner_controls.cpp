@@ -68,7 +68,7 @@ void RenderInputs() {
 
     ImGui::SetNextItemWidth(210.0f);
     const char* const value_label =
-        is_pattern ? L("Pattern (Hex / ??)", "Padrao (Hex / ??)", "Сигнатура (Hex / ??)")
+        is_pattern ? L("Pattern (Hex / ?\\?)", "Padrao (Hex / ?\\?)", "Сигнатура (Hex / ?\\?)")
                    : L("Value", "Valor", "Значение");
     if (ImGui::InputText(value_label, ValueInput(), kValueBufferBytes,
                          ImGuiInputTextFlags_EnterReturnsTrue)) {

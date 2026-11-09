@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <map>
@@ -49,11 +50,12 @@ std::vector<ArchiveShaderEntry> PackShaders(
             continue;
         }
         const std::string stem = entry.path().stem().string();
-        std::uint64_t pgm_hash = 0;
+        unsigned long long pgm_hash_raw = 0;
         std::uint32_t perm_idx = 0;
-        if (std::sscanf(stem.c_str(), "%llx_%u", &pgm_hash, &perm_idx) < 1) {
+        if (std::sscanf(stem.c_str(), "%llx_%u", &pgm_hash_raw, &perm_idx) < 1) {
             continue;
         }
+        const std::uint64_t pgm_hash = static_cast<std::uint64_t>(pgm_hash_raw);
 
         std::vector<std::uint8_t> spv_bytes;
         if (!detail::ReadFileBytes(entry.path(), spv_bytes)) {
