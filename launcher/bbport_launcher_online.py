@@ -119,7 +119,7 @@ class OnlinePage:
             subtitle=tr("Старый формат P2P-пакетов для пиров 0.6.x и старых сборок Windows. "
                         "Формат должен совпадать у всех в сессии: в 0.19 нет TCP, digest "
                         "и шифрования из 0.20"),
-            active=s.get("p2p_gen19", False))
+            active=s.get("p2p_gen19", True))
         connection.add(self.p2p_gen19_row)
         test = Adw.ActionRow(title=tr("Проверить соединение"))
         self.test_button = Gtk.Button(label=tr("Проверить"), valign=Gtk.Align.CENTER)
@@ -311,6 +311,24 @@ class OnlinePage:
             return False
 
         def work():
+            if "seamlesshunt" in server or server.endswith(":31314") or self.online_pool() == "seamless":
+                try:
+                    import bbport_auth
+                    try:
+                        acc = bbport_auth.sign_in("https://seamlesshunt.com", npid, password)
+                    except bbport_auth.AuthError as err:
+                        if "Wrong" in str(err):
+                            acc = bbport_auth.sign_up("https://seamlesshunt.com", npid, password)
+                        else:
+                            raise
+                    self.settings["seamless_account_id"] = acc["id"]
+                    self.settings["seamless_account_secret"] = acc["secret"]
+                    save_settings(self.settings)
+                    GLib.idle_add(done, tr("Пароль принят: вход выполнен (ID: {})").format(acc["id"]), True)
+                    return
+                except Exception as error:
+                    GLib.idle_add(done, tr("Ошибка: {}").format(error), False)
+                    return
             try:
                 ok, verdict = bbport_shadnet.check_login(server, npid, password)
             except bbport_shadnet.ShadnetError as error:

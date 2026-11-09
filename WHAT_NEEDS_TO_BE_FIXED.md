@@ -301,23 +301,20 @@ Em [`gpu/bbnet20/bbsc/core/bloodborne_re.cpp`](file:///home/shadowy/Documentos/G
      - Remover o hardcode `set GSK_RENDERER=gl`, substituindo por detecção condicional para respeitar o modo Cairo sob Wine.
 
 #### Diagnóstico 2: Tela Branca / Travamento ao Rodar Build de Windows no Proton
-* **Cadeia Exata de Execução e Falha**:
-  1. Ao iniciar o `bb-probe.exe`, a janela Win32 SDL é criada com sucesso (ficando branca enquanto aguarda o primeiro frame).
-  2. O Vulkan inicializa até a criação da swapchain (`Swapchain: Mailbox, 4 images...`).
-  3. Imediatamente a seguir, o `Rasterizer` chama `BbGuestMemory::Install()`.
-  4. O build de Windows (`#ifdef _WIN32`) só implementa o modo `HostImport` via `VK_EXT_external_memory_host` com flag `0x80` (`VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT`).
-  5. **Conflito 1 (Wine)**: O Wine (`win32u.dll` / `winevulkan.dll`) mapeia apenas handles NT do Windows (`0x2` / `0x4`). Ele não traduz `0x80`, emitindo `fixme:vulkan:win32u_vkCreateBuffer Unsupported handle types 0x80` e criando o buffer no host Linux sem as propriedades de memória externa.
-  6. **Conflito 2 (Kernel Linux AMDGPU + Mesa RADV)**: Como o sistema possui GPU AMD (Radeon RX 9070 XT), o driver Linux `amdgpu` exige estritamente memória puramente anônima (`AMDGPU_GEM_USERPTR_ANONONLY`) para `userptr`. O Wine mapeia as seções em tmpfs (`/dev/shm`). Quando a rotina de probe `RunOnce` submete os comandos (`cmd.fillBuffer` / `cmd.copyBuffer`), o kernel Linux rejeita a submissão:
-     `radv/amdgpu: The CS has been rejected, see dmesg for more information (-1).`
-  7. O Vulkan retorna `VK_ERROR_DEVICE_LOST` e o processo chama `std::_Exit(23)`, morrendo instantaneamente e deixando a janela SDL congelada em branco.
-* **Por que funciona no Linux nativo e no Windows nativo, mas falha no Proton?**:
-  - **Linux Nativo (`run.sh`)**: Em placas AMD (`0x1002`), o BBPort desativa `HostImport` e utiliza **dma-buf** (`Mode::DmaBuf`).
-  - **Windows Nativo**: O driver oficial AMD Adrenalin (`amdxx64.dll`) roda via WDDM e aceita `VK_EXT_external_memory_host` nativamente.
-  - **Proton (Windows sobre Linux com AMD)**: O executável Windows tenta `HostImport` (0x80), o Wine descarta a flag no buffer e o driver AMD Linux rejeita o ponteiro importado.
-* **Soluções Pragmáticas**:
-  1. Em [`src/probe.c`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/src/probe.c): adicionado `AttachConsole(ATTACH_PARENT_PROCESS)` no Windows para que os logs de stdout/stderr não sejam engolidos pelo subsistema GUI, além de `fflush` imediato.
-  2. Em [`gpu/common/assert.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/gpu/common/assert.cpp) e [`gpu/common/logging/log.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/gpu/common/logging/log.cpp): flush imediato antes de `_Exit(23)`.
-  3. Para quem testa o pacote no Linux com GPU AMD: o Proton sempre esbarrará na ausência de tradução de `0x80` no Wine somada à rejeição de userptr do `amdgpu` do kernel Linux. Para testes funcionais da lógica da porta e do launcher no Linux, utilize o launcher nativo ou execute a build nativa; a build Windows destina-se a PCs com Windows 10/11 onde os drivers proprietários suportam `VK_EXT_external_memory_host`.
+* **Por que jogos comerciais de Windows funcionam no Proton e o BBPort dava tela branca?**:
+  1. **Jogos Comerciais (Elden Ring, Cyberpunk, etc.)**: Usam a arquitetura tradicional de PC (DirectX 11/12 ou Vulkan padrão). A GPU aloca sua própria VRAM via `vkAllocateMemory`, e a CPU envia dados através de buffers de upload/staging via `vkMapMemory` ou barramento PCIe. Eles **nunca** usam `VK_EXT_external_memory_host` e **nunca** fazem `mprotect` na memória da GPU. O Wine, Proton, DXVK e VKD3D foram construídos e polidos exatamente para essa arquitetura padrão.
+  2. **Bloodborne PC (BBPort)**: É a recompilação de um binário de console (PS4) projetado para **memória unificada GDDR5**, onde CPU e GPU leem e escrevem nos mesmos ponteiros físicos fixos de 40 bits (`0x1000000000` a `0x1200000000`).
+     - **No Linux Nativo**: O BBPort usa **dma-buf** (`VK_EXT_external_memory_dma_buf`), permitindo que a GPU aloque a memória e o Linux a mapeie com `mmap(MAP_FIXED)`.
+     - **No Windows Nativo**: O Windows NT não possui dma-buf. O BBPort inverte o fluxo: a CPU aloca via `VirtualAlloc`/`CreateFileMappingW` e a GPU importa via `VK_EXT_external_memory_host` (`0x80`). No Windows nativo com drivers AMD Adrenalin (WDDM), isso funciona perfeitamente.
+     - **No Proton com GPU AMD (Linux kernel `amdgpu` + Mesa RADV)**:
+       - O Wine (`win32u.so`) só traduz handles Win32 NT (`0x2` e `0x4` em `0x7e`). Ele não mapeia `0x80`, emitindo `Unsupported handle types 0x80` e criando o buffer no host Linux com `handleTypes = 0`.
+       - O driver `amdgpu` do kernel Linux exige memória estritamente anônima (`AMDGPU_GEM_USERPTR_ANONONLY`). Quando a rotina de probe `RunOnce` ou o jogo tenta submeter comandos sobre ponteiros mapeados via seções ou protegidos por `mprotect` do BBPort, o kernel Linux rejeita a submissão de comandos:
+         `radv/amdgpu: The CS has been rejected, see dmesg for more information (-1).`
+       - Isso destrói o dispositivo Vulkan (`VK_ERROR_DEVICE_LOST`), matando o `bb-probe.exe` (código 23) e deixando a janela SDL criada em branco.
+* **Soluções Pragmáticas Aplicadas**:
+  1. Em [`src/probe.c`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/src/probe.c): Preservação de pipes de stdout/stderr. Antes, `AttachConsole` reabria cegamente `CONOUT$`, destruindo o pipe de captura do `run.py` e deixando o TextView do launcher vazio. Agora verifica `GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) != FILE_TYPE_PIPE` antes de qualquer attach, garantindo logs em tempo real na interface.
+  2. Em [`gpu/shim/bbport_guest_memory.cpp`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/gpu/shim/bbport_guest_memory.cpp): Detecção de Wine + GPU AMD (`is_wine && instance.GetVendorID() == 0x1002`). Desativa `host_first` para evitar a execução de `HostImportWorks`, que causa a ejeção do CS do kernel e derruba o driver.
+  3. No [`run.py`](file:///home/shadowy/Documentos/GitHub/bloodborne_pc/run.py): Log estruturado claro ao usuário explicando a limitação de arquitetura de memória do Wine com placas AMD e direcionando o uso do build nativo (`run.sh`) no Linux.
 
 ---
 

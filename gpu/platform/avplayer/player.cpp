@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 bbport contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <chrono>
+#include <thread>
 #include "shim/bb_env.h"
 #include <cstdio>
 #include <cstdlib>
@@ -100,14 +101,18 @@ void Player::Announce(State reached) {
     if (reached == State::Play) {
         s_last_play_start_ms = now;
         Emit(AvPlayerEvents::StatePlay);
-    } else if (reached == State::Stop) {
+    } else if (reached == State::Stop || reached == State::EndOfFile) {
         const s64 playback_duration = s_last_play_start_ms != 0 ? now - s_last_play_start_ms : 0;
-        LOG_INFO(Lib_AvPlayer, "[AvPlayer] Playback reached State::Stop (duration: {} ms)", playback_duration);
+        LOG_INFO(Lib_AvPlayer, "[AvPlayer] Playback reached state {} (duration: {} ms)",
+                 static_cast<int>(reached), playback_duration);
 
         if (playback_duration < 1000 && s_last_play_start_ms != 0) {
             s_rapid_stop_counter++;
             LOG_WARNING(Lib_AvPlayer, "[AvPlayer] Premature video termination ({} ms, count={})",
                         playback_duration, s_rapid_stop_counter);
+            if (s_rapid_stop_counter >= 2) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            }
         } else {
             s_rapid_stop_counter = 0;
         }

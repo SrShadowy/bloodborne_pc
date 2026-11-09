@@ -1424,6 +1424,16 @@ u16 GetMmServerUdpPort() {
     return g_mm.server_udp_port;
 }
 
+void SetMmServerEndpoint(u32 addr_nbo, u16 udp_port_nbo) {
+    {
+        std::lock_guard lock(g_mm.mutex);
+        g_mm.server_addr = addr_nbo;
+        g_mm.server_udp_port = g_mm.matching2_enabled ? udp_port_nbo : 0;
+        udp_port_nbo = g_mm.server_udp_port;
+    }
+    NpSignaling::Transport::SetMmServerEndpoint(addr_nbo, udp_port_nbo);
+}
+
 bool RequestSignalingInfos(std::string_view target_online_id, u32* out_addr, u16* out_port) {
     if (!out_addr || !out_port) {
         return false;

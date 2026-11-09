@@ -61,10 +61,10 @@ while IFS= read -r f; do
         echo "FAIL: $f includes extra/hooks.h $n times (max 1)"
         fail=1
     fi
-done < <(grep -rl 'extra/hooks\.h' --include='*.cpp' --include='*.h' . | grep -v '^\./extra/' || true)
+done < <(grep -rl 'extra/hooks\.h' --exclude-dir=out --include='*.cpp' --include='*.h' . | grep -v '^\./extra/' || true)
 
 echo "== [3] upstream // [extra] hook markers (informational)"
-grep -rn '\[extra\]' --include='*.cpp' --include='*.h' --include='*.txt' . \
+grep -rn '\[extra\]' --exclude-dir=out --include='*.cpp' --include='*.h' --include='*.txt' . \
     | grep -v '^\./extra/' | grep -v third_party | wc -l
 
 exit $fail

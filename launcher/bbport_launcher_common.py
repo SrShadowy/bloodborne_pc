@@ -139,7 +139,7 @@ EFFECTS = [
     ("effect_dynamic_shadows", "Тени от динамических источников", True),
     ("effect_ssr", "Отражения SSR (не было в игре)", False),
     ("effect_bloom", "Свечение (Bloom)", True),
-    ("skip_intro", "Пропуск заставок при запуске", False),
+    ("skip_intro", "Пропуск заставок при запуске", True),
     ("debug_camera", "Свободная камера (Cross + L3 / F + Ctrl)", False),
     ("debug_menu", "Debug menu (левый touchpad / Tab; нужны шрифты)", False),
 ]
@@ -240,9 +240,9 @@ DEFAULTS = {
     # libbbnet20's BBR1 UDP relay fallback: on is its default (every known peer through the relay),
     # off forces direct P2P (SHADPS4_P2P_RELAY=0 in game_environment).
     "p2p_relay": True,
-    # Gen 19 (shadp2p 0.6.x) P2P framing inside libbbnet20 (BB_NET_GEN=19). Off keeps the 0.20
-    # wire format, the module's default. 0.19 has no P2P TCP, digest or payload crypto.
-    "p2p_gen19": False,
+    # Gen 19 (shadp2p 0.6.x) P2P framing inside libbbnet20 (BB_NET_GEN=19). On is the default
+    # for direct compatibility with shadPS4 emulator players. 0.19 has no P2P TCP, digest or payload crypto.
+    "p2p_gen19": True,
     # The pool, both in the online module gpu/bbnet20: "seamless" (shadNet with BBSC) or "huntersdream"
     # (The Hunter's Dream, bbhost's protocol; the account comes from the Discord sign-in).
     "online_pool": "seamless",
@@ -281,7 +281,7 @@ INI_DEFAULTS = {
     "game_text_language": "auto",
     "game_voice_language": "auto",
     "p2p_relay": "1",
-    "p2p_gen19": "0",
+    "p2p_gen19": "1",
     "discord_client_id": DISCORD_CLIENT_ID,
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
@@ -460,8 +460,16 @@ def online_module(pool="seamless"):
     """The online module beside the GPU library (gpu/bbnet20, both pools; a build without its
     libraries has none), or the one BB_NET_MODULE names (the folder package's online/)."""
     forced = os.environ.get("BB_NET_MODULE", "")
-    if forced:
-        return Path(forced).is_file()
+    if forced and Path(forced).is_file():
+        return True
+    if sys.platform == "win32": # [extra]
+        cand = [
+            PORT_DIR / "online" / "bbnet20.dll",
+            PORT_DIR / "bin" / "bbnet20.dll",
+            PORT_DIR / "out" / "win-native" / "bbnet20.dll",
+            PORT_DIR / "out" / "bbnet20.dll",
+        ]
+        return any(p.is_file() for p in cand) # [extra]
     name = "libbbnet20.so"
     return (PORT_DIR / ("bin" if PACKAGED else "out") / "gpu" / name).is_file()
 
@@ -538,10 +546,44 @@ def game_environment(s):
         env["BB_SHADNET_PASSWORD"] = s["online_password"]
         env["BB_UPNP"] = "1" if s["online_upnp"] else "0"
         env["BB_COMMUNITY_SERVER"] = community
-        # The Gen 19 checkbox selects the P2P framing of libbbnet20 for this whole session.
-        env["BB_NET_GEN"] = "19" if s.get("p2p_gen19") else "20"
-        if pool == "seamless" and s.get("online_bbsc"):
-            env["BB_BBSC"] = "1"
+        # The Gen 19 checkbox selects the P2P framing of libbbnet20 for this whole session (19 by default).
+        env["BB_NET_GEN"] = "19" if s.get("p2p_gen19", True) else "20"
+        if pool == "seamless":
+            if s.get("online_bbsc"):
+                env["BB_BBSC"] = "1"
+            if "seamlesshunt" in server or server.endswith(":31314"):
+                if ":" not in server:
+                    server += ":31314"
+                elif server.endswith(":20443") or server.endswith(":31313"):
+                    server = server.rsplit(":", 1)[0] + ":31314"
+                env["BB_SHADNET_SERVER"] = server
+                env["BB_SHADNET_LINK_V4"] = "1"
+                env["BB_SHADNET_SERVER_KEY"] = "e55f4f13d3845aa4eddeb0e12a9d143cb5f68af0a71e0dba111c688a1014c958"
+                seamless_id = s.get("seamless_account_id", "")
+                seamless_secret = s.get("seamless_account_secret", "")
+                if not seamless_id or not seamless_secret:
+                    try:
+                        import bbport_auth
+                        auth_name = s.get("online_npid", "").strip()
+                        auth_pass = s.get("online_password", "")
+                        if auth_name and auth_pass:
+                            try:
+                                acc = bbport_auth.sign_in("https://seamlesshunt.com", auth_name, auth_pass)
+                            except bbport_auth.AuthError as err:
+                                if "Wrong" in str(err):
+                                    acc = bbport_auth.sign_up("https://seamlesshunt.com", auth_name, auth_pass)
+                                else:
+                                    raise
+                            seamless_id = acc.get("id", "")
+                            seamless_secret = acc.get("secret", "")
+                            s["seamless_account_id"] = seamless_id
+                            s["seamless_account_secret"] = seamless_secret
+                            save_settings(s)
+                    except Exception as e:
+                        print(f"Warning: Seamless Hunt auth error: {e}", file=sys.stderr)
+                if seamless_id and seamless_secret:
+                    env["BB_SHADNET_NPID"] = seamless_id
+                    env["BB_SHADNET_PASSWORD"] = seamless_secret
         if pool == "huntersdream":
             # run.sh turns these into the backend's addresses and the host overrides.
             env["BB_NET_BACKEND"] = "thd"
@@ -660,6 +702,8 @@ def schema_text(texts):
     text where there is one, else English."""
     if not texts:
         return ""
+    if not isinstance(texts, dict): # [extra]
+        return str(texts) # [extra]
     russian = texts.get("ru", "")
     if language() == "ru":
         return russian

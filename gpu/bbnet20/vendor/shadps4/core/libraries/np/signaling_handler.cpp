@@ -28,6 +28,8 @@
 #include "core/bloodborne_re.h"
 #include "core/net/p2p_relay.h"
 #include "core/libraries/np/np_signaling/np_signaling_transport.h"
+#include "coop/server_link.h"
+#include "coop/net_link.h"
 
 namespace Libraries::Np::SignalingHandler {
 namespace {
@@ -77,9 +79,18 @@ bool ResolvePeerEndpointUnremembered(const NpMatching2::MemberCache& member, u32
     }
 
     const std::string online_id = OnlineIdString(member.np_id.handle);
-    return !online_id.empty() &&
-           NpSignaling::Transport::ResolvePeer(online_id, out_addr, out_port) && *out_addr != 0 &&
-           *out_port != 0;
+    if (!online_id.empty() &&
+        NpSignaling::Transport::ResolvePeer(online_id, out_addr, out_port) && *out_addr != 0 &&
+        *out_port != 0) {
+        return true;
+    }
+    if (!online_id.empty() && Net::ConnectsPeersWithoutHandshake()) {
+        const auto va = Net::Link::VirtualAddressOf(online_id);
+        *out_addr = Net::sceNetHtonl(va.ipv4);
+        *out_port = Net::sceNetHtons(va.port);
+        return true;
+    }
+    return false;
 }
 
 // BBSC relay fallback: the transport learns which online id sits behind each endpoint.
@@ -282,7 +293,8 @@ void DrainControlPackets() {
 }
 
 bool PublishSignalingInfo(const OrbisNpOnlineId& online_id) {
-    if (!NpSignaling::Transport::Matching2Enabled() || online_id.data[0] == '\0') {
+    if (Net::ConnectsPeersWithoutHandshake() || !NpSignaling::Transport::Matching2Enabled() ||
+        online_id.data[0] == '\0') {
         return false;
     }
 
@@ -945,10 +957,10 @@ void ProcessPendingActivations() {
             already_established = transport->state == NpSignaling::ConnState::Established;
         }
 
-        if (act.start_handshake) {
-            StartTransportHandshakeInitiator(transport_id);
-        } else if (already_established) {
+        if (Net::ConnectsPeersWithoutHandshake() || already_established) {
             EstablishConnection(transport_id, false);
+        } else if (act.start_handshake) {
+            StartTransportHandshakeInitiator(transport_id);
         }
     }
 
@@ -1146,7 +1158,8 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const NpSignaling::Signal
                           ci.locally_activated);
             }
             SyncSig1ConnectionsForTransportLocked(transport_id);
-            if (transport.state == NpSignaling::ConnState::Established) {
+            if (Net::ConnectsPeersWithoutHandshake() ||
+                transport.state == NpSignaling::ConnState::Established) {
                 establish_transport = transport_id;
             }
             ack = MakeControlLocked(transport, NpSignaling::ControlKind::ActivationAck);
@@ -1204,7 +1217,7 @@ void HandleControlPacket(u32 from_addr, u16 from_port, const NpSignaling::Signal
         NpSignaling::Transport::ControlSendTo(&ack, sizeof(ack), ack_addr, ack_port);
     }
     if (establish_transport != 0) {
-        EstablishConnection(establish_transport, false);
+        EstablishConnection(establish_transport, Net::ConnectsPeersWithoutHandshake());
     }
     if (peer_deactivated_conn != 0) {
         NpSignaling::DispatchConnectionEvent(
@@ -1294,7 +1307,7 @@ void SyncMatching2Peers() {
                           : kMatching2ConnInactive;
         if (peer.status != kMatching2ConnActive) {
             peer.active_since_us = 0;
-        } else if (!peer.sent_established) {
+        } else if (!peer.sent_established && !Net::ConnectsPeersWithoutHandshake()) {
             // Report pending (status and event) until the establish delay has passed.
             const s64 now_us = NpSignaling::NowUs();
             if (peer.active_since_us == 0) {
@@ -1730,7 +1743,14 @@ void StartMatching2(NpMatching2::ContextObject& ctx) {
 
     SyncMatching2Peers();
     for (const s32 transport_id : pending_transports) {
-        StartTransportHandshakeInitiator(transport_id);
+        if (Net::ConnectsPeersWithoutHandshake()) {
+            EstablishConnection(transport_id, true);
+        } else {
+            StartTransportHandshakeInitiator(transport_id);
+        }
+    }
+    if (Net::ConnectsPeersWithoutHandshake() && !pending_transports.empty()) {
+        SyncMatching2Peers();
     }
 }
 

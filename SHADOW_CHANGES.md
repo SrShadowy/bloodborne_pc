@@ -301,3 +301,55 @@ Registro técnico consolidado de melhorias arquiteturais, correções de bugs, m
 - **Testes**: `tests/test_bbport_p2p_legacy.cpp` cobre vetores dourados de datagram/signaling, payload vazio e máximo, rejeição de frames <4 bytes, vports big endian, `Protection` ignorado e a seleção exata de `BB_NET_GEN`; `tests/test_launcher_dev.py` cobre default/ini, env nos dois estados e a row da UI.
 - **Substitui a nota da entrada 120**: `BB_NET_GEN` volta a ser exportado, agora com consumidor real no módulo e uma opção explícita na UI ativa; `BB_HOST_*`, `BB_ONLINE_BACKEND` e o seletor da página antiga continuam fora.
 - **Limitações**: o modo vale para a sessão inteira (sem codec por peer; peers 19 e 20 misturados não funcionam) e perde digest/crypto/assinatura da 0.20 — inerente à 0.19. A prova fim-a-fim exige um peer Gen 19 real (0.6.7 Linux/Windows) num servidor shadNet privado, ainda não disponível; a validação feita é por vetores dourados e testes do launcher.
+
+### 122. Build de Windows Sob Wine/Proton: Sem Exit 23, Sem Perder os Espelhos de VRAM
+- **Causa raiz (medida, não deduzida)**: sob Wine o import de memória do host (`VK_EXT_external_memory_host` sobre `VirtualAlloc`) **funciona**, mas o kernel atrás dele (`radv/amdgpu` userptr) recusa a submissão de comandos assim que **uma** página da faixa importada está `PAGE_READONLY`: `radv/amdgpu: The CS has been rejected (-1)`, depois `VK_ERROR_DEVICE_LOST` e `_Exit(23)`. As write traps do port (`runtime_memory_trap`, `BB_IMAGE_TRAPS` e `BB_LAYER_WRITE_TRAPS`) fazem exatamente isso via `mprotect`. Medido: **cada** família de traps sozinha já derruba o device (duas corridas separadas, exit 23).
+- **Mudança (`extra/core/guest_memory/bbport_wine_guest_memory.{h,cpp}`, 1 hook)**: detecção de Wine (`GetProcAddress(ntdll, "wine_get_version")`) aplica `BB_GUEST_MEMORY=private`, `BB_IMAGE_TRAPS=0`, `BB_LAYER_WRITE_TRAPS=0` com `overwrite=0` — o que o jogador/launcher definiu sempre vence. Chamado em `src/probe.c` antes de `print_environment()`, então o log já mostra os valores efetivos. Em Windows nativo e Linux a função é no-op (retorna 0).
+- **Regressão que eu mesmo introduzi e corrigi na mesma sessão**: a primeira versão do módulo também forçava `BB_UNIFIED_MEMORY=1`. Isso fez o port tratar a **RX 9070 XT discreta como APU** (`GPU: ... (integrated)` e `Layer memory: 0 MiB valid in VRAM, 0 mirrors`) e ler toda a memória do jogo por PCIe. Medido no mesmo ponto do jogo: **116.7 ms/frame (~8.6 FPS), p95 950 ms** contra **100.0 ms/frame (~10.0 FPS), p95 200 ms** sem a variável, com **193 MiB em VRAM / 90 mirrors** em vez de zero. `BB_UNIFIED_MEMORY` foi removido das defaults: só as traps saem.
+- **Diagnósticos corrigidos**: a nota em `gpu/shim/bbport_guest_memory.cpp` dizia que "Wine não suporta `0x80`" — falso; agora explica a rejeição de CS sobre páginas read-only. Só o texto mudou: a lógica de escolha de modelo (`host_first = !force_dmabuf`) ficou **idêntica** ao upstream, para que `BB_GUEST_MEMORY=host` explícito continue valendo. `run.py` (código 23) e `docs/unified_memory.md` ganharam a mesma correção, com a tabela das três variáveis e o motivo de `BB_UNIFIED_MEMORY` ficar de fora.
+- **Verificado**: `./extra/tools/audit.sh` exit 0; `python3 scripts/env_vars.py --check` OK; `bash build.sh --no-bump` (host) compila e exporta `extra_apply_wine_guest_memory_defaults` em `libbbgpu.so`; probe MinGW confirma `private/0/0` e `BB_UNIFIED_MEMORY` intocado, com preset do jogador vencendo; build empacotada de `dist/` sob Wine com `private + BB_IMAGE_TRAPS=0 + BB_LAYER_WRITE_TRAPS=0` chega ao título e sai com **exit 0** em 3 corridas independentes.
+- **Limitações**: 1) a build de `dist/BBPort-0.7.8-12-win-x86_64` (3 nov) é anterior a esta mudança, então **só passa sem variáveis depois de um rebuild no MSYS2 CLANG64** (`extra/tools/build_windows.sh`) — até lá o workaround manual continua necessário. 2) Sem as traps, uma escrita da CPU sob uma textura que o jogo não anuncia não é notada: a textura pode mostrar dado velho até o jogo anunciar a faixa. 3) Não validado in-game (só título/menu): a correção do CS é de setup, mas o custo das traps desligadas em gameplay longo não foi medido.
+
+### 123. Remoção do Workaround de Drive Virtual B: e Fix de FetchContent no Build Windows
+- **Causa raiz**: `build_windows.cmd` utilizava mapeamento virtual `subst B:` quando iniciado por caminhos UNC ou específicos, gravando caminhos absolutos `B:/...` no `CMakeCache.txt` e no Ninja. Quando o script era executado a partir do caminho real local (`C:\...`), o Ninja falhava com `mkdir(B:): No such file or directory` e arquivo `B:/src/probe.c` ausente. Além disso, em diretórios com symlinks para compartilhamentos UNC, o `git submodule update` invocado pelo `FetchContent` padrão falhava com erro de árvore de trabalho inexistente.
+- **Mudança**:
+  - `build_windows.cmd`: remoção de qualquer menção a drive `B:`, `subst` e caminhos UNC fixos; executa diretamente em `cd /d "%~dp0"`; suporta argumentos de limpeza `clean`/`--clean`.
+  - `extra/tools/build_windows.sh`: detecção e invalidação automática de cache CMake obsoleto (`CMakeCache.txt` apontando para caminho anterior de source).
+  - `gpu/CMakeLists.txt`: adição de `GIT_SUBMODULES ""` no `FetchContent_Declare` de `magic_enum` e `miniz` (bibliotecas sem submódulos), eliminando a chamada problemática a `git submodule update`.
+  - `extra/tools/audit.sh`: adição de `--exclude-dir=out` no `grep` recursivo para evitar loops em symlinks do Proton/Wine em `out/`.
+- **Verificado**: `audit.sh` exit 0; compilação nativa em `C:/Users/shadowy/Desktop/Shared/...` de `bb-probe.exe`, `bbnet20.dll` e `bb-gpu-capabilities.exe` sem drive virtual.
+
+### 124. Sincronização do BBSC Upstream e Gen 19 (shadPS4 0.19) Padrão com Relay
+- **Causa raiz e contexto**:
+  - O BBSC upstream ([CLSAMG22/BBSC](https://github.com/CLSAMG22/BBSC)) atualizou os serviços de jogo e corrigiu crashes críticos em sessões online, notadamente o *Dantelion2 Panic 265* (estouro de buffer por listas de mensagens/sangue acima de 155 KB), além de adicionar suporte a rituais de cálices fixos (Pthumeru, Hintertomb, Loran, Isz), correção no filtro de senhas em co-op e buffers UDP no Relay.
+  - A comunidade de jogadores no emulador **shadPS4** utiliza o protocolo **Gen 19** (shadp2p 0.6.x / shadPS4 0.19). No BBPort, a opção Gen 19 vinha desmarcada por padrão (`BB_NET_GEN=20`), gerando incompatibilidade direta nas sessões out-of-the-box. O protocolo 0.20 não é necessário nesta release.
+- **Mudanças**:
+  - `scripts/bbsc_gameserver/bbsc_gameserver.py`: incorporado limite de resposta `AREA_REPLY_BUDGET = 64 * 1024` (`--tomb-max-response-bytes`) para sanar o Panic 265; adicionada tabela `FIXED_CHALICES` e suporte a busca de masmorras fixas; codificação base64 de avisos em `server-notice.txt`; batching e reuso de quadros imutáveis no Relay TCP.
+  - `scripts/bbsc_gameserver/bbhost_service.py`: correção de correspondência de senha (`word != (sign.get("SummonWord") or "")`); suporte a buffer `SO_RCVBUF` no socket do Relay UDP; proteção contra loop em socket fechado; contadores de tráfego.
+  - `extra/net/bbport_p2p_legacy.h`: `LegacyFramingRequested()` alterado para selecionar `Legacy19Codec` por padrão (quando `BB_NET_GEN` não está definido ou é `"19"`, ou qualquer valor diferente de `"20"`).
+  - `launcher/bbport_launcher_common.py`: `p2p_gen19` alterado para `True` em `DEFAULTS` e `"1"` em `INI_DEFAULTS`; `game_environment()` exporta `BB_NET_GEN=19` por padrão.
+  - `launcher/bbport_launcher_online.py`: `p2p_gen19_row` ativo por padrão.
+  - `run.sh`: fallback automático para `BB_NET_GEN=19` quando nenhuma geração explícita for especificada.
+  - `launcher/bbport_i18n.py`: adicionadas traduções para EN, pt_BR para novos textos do launcher.
+- **Verificado**:
+  - `ninja -C out/gpu bbnet20 bbnet20-p2p-legacy-test` compilado com sucesso e teste executado com PASS.
+  - `extra/tools/audit.sh` exit 0 (governança e limites de linhas preservados).
+  - Suítes de testes `tests/test_launcher_dev.py`, `tests/test_launcher_log.py`, `tests/test_launcher_i18n.py` e `tests/test_bbport_p2p_legacy.cpp` executadas com 100% de sucesso.
+
+- **Limitações**: nenhuma conhecida.
+
+### 125. Ajuste dos Endereços Online: shadNet Público Oficial e Game Server Seamless Hunt (Porta 20443)
+- **Causa raiz e contexto**:
+  - O servidor do Seamless Hunt (`play.seamlesshunt.com`) fechou a porta externa TCP `31313` (mantendo-a apenas como `127.0.0.1` internamente na versão 1.4.0), enquanto manteve ativas as portas HTTP `20443` (Game Server: mensagens, manchas de sangue, fantasmas, cálices) e `31315` (WebAPI).
+  - O launcher e scripts vinham configurando `online_server` com `play.seamlesshunt.com:31313`. Como a porta 31313 não respondia, a sonda de inicialização do shadNet (`ShadNet::ProbeServer` em `np_handler.cpp`) tomava timeout e desabilitava completamente o módulo online no jogo (`shadNet server is offline. Online features are disabled for this session`).
+  - Além disso, a porta 20443 fala protocolo HTTP e não o handshake binário da PSN/shadNet, portanto o campo do shadNet deve apontar para um listener shadNet ativo.
+- **Mudanças**:
+  - `scripts/online.py`: `SHADNET_SERVER` atualizado para `srv.shadps4.net:31313` (servidor público ativo da comunidade shadPS4); `OLD_DEFAULTS['online_server']` migra automaticamente `play.seamlesshunt.com:31313`; `COMMUNITY_SERVER` mantido como `http://play.seamlesshunt.com` (porta 20443).
+  - `run.sh` e `run.py`: `BB_SHADNET_SERVER` atualizado por padrão para `srv.shadps4.net:31313`; `BB_SHADNET_WEBAPI` mantido em `http://play.seamlesshunt.com:31315`; `BB_COMMUNITY_SERVER` em `http://play.seamlesshunt.com`.
+  - `launcher/settings_schema.json`: valor padrão de `online_server` atualizado para `srv.shadps4.net:31313`.
+  - `~/.config/bbport-launcher/settings.json`: chave `online_server` atualizada de `play.seamlesshunt.com:31313` para `srv.shadps4.net:31313`.
+- **Verificado**:
+  - `online.check()` com `srv.shadps4.net:31313`, `http://play.seamlesshunt.com:31315` e `http://play.seamlesshunt.com` retorna `True` nos 3 serviços.
+  - Testes do launcher e suíte de 358 testes em `tests/` executados com 100% de sucesso (OK).
+  - `./extra/tools/audit.sh` exit 0.
+

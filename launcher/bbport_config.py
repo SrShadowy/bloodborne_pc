@@ -254,6 +254,7 @@ DEFAULTS = {
     "crash_diag": False,
     "memory_model": "auto",
     "memory_preset": "high",
+    "guest_memory_mode": "",
     "zero_copy": True,
     "as_0_3": False,
     "gpu_profile": False,
@@ -424,6 +425,17 @@ def ngx_libraries(directory):
 def online_module(pool="seamless"):
     """The online module beside the GPU library (gpu/bbnet, or gpu/bbnet20 for shadNet / The
     Hunter's Dream pools; a build without its libraries has none)."""
+    forced = os.environ.get("BB_NET_MODULE", "")
+    if forced and Path(forced).is_file():
+        return True
+    if sys.platform == "win32": # [extra]
+        cand = [
+            PORT_DIR / "online" / "bbnet20.dll",
+            PORT_DIR / "bin" / "bbnet20.dll",
+            PORT_DIR / "out" / "win-native" / "bbnet20.dll",
+            PORT_DIR / "out" / "bbnet20.dll",
+        ]
+        return any(p.is_file() for p in cand) # [extra]
     base = PORT_DIR / ("bin" if PACKAGED else "out") / "gpu"
     name = "libbbnet.so" if pool == "legacy" else "libbbnet20.so"
     return (base / name).is_file() or (base / "libbbnet.so").is_file() or (base / "libbbnet20.so").is_file()
@@ -666,6 +678,39 @@ def game_environment(s):
         env["BB_ONLINE_BACKEND"] = backend
         if pool == "seamless":
             env["BB_BBSC"] = "1" if s.get("online_bbsc", True) else "0"
+            if "seamlesshunt" in server or server.endswith(":31314"):
+                if ":" not in server:
+                    server += ":31314"
+                elif server.endswith(":20443") or server.endswith(":31313"):
+                    server = server.rsplit(":", 1)[0] + ":31314"
+                env["BB_SHADNET_SERVER"] = server
+                env["BB_SHADNET_LINK_V4"] = "1"
+                env["BB_SHADNET_SERVER_KEY"] = "e55f4f13d3845aa4eddeb0e12a9d143cb5f68af0a71e0dba111c688a1014c958"
+                seamless_id = s.get("seamless_account_id", "")
+                seamless_secret = s.get("seamless_account_secret", "")
+                if not seamless_id or not seamless_secret:
+                    try:
+                        import bbport_auth
+                        auth_name = s.get("online_npid", "").strip()
+                        auth_pass = s.get("online_password", "")
+                        if auth_name and auth_pass:
+                            try:
+                                acc = bbport_auth.sign_in("https://seamlesshunt.com", auth_name, auth_pass)
+                            except bbport_auth.AuthError as err:
+                                if "Wrong" in str(err):
+                                    acc = bbport_auth.sign_up("https://seamlesshunt.com", auth_name, auth_pass)
+                                else:
+                                    raise
+                            seamless_id = acc.get("id", "")
+                            seamless_secret = acc.get("secret", "")
+                            s["seamless_account_id"] = seamless_id
+                            s["seamless_account_secret"] = seamless_secret
+                            save_settings(s)
+                    except Exception as e:
+                        print(f"Warning: Seamless Hunt auth error: {e}", file=sys.stderr)
+                if seamless_id and seamless_secret:
+                    env["BB_SHADNET_NPID"] = seamless_id
+                    env["BB_SHADNET_PASSWORD"] = seamless_secret
         if pool == "huntersdream" or backend == "bbhost":
             # run.sh turns these into the backend's addresses and the host overrides.
             env["BB_NET_BACKEND"] = "thd"
@@ -692,6 +737,9 @@ def game_environment(s):
             if thd_id and thd_token:
                 env["BB_HOST_ONLINE_ID"] = thd_id
                 env["BB_HOST_TOKEN"] = thd_token
+    guest_mem = s.get("guest_memory_mode", "")
+    if guest_mem in ("host", "dmabuf", "private", "placed"):
+        env["BB_GUEST_MEMORY"] = guest_mem
     for item in s["extra_env"].split():
         if "=" in item:
             key, value = item.split("=", 1)

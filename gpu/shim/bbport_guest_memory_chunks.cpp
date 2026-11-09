@@ -203,6 +203,89 @@ bool ImportHost(void* pointer, u64 size, vk::Buffer& buffer, vk::DeviceMemory& m
 }
 
 
+/// Maps standard device memory placed at pointer via VK_EXT_map_memory_placed.
+bool MapPlaced(void* pointer, u64 size, vk::Buffer& buffer, vk::DeviceMemory& memory, // [extra]
+               vk::Result& error) {
+#ifdef VK_EXT_map_memory_placed
+    const vk::BufferCreateInfo buffer_ci{
+        .size = size,
+        .usage = ChunkBufferUsage(),
+        .sharingMode = vk::SharingMode::eExclusive,
+    };
+    const auto [buffer_result, created] = device.createBuffer(buffer_ci);
+    if (buffer_result != vk::Result::eSuccess) {
+        error = buffer_result;
+        return false;
+    }
+    const auto requirements = device.getBufferMemoryRequirements(created);
+    std::uint32_t type = FindType(requirements.memoryTypeBits, false);
+    if (type == ~0u) {
+        type = FindHostType(requirements.memoryTypeBits);
+    }
+    if (type == ~0u) {
+        device.destroyBuffer(created);
+        error = vk::Result::eErrorFeatureNotPresent;
+        return false;
+    }
+    const vk::MemoryAllocateFlagsInfo address_flags{
+        .flags = vk::MemoryAllocateFlagBits::eDeviceAddress,
+    };
+    const auto [memory_result, allocated] = device.allocateMemory({
+        .pNext = LayerMemory() ? &address_flags : nullptr,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = type,
+    });
+    if (memory_result != vk::Result::eSuccess) {
+        device.destroyBuffer(created);
+        error = memory_result;
+        return false;
+    }
+    if (const auto result = device.bindBufferMemory(created, allocated, 0);
+        result != vk::Result::eSuccess) {
+        device.freeMemory(allocated);
+        device.destroyBuffer(created);
+        error = result;
+        return false;
+    }
+    if (!VULKAN_HPP_DEFAULT_DISPATCHER.vkMapMemory2KHR) {
+        device.freeMemory(allocated);
+        device.destroyBuffer(created);
+        error = vk::Result::eErrorExtensionNotPresent;
+        return false;
+    }
+    const VkMemoryMapPlacedInfoEXT placed_info{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT,
+        .pNext = nullptr,
+        .pPlacedAddress = pointer,
+    };
+    const VkMemoryMapInfoKHR map_info{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_MAP_INFO_KHR,
+        .pNext = &placed_info,
+        .flags = VK_MEMORY_MAP_PLACED_BIT_EXT,
+        .memory = allocated,
+        .offset = 0,
+        .size = size,
+    };
+    void* mapped_ptr = nullptr;
+    const VkResult map_result = VULKAN_HPP_DEFAULT_DISPATCHER.vkMapMemory2KHR(
+        device, &map_info, &mapped_ptr);
+    if (map_result != VK_SUCCESS) {
+        device.freeMemory(allocated);
+        device.destroyBuffer(created);
+        error = static_cast<vk::Result>(map_result);
+        return false;
+    }
+    buffer = created;
+    memory = allocated;
+    return true;
+#else
+    (void)pointer; (void)size; (void)buffer; (void)memory;
+    error = vk::Result::eErrorExtensionNotPresent;
+    return false;
+#endif
+}
+
+
 /// The runtime's chunk allocator in host import mode: CHUNK_IMPORTED (-3, the chunk stays in the
 /// memfd) once its backing view is imported, or -1.
 int AllocImported(u64 phys, u64 size) {
@@ -229,7 +312,14 @@ bool RegisterImported(u64 phys, u64 size, void* pointer) {
     vk::DeviceMemory memory;
     vk::Result error{};
     bool imported = false;
-    if (host_sim && !private_regions) {
+    if (mode == Mode::PlacedMap) { // [extra]
+        const auto t0 = std::chrono::steady_clock::now();
+        imported = MapPlaced(pointer, size, buffer, memory, error);
+        if (size >= (u64{64} << 20)) {
+            std::printf("Guest memory: placed mapping of %llu MiB took %.1f ms\n", (unsigned long long)(size >> 20),
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+        }
+    } else if (host_sim && !private_regions) {
         // The pages the backing view shows, as NVIDIA's import of it would take them.
         const int fd = MakeUdmabuf(runtime_memory_pool_fd(), phys, size);
         imported = fd >= 0 && ImportDmaBuf(fd, size, buffer, memory, error);
@@ -249,8 +339,9 @@ bool RegisterImported(u64 phys, u64 size, void* pointer) {
     if (!imported) {
         static std::atomic<int> failures{0};
         if (failures.fetch_add(1) < 4) {
-            std::fprintf(stderr, "Guest memory: importing chunk %#llx failed (%s); it stays in the "
+            std::fprintf(stderr, "Guest memory: %s chunk %#llx failed (%s); it stays in the "
                                  "memfd\n",
+                         mode == Mode::PlacedMap ? "placed map for" : "importing",
                          (unsigned long long)phys, vk::to_string(error).c_str());
         }
         return false;
@@ -265,9 +356,11 @@ bool RegisterImported(u64 phys, u64 size, void* pointer) {
         RegisterChunk(chunks[i]);
     }
     const u64 total = chunk_bytes.fetch_add(size) + size;
-    std::printf("Guest memory: direct memory %#llx+%llu MiB imported by the GPU (host memory), "
+    std::printf("Guest memory: direct memory %#llx+%llu MiB %s (%s), "
                 "%llu MiB so far\n",
                 (unsigned long long)phys, (unsigned long long)(size >> 20),
+                mode == Mode::PlacedMap ? "mapped by the GPU" : "imported by the GPU", // [extra]
+                mode == Mode::PlacedMap ? "VK_EXT_map_memory_placed" : "host memory",
                 (unsigned long long)(total >> 20));
     return true;
 }

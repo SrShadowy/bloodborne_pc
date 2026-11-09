@@ -119,12 +119,59 @@ except Exception as _err:
 
 from bbport_launcher_common import *  # noqa: F401,F403
 from bbport_config import LOG_LEVELS
+GUEST_MEMORY_MODES = [  # [extra]
+    ("Авто", "", None),
+    ("host: импорт памяти хоста (VK_EXT_external_memory_host)", "host",
+     "Быстрее всего на NVIDIA и на чистом Windows; на Wine/Proton+AMD крашится (CS rejected)"),
+    ("dmabuf: выделение разделяемой памяти через dma-buf", "dmabuf",
+     "Работает на Linux/AMD без GPU fault; немного медленнее host на Windows"),
+    ("private: приватные области для каждого прямого выделения", "private",
+     "Для Windows-драйверов, которые не импортируют секции/memfd, только VirtualAlloc"),
+    ("placed: отображение памяти Vulkan по адресам игры", "placed",
+     "VK_EXT_map_memory_placed; нужна на Wine/Proton+AMD, где host падает"),
+]
 from bbport_launcher_content import ContentPages
 from bbport_launcher_log import LogPage
 from bbport_launcher_online import OnlinePage
 from bbport_launcher_trophies import TrophiesPage
 from bbport_launcher_upscalers import UpscalerFiles
 from bbport_gamepad import GamepadNavigator
+
+
+def setup_fonts():
+    """Registers bundled TrueType fonts (e.g. Liberation Mono) so Wine/Proton and Linux have clean vector monospace text."""
+    try:
+        fonts_dir = Path(__file__).resolve().parent / "fonts"
+        if not fonts_dir.is_dir():
+            return
+        # Windows / Wine: GDI AddFontResourceExW
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                gdi32 = ctypes.windll.gdi32
+                AddFontResourceExW = gdi32.AddFontResourceExW
+                AddFontResourceExW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_void_p]
+                AddFontResourceExW.restype = ctypes.c_int
+                for font_file in fonts_dir.glob("*.ttf"):
+                    AddFontResourceExW(str(font_file.resolve()), 0x10, 0)  # FR_PRIVATE
+            except Exception:
+                pass
+        # Fontconfig (Linux & Windows/MinGW with libfontconfig)
+        try:
+            import ctypes
+            import ctypes.util
+            fc_name = ctypes.util.find_library("fontconfig") or (
+                "libfontconfig-1.dll" if sys.platform == "win32" else "libfontconfig.so.1"
+            )
+            fc = ctypes.CDLL(fc_name)
+            fc.FcConfigAppFontAddFile.restype = ctypes.c_bool
+            fc.FcConfigAppFontAddFile.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            for font_file in fonts_dir.glob("*.ttf"):
+                fc.FcConfigAppFontAddFile(None, str(font_file.resolve()).encode("utf-8"))
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 def setup_icons():
@@ -153,6 +200,7 @@ def setup_icons():
 class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFiles,
                      Adw.ApplicationWindow):
     def __init__(self, app):
+        setup_fonts()
         setup_icons()
         self.setup_css()
         super().__init__(application=app, title="Bloodborne")
@@ -178,7 +226,7 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
     def setup_css(self):
         css = """
         window {
-            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Noto Sans", Arial, sans-serif;
+            font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans", "Cantarell", "Adwaita Sans", Arial, sans-serif;
         }
         .navigation-sidebar {
             font-size: 14.5px;
@@ -187,8 +235,8 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             font-size: 14px;
         }
         textview, textview text, textview.monospace, textview.monospace text, .log-terminal, .log-terminal text {
-            font-family: "Lucida Console", "Liberation Mono", "DejaVu Sans Mono", "Consolas", "Courier New", monospace;
-            font-size: 12px;
+            font-family: "Lucida Console", "Liberation Mono", "DejaVu Sans Mono", "Noto Sans Mono", "Consolas", "Courier New", monospace;
+            font-size: 13px;
         }
         button.suggested-action {
             background: #a81c1c;
@@ -823,7 +871,25 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             self.settings.get("memory_preset", "high")
         )
         dev.add(self.memory_preset_row)
+        self.guest_memory_row = combo_row(
+            tr("Режим памяти гостя (BB_GUEST_MEMORY)"),
+            tr("Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer"),
+            GUEST_MEMORY_MODES,
+            self.settings.get("guest_memory_mode", "")
+        )
+        dev.add(self.guest_memory_row)
         sec["developer"].add(dev)
+
+        log_opt = Adw.PreferencesGroup(title=tr("Оптимизация журнала и ввода-вывода"))
+        self.log_level_row = combo_row(
+            tr("Уровень журнала"),
+            None,
+            LOG_LEVELS,
+            self.settings.get("log_level", "verbose"),
+        )
+        log_opt.add(self.log_level_row)
+        sec["developer"].add(log_opt)
+
         self.describe_rows()
         return list(sec.values())
 
@@ -848,7 +914,8 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             "mods_enabled": self.mods_enabled_row, "mangohud": self.mangohud_row,
             "save_log": self.save_log_row, "crash_diag": self.crash_diag_row,
             "frame_stats": self.stats_row, "gpu_profile": self.profile_row,
-            "vk_validation": self.validation_row, **self.camera_speed_rows, **self.effect_rows,
+            "vk_validation": self.validation_row, "log_level": getattr(self, "log_level_row", None),
+            **self.camera_speed_rows, **self.effect_rows,
         }
         # Rows whose subtitle shows a state (a path, a device): the description is a tooltip.
         stateful = {"game_dir", "user_dir", "gpu", "gamepad", "display"}
@@ -862,12 +929,15 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
                     row.set_tooltip_text(text)
                 elif hasattr(row, "show_note"):
                     row.description = text
+                    choices_data = item.get("choices", []) # [extra]
+                    if isinstance(choices_data, str):
+                        choices_data = SETTINGS_SCHEMA.get("lists", {}).get(choices_data, []) # [extra]
                     notes = {choice["value"]: schema_text(choice["description"])
-                             for choice in item.get("choices", []) if "description" in choice}
+                             for choice in choices_data if isinstance(choice, dict) and "description" in choice} # [extra]
                     if notes:
                         row.notes = [notes.get(value) for value in row.values]
                     schema_labels = {choice["value"]: schema_text(choice)
-                                     for choice in item.get("choices", []) if schema_text(choice)}
+                                     for choice in choices_data if isinstance(choice, dict) and schema_text(choice)} # [extra]
                     if schema_labels and hasattr(row, "values"):
                         selected = row.get_selected()
                         model = Gtk.StringList.new([schema_labels.get(val, row.get_model().get_string(i))
@@ -890,7 +960,6 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             LOG_LEVELS,
             self.settings.get("log_level", "verbose"),
         )
-        self.log_level_row.connect("notify::selected", lambda *_: self.store())
         log_opt.add(self.log_level_row)
         page.add(log_opt)
 
@@ -916,6 +985,13 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.validation_row = Adw.SwitchRow(title=tr("Слои валидации Vulkan"),
                                             active=self.settings.get("vk_validation", False))
         dev.add(self.validation_row)
+        self.guest_memory_row = combo_row(
+            tr("Режим памяти гостя (BB_GUEST_MEMORY)"),
+            tr("Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer"),
+            GUEST_MEMORY_MODES,
+            self.settings.get("guest_memory_mode", "")
+        )
+        dev.add(self.guest_memory_row)
         self.extra_row = Adw.EntryRow(title=tr("Доп. переменные (ИМЯ=значение через пробел)"))
         self.extra_row.set_text(self.settings.get("extra_env", ""))
         dev.add(self.extra_row)
@@ -1225,8 +1301,12 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         s["gpu_profile"] = self.profile_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.extra_row.get_text().strip()
+        if hasattr(self, "log_level_row"):
+            s["log_level"] = combo_value(self.log_level_row)
         if hasattr(self, "memory_preset_row"):
             s["memory_preset"] = combo_value(self.memory_preset_row)
+        if hasattr(self, "guest_memory_row"):
+            s["guest_memory_mode"] = combo_value(self.guest_memory_row)
         s["trophy_key"] = self.trophy_key_row.get_text().strip()
         s["mods_enabled"] = self.mods_enabled_row.get_active()
         s["online"] = self.online_row.get_active()
@@ -1348,6 +1428,14 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.read_line()
         self.process.wait_async(None, self.on_exit)
         self.update_launch_button()
+        if hasattr(self, "log_status_badge"):
+            pid = self.process.get_identifier() if self.process else ""
+            self.log_status_badge.set_text(tr("Игра запущена (PID {})").format(pid))
+        if hasattr(self, "log_status_box"):
+            self.log_status_box.remove_css_class("badge-warning")
+            self.log_status_box.add_css_class("badge-success")
+        if hasattr(self, "log_status_icon"):
+            self.log_status_icon.set_from_icon_name("media-playback-start-symbolic")
         self.select_section("log")
 
     def read_line(self):
@@ -1396,6 +1484,13 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.process = None
         self.update_launch_button()
         self.update_game_status()
+        if hasattr(self, "log_status_badge"):
+            self.log_status_badge.set_text(tr("Игра не запущена"))
+        if hasattr(self, "log_status_box"):
+            self.log_status_box.remove_css_class("badge-success")
+            self.log_status_box.add_css_class("badge-warning")
+        if hasattr(self, "log_status_icon"):
+            self.log_status_icon.set_from_icon_name("media-playback-stop-symbolic")
         self.refresh_trophies()  # what this session unlocked, and the names once decrypted
         self.append_log(tr("\n— игра завершилась (код {}) —\n").format(status))
 

@@ -65,7 +65,7 @@ inline std::size_t chunk_count = 0;
 /// buffers by it: two chunks with one index bound one through the other).
 inline std::uint32_t next_index = 0;
 inline bool whole_only = false; // the driver's dma-buf maps at offset 0 only: a chunk per allocation
-enum class Mode { DmaBuf, HostImport };
+enum class Mode { DmaBuf, HostImport, PlacedMap }; // [extra]
 inline Mode mode = Mode::DmaBuf;
 /// Host import of private memory, one view per direct allocation (runtime private regions): for
 /// drivers that import VirtualAlloc'd memory but not views of sections (Windows).
@@ -147,6 +147,8 @@ bool ImportHost(void* pointer, u64 size, vk::Buffer& buffer, vk::DeviceMemory& m
 int AllocImported(u64 phys, u64 size);
 int ImportPrivate(u64 phys, u64 size, void* pointer);
 bool RegisterImported(u64 phys, u64 size, void* pointer);
+bool MapPlaced(void* pointer, u64 size, vk::Buffer& buffer, vk::DeviceMemory& memory, // [extra]
+               vk::Result& error); // [extra]
 // bbport_guest_memory_lazy.cpp
 int MakeUdmabuf(int memfd, u64 offset, u64 size);
 bool ImportDmaBuf(int fd, u64 size, vk::Buffer& buffer, vk::DeviceMemory& memory,
@@ -163,6 +165,7 @@ bool Populate(u64 phys, u64 want);
 bool UdmabufWorks(const Vulkan::Instance& instance, const char*& why);
 bool HostImportWorks(const Vulkan::Instance& instance, const char*& why);
 bool PrivateImportWorks(const Vulkan::Instance& instance, const char*& why);
+bool PlacedMapWorks(const Vulkan::Instance& instance, const char*& why); // [extra]
 bool DmaBufWorks(const Vulkan::Instance& instance);
 
 } // namespace BbGuestMemory::detail

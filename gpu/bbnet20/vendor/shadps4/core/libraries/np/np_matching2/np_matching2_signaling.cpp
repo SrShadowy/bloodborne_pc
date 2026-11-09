@@ -21,6 +21,7 @@
 #include "core/libraries/np/np_signaling/np_signaling_state.h"
 #include "core/libraries/np/np_signaling/np_signaling_transport.h"
 #include "core/libraries/np/signaling_handler.h"
+#include "coop/server_link.h"
 
 namespace Libraries::Np::NpMatching2 {
 
@@ -46,7 +47,7 @@ std::string OnlineIdToString(const Libraries::Np::OrbisNpOnlineId& online_id) {
 } // namespace
 
 bool SendMatching2StunPing(const ContextObject& ctx) {
-    if (!NpSignaling::Transport::Matching2Enabled()) {
+    if (Net::ConnectsPeersWithoutHandshake() || !NpSignaling::Transport::Matching2Enabled()) {
         return false;
     }
     if (!ctx.started || ctx.online_id.data[0] == '\0') {
@@ -233,8 +234,6 @@ s32 FillMatching2ConnectionInfo(const ContextObject& ctx, OrbisNpMatching2RoomId
             out->bandwidth = 0;
             break;
         case ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_MAPPED_ADDR:
-            FillMappedAddr(out->address);
-            break;
         case ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_PEER_ADDR:
             if (peer) {
                 out->address.addr = peer->addr;
@@ -242,6 +241,10 @@ s32 FillMatching2ConnectionInfo(const ContextObject& ctx, OrbisNpMatching2RoomId
             } else if (member) {
                 out->address.addr = member->addr;
                 out->address.port = member->port;
+            }
+            if (out->address.addr == 0 &&
+                infoType == ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_MAPPED_ADDR) {
+                FillMappedAddr(out->address);
             }
             break;
         case ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_PACKET_LOSS:
@@ -274,8 +277,6 @@ s32 FillMatching2ConnectionInfo(const ContextObject& ctx, OrbisNpMatching2RoomId
             }
             break;
         case ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_MAPPED_ADDR:
-            FillMappedAddr(out->address);
-            break;
         case ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_PEER_ADDR:
             if (peer) {
                 out->address.addr = peer->addr;
@@ -283,6 +284,10 @@ s32 FillMatching2ConnectionInfo(const ContextObject& ctx, OrbisNpMatching2RoomId
             } else if (member) {
                 out->address.addr = member->addr;
                 out->address.port = member->port;
+            }
+            if (out->address.addr == 0 &&
+                infoType == ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_MAPPED_ADDR) {
+                FillMappedAddr(out->address);
             }
             break;
         case ORBIS_NP_MATCHING2_SIGNALING_CONN_INFO_PACKET_LOSS:

@@ -21,10 +21,35 @@
 #include "imgui/shadnet_notifications_layer.h"
 #include "shadnet.pb.h"
 #include "shadnet/server_probe.h"
+#include "coop/rpc_bridge.h"
+#include "coop/server_link.h"
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 namespace Libraries::Np {
 
 namespace {
+
+// The IPv4 address of `host` in network byte order, 0 when it has none.
+u32 ResolveIpv4(const std::string& host) {
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    addrinfo* found = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &found) != 0 || !found) {
+        return 0;
+    }
+    const u32 address = reinterpret_cast<const sockaddr_in*>(found->ai_addr)->sin_addr.s_addr;
+    freeaddrinfo(found);
+    return address;
+}
 // bbport: why the account could not sign in, in plain words for the player (the game itself only
 // says that it is not signed in to PlayStation Network). Each reason is told once, not on every
 // reconnect attempt.
@@ -195,7 +220,9 @@ void NpHandler::Initialize() {
         return;
     }
 
-    {
+    // Link v4: the server's address is its link's UDP port, which a TCP probe
+    // cannot reach; the link reports errors when the server does not answer.
+    if (!Net::ServerLinkSwitchOn()) {
         const auto [host, port] = ParseServerAddress();
         const ShadNet::ProbeInfo probe = ShadNet::ProbeServer(host, port);
         if (probe.result != ShadNet::ProbeResult::Ok) {
@@ -329,7 +356,28 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
     // Seed the current Appear-Offline preference so the login packet carries it (the send
     // is suppressed pre-auth; it just caches on the client).
     client->SetAppearOffline(m_appear_offline.load());
-    client->Start(host, port, npid, password, token);
+
+    std::string client_host = host;
+    u16 client_port = port;
+    const u32 link_addr = Net::ServerLinkSwitchOn() ? ResolveIpv4(host) : 0;
+    if (Net::ServerLinkSwitchOn()) {
+        if (link_addr == 0 || !Net::EnsureP2PTransport()) {
+            LOG_ERROR(NpHandler, "user_id={} no server link to {}:{}", user_id, host, port);
+            return false;
+        }
+        Net::ConfigureServerLink(link_addr, htons(port), npid, password,
+                                 EmulatorSettings.GetShadNetServerKey());
+        client_port = Net::StartRpcBridge();
+        client_host = "127.0.0.1";
+        if (client_port == 0) {
+            LOG_ERROR(NpHandler, "user_id={} failed to start Rpc bridge", user_id);
+            return false;
+        }
+        LOG_INFO(NpHandler, "user_id={} signs in through the server link {}:{}", user_id, host,
+                 port);
+    }
+
+    client->Start(client_host, client_port, npid, password, token);
 
     // Shared handling for an incompatible-protocol failure (version mismatch or
     // corrupt/unparseable stream): tell the user and disable shadNet for this run,
@@ -390,7 +438,14 @@ bool NpHandler::ConnectUser(s32 user_id, const std::string& host, u16 port, cons
         Net::UPnPClient::Instance().Start();
     }
 
-    NpMatching2::SetMmShadNetClient(client, host, port);
+    if (Net::ServerLinkSwitchOn()) {
+        NpMatching2::SetMmShadNetClient(client, host, static_cast<u16>(port - 1));
+        NpMatching2::SetMmServerEndpoint(link_addr, htons(port));
+    } else {
+        NpMatching2::SetMmShadNetClient(client, host, port);
+        Net::ConfigureServerLink(NpMatching2::GetMmServerAddr(), NpMatching2::GetMmServerUdpPort(),
+                                 npid, password, EmulatorSettings.GetShadNetServerKey());
+    }
 
     // Build OrbisNpId
     {

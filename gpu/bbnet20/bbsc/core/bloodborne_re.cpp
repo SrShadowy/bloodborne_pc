@@ -9180,7 +9180,7 @@ void TickBbscSessionEnd() {
         invader_saw_host = false;
         host_gone_since_ms = 0;
     }
-    if (session_state == 6 && IsInvaderType(GetLocalCharacterType()) &&
+    if (session_state == 6 && IsLocalPlayerInvader() &&
         GetCharacterHp(GetLocalPlayerCharacter()) > 0) {
         const u64 host = FindRemoteHostCharacter();
         const bool loading_now =
@@ -9194,6 +9194,9 @@ void TickBbscSessionEnd() {
             } else if (now - host_gone_since_ms >= BbscInvaderHostGoneMs) {
                 host_gone_since_ms = 0;
                 invader_saw_host = false;
+                LOG_INFO(Debug,
+                         "[BBSC Invasion] Host left area; returning invader home (slot_type={}, chr_type={})",
+                         GetLocalPlayerType(), GetLocalCharacterType());
                 SuspendBbscPersistenceOnce("invasion over: the host left the area");
                 const u64 session_manager =
                     ReadValue<u64>(image_base + MatchingStatePointerOffset, 0);

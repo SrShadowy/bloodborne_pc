@@ -91,6 +91,7 @@ s32 MmKickoutRoomMember(OrbisNpMatching2ContextId ctx_id, OrbisNpMatching2Reques
 
 u32 GetMmServerAddr();
 u16 GetMmServerUdpPort();
+void SetMmServerEndpoint(u32 addr_nbo, u16 udp_port_nbo);
 
 bool RequestSignalingInfos(std::string_view target_online_id, u32* out_addr, u16* out_port);
 

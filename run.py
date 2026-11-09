@@ -36,7 +36,7 @@ def script(name, *args):
         argv = sys.argv
         sys.argv = [str(path), *map(str, args)]
         try:
-            with contextlib.redirect_stdout(out):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out): # [extra]
                 runpy.run_path(str(path), run_name='__main__')
         except SystemExit as stop:
             if stop.code not in (None, 0):
@@ -104,8 +104,8 @@ def online(env, user, bindir):
             os.environ.pop(name, None)
         log(f"Online: {module.name}, The Hunter's Dream {env['BB_THD_SERVER']} as {env['BB_THD_ONLINE_ID']}")
         return
-    setdefault(env, 'BB_SHADNET_SERVER', 'play.seamlesshunt.com:31313')
-    setdefault(env, 'BB_SHADNET_WEBAPI', 'http://' + env['BB_SHADNET_SERVER'].rsplit(':', 1)[0] + ':31315')
+    setdefault(env, 'BB_SHADNET_SERVER', 'play.seamlesshunt.com:31314')
+    setdefault(env, 'BB_SHADNET_WEBAPI', 'http://play.seamlesshunt.com:31315')
     os.environ.update(env)
     if env.get('BB_BBSC') == '1':
         bbsc_local_server(env, user)
@@ -368,7 +368,12 @@ def run(extra_args=(), env=None, on_line=None):
             code = game_process.wait()
         log(f'— the game exited (code {code}) —')
         if code == 23:
-            log('— [Diagnostics] Code 23 indicates a GPU device lost / assertion failure. If running the Windows binary via Wine/Proton on Linux, Wine does not support Vulkan host memory import (0x80) required by AMDGPU. On Linux, please use the native Linux build (run.sh)! On Windows, ensure GPU drivers are updated. —')
+            log('— [Diagnostics] Code 23 is "the GPU cannot use the game\'s memory in place": no '
+                'dma-buf export and no working VK_EXT_external_memory_host (the "Guest memory:" '
+                'lines above say why). On Wine/Proton the port picks private imports and turns its '
+                'write traps off (imported pages must stay writable for the kernel); a BB_* variable '
+                'forcing another model wins over that and brings the loss back. Elsewhere: update '
+                'the GPU driver, or use the native Linux build (run.sh). —')
         return code
     except (OSError, RuntimeError) as error:
         log(f'STOP: {error}')

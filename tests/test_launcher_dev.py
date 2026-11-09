@@ -318,16 +318,21 @@ class LauncherDevUITests(unittest.TestCase):
         self.assertEqual(env_off.get("BB_P2P_RELAY"), "0")
 
     def test_p2p_gen19_setting_and_env(self):
-        # The Gen 19 checkbox is off by default and only overrides the module's 0.20 codec when
-        # enabled; BB_NET_GEN is exported only with online play.
+        # The Gen 19 checkbox is on by default for shadPS4 multiplayer compatibility;
+        # BB_NET_GEN is exported only with online play.
         import os
         from unittest import mock
         import bbport_launcher_common as common
         self.assertIn("p2p_gen19", common.DEFAULTS)
-        self.assertFalse(common.DEFAULTS["p2p_gen19"])
-        self.assertEqual(common.INI_DEFAULTS.get("p2p_gen19"), "0")
+        self.assertTrue(common.DEFAULTS["p2p_gen19"])
+        self.assertEqual(common.INI_DEFAULTS.get("p2p_gen19"), "1")
 
         with mock.patch.object(common, "online_module", lambda pool="seamless": True):
+            s_default = dict(common.DEFAULTS)
+            s_default.update({"online": True})
+            env_default = common.game_environment(s_default)
+            self.assertEqual(env_default.get("BB_NET_GEN"), "19")
+
             s_off = dict(common.DEFAULTS)
             s_off.update({"online": True, "p2p_gen19": False})
             env_off = common.game_environment(s_off)
@@ -356,7 +361,7 @@ class LauncherDevUITests(unittest.TestCase):
         win.ini = {}
         win.build_online_page()
         self.assertIsNotNone(win.p2p_gen19_row)
-        self.assertFalse(win.p2p_gen19_row.get_active())
+        self.assertTrue(win.p2p_gen19_row.get_active())
         self.assertIn("Gen 19", win.p2p_gen19_row.get_title())
 
         win.settings["p2p_gen19"] = True

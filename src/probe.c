@@ -31,6 +31,7 @@
 #else
 #include <malloc.h>
 #endif
+#include "../extra/core/guest_memory/bbport_wine_guest_memory.h" // [extra]
 
 typedef struct { uint64_t address, size, flags; } Segment;
 typedef struct { uint64_t target, kind, value, addend; } Reloc;
@@ -506,9 +507,13 @@ void runtime_restart(void) {
 
 int main(int argc, char **argv) {
 #ifdef _WIN32 // [extra]
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-        freopen("CONOUT$", "w", stdout);
-        freopen("CONOUT$", "w", stderr);
+    HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD outType = hStdOut ? GetFileType(hStdOut) : FILE_TYPE_UNKNOWN;
+    if (!hStdOut || outType == FILE_TYPE_UNKNOWN) {
+        if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+            freopen("CONOUT$", "w", stdout);
+            freopen("CONOUT$", "w", stderr);
+        }
     }
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -614,6 +619,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Unknown command: %s (run '%s --help' for usage)\n", argv[1], argv[0]);
         return 1;
     }
+    extra_apply_wine_guest_memory_defaults(); // [extra] before the BB_* variables are read
     print_environment();
     check_cpu();
     /* Before the guest's memory exists: the recorded shader inputs are mapped back at their

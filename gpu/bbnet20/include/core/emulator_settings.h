@@ -20,6 +20,7 @@ public:
     bool IsShadNetEnabled() const { return IsConnectedToNetwork() && !shadnet_session_disabled.load(); }
     void SetShadNetSessionDisabled(bool v) { shadnet_session_disabled.store(v); }
     std::string GetShadNetServer() const { return Text("BB_SHADNET_SERVER"); }
+    std::string GetShadNetServerKey() const { return Text("BB_SHADNET_SERVER_KEY"); }
     std::string GetShadNetWebApiServer() const { return Text("BB_SHADNET_WEBAPI"); }
     bool IsUPnPEnabled() const { return Flag("BB_UPNP", false); }
     /// shadPS4's disable_https: HTTPS requests the game makes go out as plain HTTP.

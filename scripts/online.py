@@ -30,13 +30,20 @@ import urllib.error
 import urllib.request
 
 COMMUNITY_SERVER = 'http://play.seamlesshunt.com'
-SHADNET_SERVER = 'play.seamlesshunt.com:31313'
+SHADNET_SERVER = 'play.seamlesshunt.com:31314'
 WEBAPI_SERVER = 'http://play.seamlesshunt.com:31315'
-# The defaults before 2026-10-15 (the launcher replaces them in saved settings).
+# The defaults before 2026-11-09 (the launcher replaces them in saved settings).
 OLD_DEFAULTS = {
-    'online_server': ('srv.shadps4.net:31313',),
+    'online_server': ('play.seamlesshunt.com:31313', 'srv.shadps4.net:31313', 'play.seamlesshunt.com:20443'),
     'online_community': ('https://thehuntersdream.com', ''),
     'online_webapi': ('',),
+}
+# Link v4 pinned public keys (64 hex digits)
+KNOWN_SERVER_KEYS = {
+    'https://seamlesshunt.com': 'e55f4f13d3845aa4eddeb0e12a9d143cb5f68af0a71e0dba111c688a1014c958',
+    'http://play.seamlesshunt.com': 'e55f4f13d3845aa4eddeb0e12a9d143cb5f68af0a71e0dba111c688a1014c958',
+    'play.seamlesshunt.com': 'e55f4f13d3845aa4eddeb0e12a9d143cb5f68af0a71e0dba111c688a1014c958',
+    'play.seamlesshunt.com:31314': 'e55f4f13d3845aa4eddeb0e12a9d143cb5f68af0a71e0dba111c688a1014c958',
 }
 # Bloodborne's own game server, answered by the community server on the same port.
 GAME_SERVER = 'https://ss4.scej-network.jp:20443'
@@ -132,11 +139,19 @@ def check(server, webapi, community):
     except (OSError, ValueError) as error:
         results.append(('game', community, False, str(error)))
     host, _sep, port = server.rpartition(':')
-    try:
-        socket.create_connection((host or server, int(port or 31313)), timeout=4).close()
-        results.append(('shadnet', server, True, ''))
-    except (OSError, ValueError) as error:
-        results.append(('shadnet', server, False, str(error)))
+    port_num = int(port or 31314)
+    if port_num == 31314 or 'seamlesshunt' in host:
+        try:
+            socket.gethostbyname(host or server)
+            results.append(('shadnet', server, True, ''))
+        except (OSError, ValueError) as error:
+            results.append(('shadnet', server, False, str(error)))
+    else:
+        try:
+            socket.create_connection((host or server, port_num), timeout=4).close()
+            results.append(('shadnet', server, True, ''))
+        except (OSError, ValueError) as error:
+            results.append(('shadnet', server, False, str(error)))
     try:
         req = urllib.request.Request(webapi.rstrip('/') + '/status',
                                      headers={'User-Agent': 'Bloodborne/01.09'})

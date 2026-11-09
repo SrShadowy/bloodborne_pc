@@ -252,5 +252,7 @@
   "Быстрая настройка качества, апскейлера, эффектов и памяти (как в ПК-играх)": "Configuração rápida de qualidade, upscaler, efeitos e memória (estilo jogos de PC)",
   "Предустановка графики": "Predefinição Gráfica",
   "Автоматически настраивает апскейлер, эффекты, детализацию и память": "Ajusta automaticamente o upscaler, efeitos, LOD e gerenciamento de VRAM",
-  "Применена предустановка: {}": "Predefinição aplicada: {}"
+  "Применена предустановка: {}": "Predefinição aplicada: {}",
+  "Режим памяти гостя (BB_GUEST_MEMORY)": "Modo de memória convidada (BB_GUEST_MEMORY)",
+  "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer": "Como alocar a memória direta do jogo. No Wine/Proton+AMD selecione placed ou dmabuf para evitar crash no staging buffer"
 }

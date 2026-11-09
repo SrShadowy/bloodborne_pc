@@ -418,6 +418,9 @@ fi
 if [[ ${BB_P2P_RELAY:-1} == 0 ]]; then
     export SHADPS4_P2P_RELAY=0
 fi
+if [[ -z ${BB_NET_GEN:-} ]]; then
+    export BB_NET_GEN=19
+fi
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
     # The Hunter's Dream (BB_NET_BACKEND=thd, without BBSC).
     if [[ ${BB_NET_BACKEND:-} == thd ]]; then
@@ -429,7 +432,7 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
         if [[ -n ${BB_PREBUILT:-} ]]; then BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so; else BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so; fi
         export BB_NET_MODULE
     fi
-    export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-play.seamlesshunt.com:31313}
+    export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-srv.shadps4.net:31313}
     # HTTPS needs CA certificates: OpenSSL from Nix looks only in its own store path (the
     # packaged wrapper brings a bundle; from source the system's is taken).
     if [[ ! -r ${SSL_CERT_FILE:-} ]]; then
@@ -437,7 +440,7 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
             [[ -n $bundle && -r $bundle ]] && { export SSL_CERT_FILE=$bundle; break; }
         done
     fi
-    [[ -n ${BB_SHADNET_WEBAPI:-} ]] || export BB_SHADNET_WEBAPI=http://${BB_SHADNET_SERVER%:*}:31315
+    [[ -n ${BB_SHADNET_WEBAPI:-} ]] || export BB_SHADNET_WEBAPI=http://play.seamlesshunt.com:31315
     # BBSC: its game server on this PC when the server's own does not answer (online.py
     # bbsc-local). It lives as long as the game: a watcher stops it when this process (exec'd into
     # the game below) is gone. Messages and bloodstains are then this PC's only.

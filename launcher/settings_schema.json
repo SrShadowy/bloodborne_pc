@@ -1389,7 +1389,7 @@
      "key": "skip_intro",
      "type": "bool",
      "store": "ini",
-     "default": false,
+     "default": true,
      "title": {
       "ru": "Пропуск заставок при запуске",
       "en": "Skip the intro videos",
@@ -2257,7 +2257,7 @@
      "key": "online_server",
      "type": "text",
      "store": "settings",
-     "default": "play.seamlesshunt.com:31313",
+     "default": "srv.shadps4.net:31313",
      "platforms": [
       "windows"
      ],
@@ -2526,6 +2526,75 @@
    },
    "items": [
     {
+     "key": "log_level",
+     "type": "choice",
+     "store": "settings",
+     "default": "verbose",
+     "choices": [
+      {
+       "value": "minimal",
+       "ru": "Минимальный (запуск и сboи)",
+       "en": "Minimal (startup and crashes)",
+       "pt_BR": "Mínimo (inicialização e falhas)",
+       "zh_CN": "最小（仅启动和崩溃）",
+       "fr_FR": "Minimal (démarrage et plantages)"
+      },
+      {
+       "value": "error",
+       "ru": "Только ошибки",
+       "en": "Errors only",
+       "pt_BR": "Apenas erros",
+       "zh_CN": "仅错误",
+       "fr_FR": "Erreurs uniquement"
+      },
+      {
+       "value": "warning",
+       "ru": "Предупреждения и ошибки",
+       "en": "Warnings and errors",
+       "pt_BR": "Avisos e erros",
+       "zh_CN": "警告和错误",
+       "fr_FR": "Avertissements et erreurs"
+      },
+      {
+       "value": "verbose",
+       "ru": "Подробный (все журналы)",
+       "en": "Verbose (all logs)",
+       "pt_BR": "Detalhado (todos os logs)",
+       "zh_CN": "详细（所有日志）",
+       "fr_FR": "Détaillé (tous les journaux)"
+      },
+      {
+       "value": "none",
+       "ru": "Без журнала (только сбои)",
+       "en": "None (crashes only)",
+       "pt_BR": "Sem log (apenas falhas)",
+       "zh_CN": "无（仅崩溃）",
+       "fr_FR": "Aucun (plantages uniquement)"
+      }
+     ],
+     "title": {
+      "ru": "Уровень журнала",
+      "en": "Log level",
+      "pt_BR": "Nível de log",
+      "zh_CN": "日志级别",
+      "fr_FR": "Niveau de journal"
+     },
+     "description": {
+      "ru": "Фильтрация вывода игры в журнал: снижает нагрузку на ввод-вывод и ускоряет работу.",
+      "en": "Filter game log output: reduces I/O overhead and improves performance.",
+      "pt_BR": "Filtra a saída de log do jogo: reduz a sobrecarga de E/S e melhora o desempenho.",
+      "zh_CN": "过滤游戏日志输出：减少 I/O 开销并提高性能。",
+      "fr_FR": "Filtre la sortie du journal de jeu : réduit la surcharge d'E/S et améliore les performances."
+     },
+     "group": {
+      "ru": "Оптимизация журнала и ввода-вывода",
+      "en": "Log & I/O optimization",
+      "pt_BR": "Otimização de logs e E/S",
+      "zh_CN": "日志与 I/O 优化",
+      "fr_FR": "Optimisation des journaux et des E/S"
+     }
+    },
+    {
      "key": "save_log",
      "type": "bool",
      "store": "settings",
@@ -2721,6 +2790,48 @@
   }
  ],
  "lists": {
+  "LOG_LEVELS": [
+   {
+    "value": "minimal",
+    "ru": "Минимальный (запуск и сбои)",
+    "en": "Minimal (startup and crashes)",
+    "pt_BR": "Mínimo (inicialização e falhas)",
+    "zh_CN": "最小（仅启动和崩溃）",
+    "fr_FR": "Minimal (démarrage et plantages)"
+   },
+   {
+    "value": "error",
+    "ru": "Только ошибки",
+    "en": "Errors only",
+    "pt_BR": "Apenas erros",
+    "zh_CN": "仅错误",
+    "fr_FR": "Erreurs uniquement"
+   },
+   {
+    "value": "warning",
+    "ru": "Предупреждения и ошибки",
+    "en": "Warnings and errors",
+    "pt_BR": "Avisos e erros",
+    "zh_CN": "警告和错误",
+    "fr_FR": "Avertissements et erreurs"
+   },
+   {
+    "value": "verbose",
+    "ru": "Подробный (все журналы)",
+    "en": "Verbose (all logs)",
+    "pt_BR": "Detalhado (todos os logs)",
+    "zh_CN": "详细（所有日志）",
+    "fr_FR": "Détaillé (tous les journaux)"
+   },
+   {
+    "value": "none",
+    "ru": "Без журнала (только сбои)",
+    "en": "None (crashes only)",
+    "pt_BR": "Sem log (apenas falhas)",
+    "zh_CN": "无（仅崩溃）",
+    "fr_FR": "Aucun (plantages uniquement)"
+   }
+  ],
   "PRESENT_MODES": [
    {
     "value": "Mailbox",

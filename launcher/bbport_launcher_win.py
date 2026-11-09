@@ -56,7 +56,7 @@ EFFECTS = [
     ('effect_dynamic_shadows', 'Тени от динамических источников', True),
     ('effect_ssr', 'Отражения SSR (не было в игре)', False),
     ('effect_bloom', 'Свечение (Bloom)', True),
-    ('skip_intro', 'Пропуск заставок при запуске', False),
+    ('skip_intro', 'Пропуск заставок при запуске', True),
 ]
 ANTI_ALIASING = [('Авто (игры без апскейлера)', 'auto'), ('Собственное игры', 'game'),
                  ('FXAA2_GS (игры)', 'fxaa'), ('SMAA (без апскейлера)', 'smaa'), ('Выкл', 'off')]

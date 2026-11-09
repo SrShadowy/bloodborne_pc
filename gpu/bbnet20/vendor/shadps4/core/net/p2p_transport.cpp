@@ -7,6 +7,7 @@
 
 #include "core/net/p2p_transport.h"
 #include "core/net/p2p_relay.h"
+#include "coop/server_link.h"
 
 #ifndef _WIN32
 #include <arpa/inet.h>
@@ -204,8 +205,13 @@ void Transport::ThreadMain() {
             deadline = EarliestDeadline();
             sleeping_until_ = deadline.value_or(Clock::time_point::max());
         }
-        // bbport: the relay registration needs a wake-up now and then.
-        if (Relay::Instance().Enabled()) {
+        if (Libraries::Net::ServerLinkSwitchOn()) {
+            const auto tick = Clock::now() + std::chrono::milliseconds(4);
+            if (!deadline || tick < *deadline) {
+                deadline = tick;
+            }
+        } else if (Relay::Instance().Enabled()) {
+            // bbport: the relay registration needs a wake-up now and then.
             const auto tick = Clock::now() + std::chrono::milliseconds(500);
             if (!deadline || tick < *deadline) {
                 deadline = tick;
@@ -225,6 +231,26 @@ void Transport::ThreadMain() {
         std::scoped_lock lock{mutex_};
         sleeping_until_ = Clock::time_point::min();
         const auto now = Clock::now();
+        if (Libraries::Net::ServerLinkSwitchOn()) {
+            for (int i = 0; i < 1024; ++i) {
+                u32 from_addr_nbo = 0;
+                u16 from_port_nbo = 0;
+                const int n = Libraries::Net::ServerDataReceive(
+                    receive_buffer_.data(), static_cast<u32>(receive_buffer_.size()),
+                    &from_addr_nbo, &from_port_nbo);
+                if (n < 0) {
+                    break;
+                }
+                sockaddr_in in{};
+                in.sin_family = AF_INET;
+                in.sin_addr.s_addr = from_addr_nbo;
+                in.sin_port = from_port_nbo;
+                const Endpoint source = Endpoint::FromSockaddr(
+                    reinterpret_cast<const sockaddr*>(&in), sizeof(in));
+                const std::span<const u8> data{receive_buffer_.data(), static_cast<size_t>(n)};
+                HandlePacket(data, source, now);
+            }
+        }
         for (int i = 0; i < 1024; ++i) { // don't starve timers
             sockaddr_storage from{};
             socklen_t from_len = sizeof(from);
@@ -289,6 +315,16 @@ Error Transport::SendPacket(std::span<const u8> packet, const Endpoint& to) {
         if (static_cast<double>(loss_rng_ >> 11) / static_cast<double>(1ull << 53) <
             loss_for_testing_) {
             return Error::Ok;
+        }
+    }
+    if (Libraries::Net::ServerLinkSwitchOn() && to.Family() == AF_INET) {
+        const auto* in = reinterpret_cast<const sockaddr_in*>(&to.addr);
+        if (in->sin_addr.s_addr != 0 && in->sin_port != 0) {
+            return Libraries::Net::ServerDataSend(in->sin_addr.s_addr, in->sin_port,
+                                                  packet.data(),
+                                                  static_cast<u32>(packet.size()))
+                       ? Error::Ok
+                       : Error::NetDown;
         }
     }
     // bbport: the BBSC UDP relay (p2p_relay.h) sends a copy through the co-op server.

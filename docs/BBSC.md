@@ -100,3 +100,13 @@ its hooks (`BB_ONLINE=1 BB_BBSC=1`, 2026-10-16).
 Seamless Hunt's own releases (BBSC 0.0.1) fixed items not showing, death and respawn, sign
 targeting and the relay framing inside `bbsc.dll` (a Windows mod for shadPS4/BBport); that source
 is not published, so those fixes are not here.
+
+## Updates and Gen 19 Compatibility (2026-11-07)
+
+- **Gen 19 Default**: `libbbnet20.so` defaults to the Gen 19 (shadp2p 0.6.x / shadPS4 0.19) wire framing (`BB_NET_GEN=19`), enabling direct multiplayer compatibility with shadPS4 emulator peers out-of-the-box. Gen 20 framing is selectable via `BB_NET_GEN=20`.
+- **Relay Fallback**: Both UDP 3478 (BBR1) and TCP 20444 relays are enabled by default for seamless connection behind CGNAT/strict routers.
+- **BBSC Game Server Updates**:
+  - *Dantelion2 Panic 265 fix*: Message and bloodstain response budget cap (`AREA_REPLY_BUDGET = 64 * 1024`, `--tomb-max-response-bytes`) preventing game client crash when receiving large message lists (>155 KB).
+  - *Fixed Chalice Dungeons*: Added `FIXED_CHALICES` table enabling altar ritual search for Pthumeru, Hintertomb, Loran, and Isz.
+  - *Password Matching Fix*: Exact password check preventing un-passworded bell searches from matching passworded signs.
+  - *Observability & Buffer Tuning*: Added UDP `SO_RCVBUF` configuration option and relay traffic counters.

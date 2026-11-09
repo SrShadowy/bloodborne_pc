@@ -25,14 +25,31 @@ class LogPage:
         self.log_view = Gtk.TextView(editable=False, monospace=False, cursor_visible=False,
                                      wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self.log_view.add_css_class("log-terminal")
-        self.log_view.set_top_margin(8)
-        self.log_view.set_left_margin(8)
-        self.log_view.set_right_margin(8)
+        self.log_view.set_top_margin(10)
+        self.log_view.set_bottom_margin(10)
+        self.log_view.set_left_margin(12)
+        self.log_view.set_right_margin(12)
+        self.log_view.set_pixels_above_lines(2)
+        self.log_view.set_pixels_below_lines(2)
+        self.log_view.set_pixels_inside_wrap(2)
         scroller = Gtk.ScrolledWindow(vexpand=True, child=self.log_view)
         self.log_scroller = scroller
         box.append(scroller)
 
         bar = Gtk.ActionBar()
+
+        # Status badge (Game running / Game stopped)
+        status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        status_box.add_css_class("badge")
+        status_box.add_css_class("badge-warning")
+        self.log_status_box = status_box
+
+        self.log_status_icon = Gtk.Image.new_from_icon_name("media-playback-stop-symbolic")
+        status_box.append(self.log_status_icon)
+
+        self.log_status_badge = Gtk.Label(label=tr("Игра не запущена"))
+        status_box.append(self.log_status_badge)
+        bar.pack_start(status_box)
 
         # Search toggle button (magnifying glass)
         self.log_search_toggle = Gtk.ToggleButton(icon_name="system-search-symbolic")
@@ -82,6 +99,13 @@ class LogPage:
         self.clear_log_button.connect("clicked", self.on_clear_log)
         bar.pack_start(self.clear_log_button)
 
+        # Log lines and level indicator
+        self.log_lines_label = Gtk.Label(label=f"0 / {MAX_LOG_LINES}")
+        self.log_lines_label.add_css_class("dim-label")
+        self.log_lines_label.set_margin_start(8)
+        self.log_lines_label.set_margin_end(8)
+        bar.pack_start(self.log_lines_label)
+
         # Right side: Export and Copy
         self.export_log_button = Gtk.Button(label=tr("Экспорт журнала…"))
         self.export_log_button.connect("clicked", self.on_export_log)
@@ -106,6 +130,21 @@ class LogPage:
         self.on_log_changed(buffer)
         return box
 
+    def _update_log_lines_label(self):
+        if not hasattr(self, "log_lines_label") or not hasattr(self, "log_view"):
+            return
+        lines = getattr(self, "_all_log_lines", [])
+        total_retained = len(lines)
+        query = getattr(self, "_log_filter_query", "")
+        lvl = getattr(self, "settings", {}).get("log_level", "verbose")
+        if query:
+            matched_count = sum(1 for line in lines if query in line.lower())
+            self.log_lines_label.set_text(f"{matched_count} / {total_retained}")
+            self.log_lines_label.set_tooltip_text(f"{tr('Поиск по журналу')}: '{query}' | {tr('Уровень журнала')}: {lvl}")
+        else:
+            self.log_lines_label.set_text(f"{total_retained} / {MAX_LOG_LINES}")
+            self.log_lines_label.set_tooltip_text(f"{tr('Уровень журнала')}: {lvl}")
+
     def _refresh_log_buffer(self):
         if not hasattr(self, "log_view"):
             return
@@ -117,6 +156,7 @@ class LogPage:
             buffer.set_text("".join(matched))
         else:
             buffer.set_text("".join(lines))
+        self._update_log_lines_label()
         adj = self.log_scroller.get_vadjustment()
         GLib.idle_add(lambda: adj.set_value(adj.get_upper()) and False)
 
@@ -126,6 +166,7 @@ class LogPage:
             self.copy_log_button.set_sensitive(has_text)
         if hasattr(self, "export_log_button"):
             self.export_log_button.set_sensitive(has_text)
+        self._update_log_lines_label()
 
     def log_text(self):
         buffer = self.log_view.get_buffer()
@@ -140,6 +181,7 @@ class LogPage:
             self._all_log_lines.clear()
         if hasattr(self, "log_view"):
             self.log_view.get_buffer().set_text("")
+        self._update_log_lines_label()
 
     def on_export_log(self, _button):
         text = self.log_text()
@@ -191,5 +233,6 @@ class LogPage:
         extra = buffer.get_line_count() - MAX_LOG_LINES
         if extra > 0:
             buffer.delete(buffer.get_start_iter(), buffer.get_iter_at_line(extra)[1])
+        self._update_log_lines_label()
         adj = self.log_scroller.get_vadjustment()
         GLib.idle_add(lambda: adj.set_value(adj.get_upper()) and False)

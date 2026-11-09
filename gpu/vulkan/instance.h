@@ -347,6 +347,9 @@ public:
     bool IsHostMemoryImportSupported() const {
         return ext.memory_host;
     }
+    /// Guest memory can be placed at target address (VK_EXT_map_memory_placed; BbGuestMemory).
+    bool IsMemoryMapPlacedSupported() const { return ext.memory_placed; } // [extra]
+    [[nodiscard]] u64 GetMinPlacedMemoryMapAlignment() const { return min_placed_map_alignment; } // [extra]
     /// BB_GUEST_UNCACHED=1 (AMD, diagnostic): the GPU reads the game's memory past its caches
     /// (VK_AMD_device_coherent_memory), as NVIDIA reads imported host memory.
     bool IsGuestUncached() const {
@@ -418,10 +421,12 @@ private:
             provoking_vertex, stencil_export, image_load_store_lod, amd_gcn_shader,
             trinary_minmax, nv_mixed_samples, amd_mixed_samples, atomic_float, atomic_float2,
             workgroup_layout, view_2d_of_3d, image_view_min_lod, memory_budget, memory_fd,
-            dma_buf, memory_host, compute_derivatives, mixed_float_dot, cooperative_matrix,
+            dma_buf, memory_host, memory_placed, compute_derivatives, mixed_float_dot, cooperative_matrix, // [extra]
             float8, shader_clock, guest_uncached, present_id, low_latency2, anti_lag,
             device_fault;
     };
+
+    u64 min_placed_map_alignment = 4096; // [extra]
 
     vk::UniqueInstance instance;
     vk::UniqueDebugUtilsMessengerEXT debug_callback;

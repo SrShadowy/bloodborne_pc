@@ -4,6 +4,13 @@
 #include "bbport_guest_memory_internal.h"
 #include "shim/bb_env.h"
 
+#ifdef _WIN32
+
+#include <memoryapi.h>
+#undef MemoryBarrier // [extra] Windows winnt.h defines MemoryBarrier as _mm_mfence macro
+
+#endif
+
 namespace BbGuestMemory::detail {
 /// Runs `record` on the graphics queue and waits; false on any failure.
 template <typename Record>
@@ -325,6 +332,79 @@ bool PrivateImportWorks(const Vulkan::Instance& instance, const char*& why) {
         device.freeMemory(memory);
     }
     munmap(guest, Size);
+    return ok;
+}
+
+/// Placed memory mapping (VK_EXT_map_memory_placed), standard host-visible device memory mapped at guest address.
+bool PlacedMapWorks(const Vulkan::Instance& instance, const char*& why) { // [extra]
+    why = "VK_EXT_map_memory_placed unavailable";
+    if (!instance.IsMemoryMapPlacedSupported() || !LayerMemory()) {
+        if (!LayerMemory()) {
+            why = "placed memory mapping needs the layer's memory module";
+        }
+        return false;
+    }
+    import_alignment = std::max<vk::DeviceSize>(instance.GetMinPlacedMemoryMapAlignment(), 4096);
+    constexpr u64 Size = 4 << 20;
+#ifdef _WIN32
+    auto* guest = static_cast<std::uint32_t*>(
+        VirtualAlloc(nullptr, Size, MEM_RESERVE, PAGE_NOACCESS));
+    if (!guest) {
+        why = "address reservation for placed mapping failed";
+        return false;
+    }
+#else
+    auto* guest = static_cast<std::uint32_t*>(
+        mmap(nullptr, Size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    if (guest == MAP_FAILED) {
+        why = "address reservation for placed mapping failed";
+        return false;
+    }
+#endif
+    bool ok = false;
+    vk::Buffer buffer;
+    vk::DeviceMemory memory;
+    vk::Result error{};
+    if (!MapPlaced(guest, Size, buffer, memory, error)) {
+        static std::string text;
+        text = "placed memory mapping failed (" + vk::to_string(error) + ")";
+        why = text.c_str();
+    } else {
+        guest[1024] = 0x5ca1ab1e;
+        const bool ran = RunOnce(instance, [&](vk::CommandBuffer cmd) {
+            cmd.fillBuffer(buffer, 0, 4096, 0x600dcafe);
+            cmd.copyBuffer(buffer, buffer, vk::BufferCopy{4096, 8192, 4});
+        });
+        why = "GPU work on placed mapped memory";
+        if (ran) {
+            const bool gpu_to_cpu = guest[0] == 0x600dcafe && guest[1023] == 0x600dcafe;
+            const bool cpu_to_gpu = guest[2048] == 0x5ca1ab1e;
+            why = !gpu_to_cpu ? "GPU writes not seen by the CPU" : "CPU writes not seen by the GPU";
+            ok = gpu_to_cpu && cpu_to_gpu;
+        }
+#ifdef VK_EXT_map_memory_placed
+        if (VULKAN_HPP_DEFAULT_DISPATCHER.vkUnmapMemory2KHR) {
+            const VkMemoryUnmapInfoKHR unmap_info{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR,
+                .pNext = nullptr,
+                .flags = 0,
+                .memory = memory,
+            };
+            VULKAN_HPP_DEFAULT_DISPATCHER.vkUnmapMemory2KHR(device, &unmap_info);
+        }
+#endif
+    }
+    if (buffer) {
+        device.destroyBuffer(buffer);
+    }
+    if (memory) {
+        device.freeMemory(memory);
+    }
+#ifdef _WIN32
+    VirtualFree(guest, 0, MEM_RELEASE);
+#else
+    munmap(guest, Size);
+#endif
     return ok;
 }
 

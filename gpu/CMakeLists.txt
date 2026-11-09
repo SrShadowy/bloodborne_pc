@@ -69,7 +69,7 @@ find_package(magic_enum QUIET)
 if(NOT magic_enum_FOUND)
     # Header-only; packaged on few systems (the Windows cross build's MSYS2 has none).
     include(FetchContent)
-    FetchContent_Declare(magic_enum GIT_REPOSITORY https://github.com/Neargye/magic_enum.git GIT_TAG v0.9.7)
+    FetchContent_Declare(magic_enum GIT_REPOSITORY https://github.com/Neargye/magic_enum.git GIT_TAG v0.9.7 GIT_SUBMODULES "") # [extra]
     FetchContent_MakeAvailable(magic_enum)
 endif()
 find_package(tsl-robin-map REQUIRED)
@@ -90,7 +90,7 @@ find_package(miniz QUIET)
 if(NOT miniz_FOUND)
     # Distributions without a miniz package (Debian, Ubuntu: #136): built from its release.
     include(FetchContent)
-    FetchContent_Declare(miniz GIT_REPOSITORY https://github.com/richgel999/miniz.git GIT_TAG 3.1.2)
+    FetchContent_Declare(miniz GIT_REPOSITORY https://github.com/richgel999/miniz.git GIT_TAG 3.1.2 GIT_SUBMODULES "") # [extra]
     FetchContent_MakeAvailable(miniz)
     if(NOT TARGET miniz::miniz)
         add_library(miniz::miniz ALIAS miniz)

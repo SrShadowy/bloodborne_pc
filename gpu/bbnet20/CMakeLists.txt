@@ -30,13 +30,14 @@ list(FILTER BBNET20_SOURCES EXCLUDE REGEX
 # BBSC, Bloodborne seamless co-op (GPL-2.0+): its game code and the port's stand-ins for
 # shadPS4's UI (bbsc/bbsc_glue.cpp). Installed only for Bloodborne with BB_BBSC=1.
 file(GLOB BBNET20_BBSC_SOURCES CONFIGURE_DEPENDS bbsc/core/*.cpp bbsc/bbsc_glue.cpp)
+file(GLOB BBNET20_COOP_SOURCES CONFIGURE_DEPENDS coop/*.cpp)
 file(GLOB BBNET20_THD_SOURCES CONFIGURE_DEPENDS thd/*.cpp compat/common/*.cpp)
 # Gen 19 (shadp2p 0.6.x) P2P framing, opt-in with BB_NET_GEN=19 (extra/net/; see SHADOW_CHANGES.md). # [extra]
 list(APPEND BBNET20_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../extra/net/bbport_p2p_legacy.cpp") # [extra]
 
 add_library(bbnet20 SHARED ${BBNET20_SOURCES} ${BBNET20_THD_SOURCES} ${BBNET20_BBSC_SOURCES}
-    "${SHADNET_PROTO_OUT20}/shadnet.pb.cc" bbnet_glue.cpp)
-target_include_directories(bbnet20 PRIVATE include bbsc compat . .. ../shim "${BBNET_VENDOR}"
+    ${BBNET20_COOP_SOURCES} "${SHADNET_PROTO_OUT20}/shadnet.pb.cc" bbnet_glue.cpp)
+target_include_directories(bbnet20 PRIVATE include bbsc coop coop/monocypher compat . .. ../shim "${BBNET_VENDOR}"
     "${BBNET_VENDOR}/shadnet" "${SHADNET_PROTO_OUT20}" ../third_party/imgui ../third_party/httplib
     ${CMAKE_CURRENT_SOURCE_DIR}/../../extra)
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU") # [extra]

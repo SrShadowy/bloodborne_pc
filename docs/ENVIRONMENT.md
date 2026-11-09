@@ -203,7 +203,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_GUEST_GPU_MEMORY` | =1: guest GPU memory mapping |
 | `BB_GUEST_HOOKS` | =0: no guest code hooks at all (aspect ratio, HUD, mouse, fixes) |
 | `BB_GUEST_LAZY` | =1: lazy guest memory with the layer's memory module (off: broke buffers) |
-| `BB_GUEST_MEMORY` | =dmabuf / host / private: how guest memory is shared with the GPU (default per vendor) |
+| `BB_GUEST_MEMORY` | =dmabuf / host / private: how guest memory is shared with the GPU (default per vendor; private + traps off on Wine/Proton) |
 | `BB_GUEST_UNCACHED` | =1: guest memory only in memory types the GPU reads past its caches |
 | `BB_GUEST_VRAM` | =1 (experiment): direct memory in VRAM mapped through the PCI BAR |
 | `BB_GUEST_VRAM_RANGES` | =lo-hi,...: physical ranges for BB_GUEST_VRAM (default: the graphics heaps) |

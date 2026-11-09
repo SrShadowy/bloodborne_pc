@@ -27,7 +27,7 @@ def child(folder, name):
     folder = Path(folder)
     for entry in (folder.iterdir() if folder.is_dir() else ()):
         if entry.name.casefold() == name.casefold():
-            return entry
+            return folder / entry.name # [extra]
     return folder / name
 
 
@@ -113,32 +113,60 @@ def mod_files(folder):
 LINKS = {}
 
 
+def _norm(path): # [extra]
+    return Path(os.path.normpath(path))
+
+
 def make_link(link, target):
     """link -> target: a symbolic link, else (Windows) a junction for a folder, a hard link or a
     copy for a file."""
-    try:
-        link.symlink_to(target, target_is_directory=target.is_dir())
-    except OSError:
-        if os.name != 'nt':
-            raise
+    if os.name == 'nt': # [extra]
         if target.is_dir():
-            import _winapi
-            _winapi.CreateJunction(str(target), str(link))
+            try:
+                import _winapi
+                _winapi.CreateJunction(str(target), str(link))
+            except OSError:
+                try:
+                    link.symlink_to(target, target_is_directory=True)
+                except OSError:
+                    # Network shares (UNC/SMB), FAT/exFAT, or restricted reparse: materialize directory
+                    link.mkdir(exist_ok=True)
+                    for entry in target.iterdir():
+                        make_link(link / entry.name, entry)
+                    return
         else:
             try:
                 os.link(target, link)
             except OSError:
-                shutil.copy2(target, link)
-    LINKS[link] = target
+                try:
+                    link.symlink_to(target, target_is_directory=False)
+                    with open(link, 'rb') as _: # [extra] verify symlink can be followed
+                        pass
+                except OSError:
+                    if link.is_symlink() or link.exists():
+                        link.unlink()
+                    shutil.copy2(target, link) # [extra]
+    else:
+        try:
+            link.symlink_to(target, target_is_directory=target.is_dir())
+        except OSError:
+            if target.is_dir():
+                link.mkdir(exist_ok=True)
+                for entry in target.iterdir():
+                    make_link(link / entry.name, entry)
+                return
+            else:
+                shutil.copy2(target, link) # [extra]
+    LINKS[_norm(link)] = target
 
 
 def is_link(path):
-    return path in LINKS or path.is_symlink()
+    return _norm(path) in LINKS or path.is_symlink() # [extra]
 
 
 def unlink(path):
     """Removes a link, never what it points to (a junction is removed as a folder entry)."""
-    LINKS.pop(path, None)
+    LINKS.pop(_norm(path), None) # [extra]
     if path.is_dir() and not path.is_symlink():
         os.rmdir(path)
     else:
@@ -148,7 +176,7 @@ def unlink(path):
 def expand(directory):
     """Materialize one directory level; never write through a directory link."""
     if is_link(directory):
-        target = LINKS.get(directory) or directory.resolve(strict=True)
+        target = LINKS.get(_norm(directory)) or directory.resolve(strict=True) # [extra]
         if not target.is_dir():
             raise ValueError(f'File/directory conflict at {directory.name}')
         unlink(directory)
@@ -192,7 +220,7 @@ def build_overlay(game, out, mods):
                 expand(parent)
             destination = child(parent, relative.parts[-1])
             if is_link(destination):
-                replaced += (LINKS.get(destination) or destination.resolve()).is_relative_to(game)
+                replaced += (LINKS.get(_norm(destination)) or destination.resolve()).is_relative_to(game) # [extra]
                 unlink(destination)
             elif destination.exists():
                 raise ValueError(f'File/directory conflict: {relative}')
@@ -202,7 +230,7 @@ def build_overlay(game, out, mods):
         print(f'Mods: {replaced} game files replaced, {added} added', file=sys.stderr)
         return overlay
     except BaseException:
-        shutil.rmtree(overlay)
+        shutil.rmtree(overlay, ignore_errors=True) # [extra]
         raise
 
 

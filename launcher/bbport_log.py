@@ -123,6 +123,9 @@ class LogMixin:
         self.log_view.set_bottom_margin(10)
         self.log_view.set_left_margin(12)
         self.log_view.set_right_margin(12)
+        self.log_view.set_pixels_above_lines(2)
+        self.log_view.set_pixels_below_lines(2)
+        self.log_view.set_pixels_inside_wrap(2)
         scroller = Gtk.ScrolledWindow(vexpand=True, child=self.log_view)
         self.log_scroller = scroller
         box.append(scroller)

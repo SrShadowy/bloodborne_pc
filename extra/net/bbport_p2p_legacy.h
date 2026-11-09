@@ -10,8 +10,11 @@
 #pragma once
 
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <span>
+#include <map>
+#include <mutex>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -27,10 +30,17 @@ using Core::Net::P2P::Keyring;
 using Core::Net::P2P::Protection;
 using Core::Net::P2P::PseudoHeader;
 
-/// The 0.19 framing. The keyring is not used: 0.19 has no communication ID or payload crypto.
+struct PeerEndpointLess {
+    bool operator()(const Endpoint& a, const Endpoint& b) const {
+        return std::memcmp(&a.addr, &b.addr, sizeof(a.addr)) < 0;
+    }
+};
+
+/// The hybrid/auto-negotiating framing codec. Defaults to Gen 19 (or default_gen) for unknown
+/// peers, but detects Gen 20 vs Gen 19 dynamically per peer and switches framing accordingly.
 class Legacy19Codec final : public Codec {
 public:
-    Legacy19Codec() = default;
+    explicit Legacy19Codec(std::unique_ptr<Codec> gen20_delegate = nullptr, u8 default_gen = 19);
 
     Decoded Decode(std::span<const u8> packet, const Endpoint& from) override;
     std::vector<u8> EncodeStream(std::span<const u8> tcp_segment, const Endpoint& to,
@@ -39,24 +49,35 @@ public:
                                    const Endpoint& to, Protection protection) override;
     std::vector<u8> EncodeSignaling(std::span<const u8> data, const Endpoint& to) override;
     PseudoHeader StreamPseudoHeader(const Endpoint& peer) override;
+
+    u8 PeerGeneration(const Endpoint& peer) const;
+
+private:
+    std::unique_ptr<Codec> gen20_delegate_;
+    u8 default_gen_ = 19;
+    mutable std::mutex mutex_;
+    std::map<Endpoint, u8, PeerEndpointLess> peer_gen_;
 };
 
-/// BB_NET_GEN=19, exactly, selects Gen 19. Unset or any other value keeps 0.20 byte for byte.
+/// Gen 19 (shadp2p 0.6.x) framing is active by default (or with BB_NET_GEN=19) for direct
+/// compatibility with shadPS4 emulator players. Only BB_NET_GEN=20 selects 0.20 framing.
 inline bool LegacyFramingRequested() {
     const char* gen = std::getenv("BB_NET_GEN");
-    return gen != nullptr && std::string_view{gen} == "19";
+    if (gen == nullptr || *gen == '\0') {
+        return true;
+    }
+    return std::string_view{gen} != "20";
 }
 
-/// The single construction site in net_p2p.cpp uses this, so the default session still builds a
-/// FramingCodec and never touches the legacy codec.
-// shortcut: one framing per session, not one per peer; update if mixed Gen 19/20 peers must
-// coexist (the transport takes its codec once, at start).
+/// The single construction site in net_p2p.cpp uses this: Gen 19 (Legacy19Codec with dynamic
+/// peer auto-negotiation) is the default; BB_NET_GEN=20 selects pure FramingCodec.
 inline std::unique_ptr<Codec> MakeP2PCodec(std::shared_ptr<Keyring> keyring,
                                           FramingCodec::BroadcastObserver observer = {}) {
+    auto gen20 = std::make_unique<FramingCodec>(std::move(keyring), std::move(observer));
     if (LegacyFramingRequested()) {
-        return std::make_unique<Legacy19Codec>();
+        return std::make_unique<Legacy19Codec>(std::move(gen20), 19);
     }
-    return std::make_unique<FramingCodec>(std::move(keyring), std::move(observer));
+    return gen20;
 }
 
 } // namespace Extra::Net

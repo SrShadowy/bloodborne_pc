@@ -7,8 +7,16 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <span>
 #include <vector>
+
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#else
+#include <ws2tcpip.h>
+#endif
 
 #include "extra/net/bbport_p2p_legacy.h"
 
@@ -17,6 +25,15 @@ namespace {
 using Extra::Net::Legacy19Codec;
 using Extra::Net::LegacyFramingRequested;
 namespace P2P = Core::Net::P2P;
+
+P2P::Endpoint MakeIpv4Endpoint(const char* dotted, u16 port) {
+    P2P::Endpoint ep{};
+    auto* in = reinterpret_cast<sockaddr_in*>(&ep.addr);
+    in->sin_family = AF_INET;
+    in->sin_port = htons(port);
+    inet_pton(AF_INET, dotted, &in->sin_addr);
+    return ep;
+}
 
 void SetNetGen(const char* value) {
 #ifdef _WIN32
@@ -116,16 +133,63 @@ void ProtectionIsIgnoredAndStreamsAreUnsupported() {
 
 void FactorySelection() {
     SetNetGen(nullptr);
-    assert(!LegacyFramingRequested());
+    assert(LegacyFramingRequested());
     SetNetGen("");
-    assert(!LegacyFramingRequested());
-    SetNetGen("20");
-    assert(!LegacyFramingRequested());
+    assert(LegacyFramingRequested());
     SetNetGen("19");
     assert(LegacyFramingRequested());
-    SetNetGen("19 "); // explicit mode, not a prefix match
+    SetNetGen("20");
     assert(!LegacyFramingRequested());
+    SetNetGen("auto");
+    assert(LegacyFramingRequested());
     SetNetGen(nullptr);
+}
+
+void AutoNegotiationGen19AndGen20PerPeer() {
+    Legacy19Codec codec;
+    const auto peer_a = MakeIpv4Endpoint("10.0.0.1", 3658);
+    const auto peer_b = MakeIpv4Endpoint("10.0.0.2", 3658);
+
+    assert(codec.PeerGeneration(peer_a) == 19);
+    assert(codec.PeerGeneration(peer_b) == 19);
+
+    // Peer A sends Gen 19 datagram
+    const std::vector<u8> gen19_wire{0x12, 0x34, 0x56, 0x78, 0xAA, 0xBB};
+    const auto dec_a = codec.Decode(gen19_wire, peer_a);
+    assert(dec_a.kind == P2P::Codec::Kind::Datagram);
+    assert(dec_a.src_vport == 0x1234);
+    assert(dec_a.dst_vport == 0x5678);
+    assert(codec.PeerGeneration(peer_a) == 19);
+
+    // Peer A sends Gen 19 signaling (0xFFFF 0xFFFF must NOT be mistaken for Gen 20)
+    const std::vector<u8> gen19_sig{0xFF, 0xFF, 0xFF, 0xFF, 'S', 'H', 'A', 'D'};
+    const auto dec_sig = codec.Decode(gen19_sig, peer_a);
+    assert(dec_sig.kind == P2P::Codec::Kind::Signaling);
+    assert(dec_sig.src_vport == 0xFFFF);
+    assert(dec_sig.dst_vport == 0xFFFF);
+    assert(codec.PeerGeneration(peer_a) == 19);
+
+    // Peer B sends Gen 20 datagram
+    const std::vector<u8> gen20_wire{0xFF, 0x83, 0x22, 0x22, 0x33, 0x33, 0xDE, 0xAD};
+    const auto dec_b = codec.Decode(gen20_wire, peer_b);
+    assert(dec_b.kind == P2P::Codec::Kind::Datagram);
+    assert(dec_b.src_vport == 0x2222);
+    assert(dec_b.dst_vport == 0x3333);
+    assert((dec_b.payload == std::vector<u8>{0xDE, 0xAD}));
+    assert(codec.PeerGeneration(peer_b) == 20);
+    assert(codec.PeerGeneration(peer_a) == 19);
+
+    // Encode to peer_a (Gen 19 format)
+    const auto out_a = codec.EncodeDatagram(0x1000, 0x2000, std::vector<u8>{1, 2}, peer_a, {});
+    assert((out_a == std::vector<u8>{0x10, 0x00, 0x20, 0x00, 1, 2}));
+    const auto sig_a = codec.EncodeSignaling(std::vector<u8>{'A'}, peer_a);
+    assert((sig_a == std::vector<u8>{0xFF, 0xFF, 0xFF, 0xFF, 'A'}));
+
+    // Encode to peer_b (Gen 20 format)
+    const auto out_b = codec.EncodeDatagram(0x1000, 0x2000, std::vector<u8>{1, 2}, peer_b, {});
+    assert((out_b == std::vector<u8>{0xFF, 0x83, 0x10, 0x00, 0x20, 0x00, 1, 2}));
+    const auto sig_b = codec.EncodeSignaling(std::vector<u8>{'B'}, peer_b);
+    assert((sig_b == std::vector<u8>{0xFF, 0x83, 0xFF, 0xFF, 0xFF, 0xFF, 'B'}));
 }
 
 } // namespace
@@ -138,6 +202,7 @@ int main() {
     VportsAreBigEndian();
     ProtectionIsIgnoredAndStreamsAreUnsupported();
     FactorySelection();
+    AutoNegotiationGen19AndGen20PerPeer();
     std::puts("PASS: Gen 19 P2P codec: datagram/signaling round trips, header bytes, payload "
-              "edges, big-endian vports, BB_NET_GEN selection");
+              "edges, big-endian vports, BB_NET_GEN selection, per-peer Gen 19/20 auto-negotiation");
 }

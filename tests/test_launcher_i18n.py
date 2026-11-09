@@ -40,7 +40,7 @@ class LauncherI18nTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        bbport_i18n.set_language("")
+        bbport_i18n.set_language("ru")
 
     def test_pt_br_has_no_untranslated_russian_strings(self):
         bbport_i18n.set_language("pt_BR")

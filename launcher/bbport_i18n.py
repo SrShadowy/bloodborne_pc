@@ -440,6 +440,7 @@ EN = {
     "Сообщения, пятна крови и призраки приходят с игрового сервера; колокола и призывы идут через сервер shadNet. По умолчанию оба — Seamless Hunt (сервер BBSC). Игра по сети совместима с версией для Windows: нужны версия игры 1.09 и тот же сервер": "Messages, bloodstains and ghosts come from the game server; bells and summons go through a shadNet server. By default both are Seamless Hunt's (BBSC's server). Online play works together with the Windows version: everyone needs game version 1.09 and the same server",
     'У всех в сессии должны быть одна версия игры (1.09) и один сервер. Читы меняют игру и для других игроков: выключайте их при совместной игре': 'Everyone in a session needs the same game version (1.09) and the same server. Cheats change the game for the other players too: turn them off when you play together',
     "Пароль принят: сервер принял вход": "Password accepted: the server signed you in",
+    "Пароль принят: вход выполнен (ID: {})": "Password accepted: signed in (ID: {})",
     "Вход в The Hunter's Dream (токен)": "The Hunter's Dream sign-in (token)",
     "Проверить вход": "Check sign-in",
     "Сервер отклонил: {}": "Server refused: {}",
@@ -622,6 +623,9 @@ EN = {
     "Слои валидации Vulkan": "Vulkan validation layers",
     "Сильно замедляет": "Much slower",
     "Доп. переменные (ИМЯ=значение через пробел)": "Extra variables (NAME=value, space-separated)",
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "Guest memory mode (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "How to allocate direct game memory. On Wine/Proton+AMD choose placed or dmabuf to avoid staging buffer crashes",
     # Shader Cache
     "Кэш шейдеров": "Shader Cache",
     "Очистить все шейдеры": "Clear all shaders",
@@ -981,6 +985,9 @@ PT = {
     "Слои валидации Vulkan": "Camadas de validação Vulkan",
     "Сильно замедляет": "Muito mais lento",
     "Доп. переменные (ИМЯ=значение через пробел)": "Variáveis extras (NOME=valor separados por espaço)",
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "Modo de memória do guest (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "Como alocar a memória direta do jogo. No Wine/Proton+AMD selecione placed ou dmabuf para evitar crash no staging buffer",
     # Shader Cache
     "Кэш шейдеров": "Cache de shaders",
     "Очистить все шейдеры": "Limpar todos os shaders",
@@ -1013,6 +1020,7 @@ PT = {
     "Вход в The Hunter's Dream (токен)": "Entrada no The Hunter's Dream (token)",
     "Проверить вход": "Verificar entrada",
     "Пароль принят: сервер принял вход": "Senha aceita: o servidor aceitou a entrada",
+    "Пароль принят: вход выполнен (ID: {})": "Senha aceite: início de sessão efetuado (ID: {})",
     "Сервер отклонил: {}": "Servidor recusou: {}",
     "Введите Online ID и пароль": "Introduza o Online ID e a senha",
     "Токен принят: {}": "Token aceito: {}",
@@ -1595,6 +1603,9 @@ PT_BR = {
     "Слои валидации Vulkan": "Camadas de validação do Vulkan",
     "Сильно замедляет": "Muito mais lento",
     "Доп. переменные (ИМЯ=значение через пробел)": "Variáveis extras (NOME=valor, separadas por espaço)",
+    "Режим памяти гостя (BB_GUEST_MEMORY)": "Modo de memória do guest (BB_GUEST_MEMORY)",
+    "Как выделять прямую память игры. На Wine/Proton+AMD выберите placed или dmabuf, иначе краш на staging buffer":
+        "Como alocar a memória direta do jogo. No Wine/Proton+AMD selecione placed ou dmabuf para evitar crash no staging buffer",
     # Shader Cache
     "Кэш шейдеров": "Cache de shaders",
     "Очистить все шейдеры": "Limpar todos os shaders",
@@ -1627,6 +1638,7 @@ PT_BR = {
     "Вход в The Hunter's Dream (токен)": "Login no The Hunter's Dream (token)",
     "Проверить вход": "Verificar login",
     "Пароль принят: сервер принял вход": "Senha aceita: o servidor aceitou o login",
+    "Пароль принят: вход выполнен (ID: {})": "Senha aceita: login realizado (ID: {})",
     "Сервер отклонил: {}": "Servidor recusou: {}",
     "Введите Online ID и пароль": "Digite o Online ID e a senha",
     "Токен принят: {}": "Token aceito: {}",
