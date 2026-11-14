@@ -431,26 +431,26 @@ std::size_t p2p_header(const std::uint8_t* d, std::size_t n, std::uint16_t* src,
 }
 
 void p2p_reader(std::shared_ptr<UdpPort> port) {
-    std::uint8_t buf[2048];
+    std::vector<std::uint8_t> buf(kMaxDatagram);
     int logs = 0;
     while (!port->stop.load(std::memory_order_relaxed)) {
         if (sock_poll(port->fd, POLLIN, 200) <= 0) continue;
         sockaddr_in sa{};
         socklen_type sl = sizeof(sa);
-        ssize_type n = sock_recvfrom(port->fd, buf, sizeof(buf), true, &sa, &sl);
+        ssize_type n = sock_recvfrom(port->fd, buf.data(), buf.size(), true, &sa, &sl);
         if (n < 0) continue;
         if (n >= 4 && buf[0] == kRelayMagic && buf[1] == kRelayToClient && from_relay_server(sa)) {
             // A relay delivery: the owner of that relay port's datagram, known as server:port.
             const std::uint16_t from_vport = static_cast<std::uint16_t>((buf[2] << 8) | buf[3]);
-            std::memmove(buf, buf + 4, static_cast<std::size_t>(n - 4));
+            std::memmove(buf.data(), buf.data() + 4, static_cast<std::size_t>(n - 4));
             n -= 4;
             sa.sin_port = bswap16(from_vport);
         }
         std::uint16_t src = 0, dst = 0;
-        const std::size_t hdr = p2p_header(buf, static_cast<std::size_t>(n), &src, &dst);
+        const std::size_t hdr = p2p_header(buf.data(), static_cast<std::size_t>(n), &src, &dst);
         if (!hdr) {
             // A peer's hole-punch probe or the STUN server's answer: neither is the game's.
-            if (n >= 8 && std::memcmp(buf, kProbe, 5) == 0) {
+            if (n >= 8 && std::memcmp(buf.data(), kProbe, 5) == 0) {
                 std::lock_guard lk(port->mu);
                 port->heard[source_key(sa.sin_addr.s_addr, sa.sin_port)] = std::chrono::steady_clock::now();
                 continue;
@@ -460,7 +460,7 @@ void p2p_reader(std::shared_ptr<UdpPort> port) {
                 std::uint32_t a = 0;
                 std::uint16_t p = 0;
                 if (port->stun_pending &&
-                    parse_binding_response(buf, static_cast<std::size_t>(n), port->stun_txid, &a, &p,
+                    parse_binding_response(buf.data(), static_cast<std::size_t>(n), port->stun_txid, &a, &p,
                                            &port->stun_relay)) {
                     port->stun_addr = a;
                     port->stun_port = p;
@@ -487,7 +487,7 @@ void p2p_reader(std::shared_ptr<UdpPort> port) {
         }
         if (!q) continue;
         Datagram dg;
-        dg.data.assign(buf + hdr, buf + n);
+        dg.data.assign(buf.data() + hdr, buf.data() + n);
         dg.addr = sa.sin_addr.s_addr;
         dg.port = sa.sin_port;
         dg.vport = src;
@@ -622,7 +622,8 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     const sockfd_t fd = sock.port ? sock.port->fd : sock.fd;
     if (!sock_ok(fd)) return static_cast<int>(len);
     if (!to) return net_err(EINVAL);
-    std::uint8_t pkt[2048];
+    thread_local std::vector<std::uint8_t> frame(kRelayHeader + kMaxDatagram);
+    std::uint8_t* const pkt = frame.data() + kRelayHeader;
     std::size_t hdr = 0;
     const std::uint16_t dst_vport = bswap16(to->vport);
     if (sock.p2p) {
@@ -641,7 +642,9 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
             hdr = 6;
         }
     }
-    if (hdr + len > sizeof(pkt)) return net_err(EMSGSIZE);
+    if (len > kMaxDatagram || hdr + static_cast<std::size_t>(len) > kMaxDatagram) {
+        return net_err(EMSGSIZE);
+    }
     if (buf && len) std::memcpy(pkt + hdr, buf, static_cast<std::size_t>(len));
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
@@ -652,13 +655,11 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     std::uint8_t token[kStunTokenLen];
     sockaddr_in stun_sa{};
     if (sock.p2p && relay_target(to->addr, to->port, token, &stun_sa)) {
-        std::uint8_t frame[sizeof(pkt) + kRelayHeader];
         frame[0] = kRelayMagic;
         frame[1] = kRelayToServer;
-        std::memcpy(frame + 2, token, kStunTokenLen);
-        std::memcpy(frame + 10, &to->port, 2); // network order is the frame's big-endian
-        std::memcpy(frame + kRelayHeader, pkt, hdr + static_cast<std::size_t>(len));
-        n = sock_sendto(fd, frame, kRelayHeader + hdr + static_cast<std::size_t>(len), dontwait, &stun_sa);
+        std::memcpy(frame.data() + 2, token, kStunTokenLen);
+        std::memcpy(frame.data() + 10, &to->port, 2); // network order is the frame's big-endian
+        n = sock_sendto(fd, frame.data(), kRelayHeader + hdr + static_cast<std::size_t>(len), dontwait, &stun_sa);
         if (n >= 0) n -= static_cast<ssize_type>(kRelayHeader);
     } else {
         n = sock_sendto(fd, pkt, hdr + static_cast<std::size_t>(len), dontwait, &sa);

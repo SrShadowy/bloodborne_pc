@@ -6,6 +6,7 @@
 
 #include "thd.h"
 #include "thd_internal.h"
+#include "thd_poll_pacing.h"
 
 #include <algorithm>
 #include <atomic>
@@ -19,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <thread>
 
 #ifdef _WIN32
@@ -99,15 +101,27 @@ namespace {
 std::mutex g_account_mu;
 std::string g_name, g_token;
 bool g_refused = false;
+bool g_account_loaded = false;
+std::string g_test_np_base;
 // Read on first use: the game may ask for its NP state before the online start.
 void LoadAccountLocked() {
-    static bool loaded = false;
-    if (loaded) return;
-    loaded = true;
+    if (g_account_loaded) return;
+    g_account_loaded = true;
     g_name = Env("BB_THD_ONLINE_ID").substr(0, 16);
     g_token = Env("BB_THD_TOKEN");
 }
 } // namespace
+
+void SetTestServer(const std::string& np_base, const std::string& online_id,
+                   const std::string& token) {
+    std::lock_guard lk(g_account_mu);
+    g_test_np_base = np_base;
+    while (!g_test_np_base.empty() && g_test_np_base.back() == '/') g_test_np_base.pop_back();
+    g_account_loaded = true;
+    g_name = online_id.substr(0, 16);
+    g_token = token;
+    g_refused = false;
+}
 
 std::string AccountName() {
     std::lock_guard lk(g_account_mu);
@@ -186,14 +200,20 @@ struct HttpResult {
     std::string error;
 };
 
-// One keep-alive connection per thread and server: the poller asks four times a second.
-HttpResult Perform(const std::string& base, const std::string& path, const std::string* post,
-                   int timeout_ms) {
-    thread_local std::map<std::string, std::unique_ptr<httplib::Client>> clients;
-    auto& cli = clients[base];
-    const auto timeout = std::chrono::milliseconds(timeout_ms);
+// One keep-alive connection per thread and server, with separate connect/read timeouts and
+// optional PollGate abort registration for long polling.
+HttpResult PerformOnClient(std::shared_ptr<httplib::Client>& cli, const std::string& base,
+                           const std::string& path, const std::string* post,
+                           int read_timeout_ms, int connect_timeout_ms,
+                           PollPacing::PollGate* gate = nullptr, std::uint64_t gen = 0) {
+    const int effective_read = std::max(1, read_timeout_ms);
+    const int conn_ms = connect_timeout_ms > 0
+                            ? connect_timeout_ms
+                            : std::min(PollPacing::kConnectMs, effective_read);
+    const auto connect_to = std::chrono::milliseconds(std::max(1, conn_ms));
+    const auto rw_to = std::chrono::milliseconds(effective_read);
     auto open = [&] {
-        cli = std::make_unique<httplib::Client>(base);
+        cli = std::make_shared<httplib::Client>(base);
         cli->set_keep_alive(true);
         cli->set_follow_location(false);
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
@@ -208,17 +228,29 @@ HttpResult Perform(const std::string& base, const std::string& path, const std::
     if (const std::string token = AccountToken(); !token.empty()) {
         headers.emplace("X-BB-Token", token);
     }
-    auto send = [&] {
-        cli->set_connection_timeout(timeout);
-        cli->set_read_timeout(timeout);
-        cli->set_write_timeout(timeout);
-        return post ? cli->Post(path, headers, *post, "application/json") : cli->Get(path, headers);
+    auto send = [&]() -> httplib::Result {
+        std::shared_ptr<httplib::Client> cur = cli;
+        struct AbortGuard {
+            PollPacing::PollGate* g = nullptr;
+            ~AbortGuard() {
+                if (g) g->ClearAbort();
+            }
+        } guard{gate};
+        if (gate && !gate->SetAbort(gen, [cur] { cur->stop(); })) {
+            guard.g = nullptr;
+            return httplib::Result(nullptr, httplib::Error::Canceled);
+        }
+        cur->set_connection_timeout(connect_to);
+        cur->set_read_timeout(rw_to);
+        cur->set_write_timeout(rw_to);
+        return post ? cur->Post(path, headers, *post, "application/json") : cur->Get(path, headers);
     };
     HttpResult r;
     httplib::Result res = send();
-    // A kept-alive connection the server closed meanwhile fails on its first read or write
-    // ("Failed to read connection"): once more on a new one, as bbhost's fresh request would.
-    if (!res && reused && (res.error() == httplib::Error::Read || res.error() == httplib::Error::Write)) {
+    // A kept-alive connection the server closed meanwhile fails on its first read or write:
+    // retry once on a fresh connection unless the poller generation was already stopped.
+    if (!res && reused && (!gate || gate->Live(gen)) &&
+        (res.error() == httplib::Error::Read || res.error() == httplib::Error::Write)) {
         open();
         res = send();
     }
@@ -232,8 +264,16 @@ HttpResult Perform(const std::string& base, const std::string& path, const std::
     return r;
 }
 
-bool ParseReply(const std::string& what, const HttpResult& r, Json& out, std::string& error) {
+HttpResult Perform(const std::string& base, const std::string& path, const std::string* post,
+                   int read_timeout_ms, int connect_timeout_ms) {
+    thread_local std::map<std::string, std::shared_ptr<httplib::Client>> clients;
+    return PerformOnClient(clients[base], base, path, post, read_timeout_ms, connect_timeout_ms);
+}
+
+bool ParseReply(const std::string& what, const HttpResult& r, Json& out, std::string& error,
+                int* out_status = nullptr) {
     static std::atomic<int> logs{0};
+    if (out_status) *out_status = r.status;
     if (!r.error.empty()) {
         error = r.error;
     } else if (r.status < 200 || r.status >= 300) {
@@ -255,17 +295,20 @@ bool ParseReply(const std::string& what, const HttpResult& r, Json& out, std::st
 } // namespace
 
 std::string NpBase() {
-    return Cfg().np_base;
+    std::lock_guard lk(g_account_mu);
+    return g_test_np_base.empty() ? Cfg().np_base : g_test_np_base;
 }
 
 bool NpPost(const std::string& path, const Json& body, Json& out, std::string& error,
-            int timeout_ms) {
+            int read_timeout_ms, int connect_timeout_ms, int* out_status) {
     const std::string text = body.dump();
-    return ParseReply("POST " + path, Perform(Cfg().np_base, path, &text, timeout_ms), out, error);
+    return ParseReply("POST " + path,
+                      Perform(NpBase(), path, &text, read_timeout_ms, connect_timeout_ms), out,
+                      error, out_status);
 }
 
 bool NpGet(const std::string& path, Json& out, std::string& error, int timeout_ms) {
-    return ParseReply("GET " + path, Perform(Cfg().np_base, path, nullptr, timeout_ms), out, error);
+    return ParseReply("GET " + path, Perform(NpBase(), path, nullptr, timeout_ms, -1), out, error);
 }
 
 void AddGameHeaders(std::vector<std::pair<std::string, std::string>>& headers) {
@@ -701,56 +744,98 @@ void RoomClear() {
 
 namespace {
 std::mutex g_pollmu;
-std::condition_variable g_pollcv;
-std::atomic<bool> g_pollrun{false};
 std::function<void(const Json&)> g_handler;
-long long g_cursor = 0;
+std::atomic<long long> g_cursor{0};
+PollPacing::PollGate g_poll_gate;
+PollPacing::PollGate g_keep_gate;
 
-void PollerMain() {
+void PollerMain(std::uint64_t gen) {
     const std::string me = OnlineId();
-    int interval_ms = 250;
-    while (g_pollrun.load()) {
-        Json body = {{"OnlineId", me}, {"Cursor", g_cursor}, {"Categories", Json::array({"matching2"})}};
-        Json reply;
-        std::string err;
-        if (NpPost("/np/events/poll", body, reply, err, 4000)) {
-            interval_ms = 250;
-            const long long next = IntOf(reply, "NextCursor", g_cursor);
-            if (IntOf(reply, "HasEvent", 0) != 0) {
-                std::function<void(const Json&)> handler;
-                {
-                    std::lock_guard lk(g_pollmu);
-                    handler = g_handler;
-                }
-                Log("np: event #%lld %s", IntOf(reply, "EventId", 0), StrOf(reply, "Name").c_str());
-                if (handler) {
-                    try {
-                        handler(reply);
-                    } catch (const std::exception& e) {
-                        Log("np: event handler: %s", e.what());
+    PollPacing::State pacing;
+    std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+    std::shared_ptr<httplib::Client> cli;
+    std::string cli_base;
+
+    while (g_poll_gate.Live(gen)) {
+        PollPacing::Outcome o;
+        {
+            if (!g_poll_gate.Begin(gen)) break;
+            struct EndGuard {
+                PollPacing::PollGate* g;
+                ~EndGuard() { g->End(); }
+            } end_guard{&g_poll_gate};
+
+            const std::string base = NpBase();
+            if (base != cli_base) {
+                cli.reset();
+                cli_base = base;
+            }
+            Json body = {{"OnlineId", me},
+                         {"Cursor", g_cursor.load()},
+                         {"Categories", Json::array({"matching2"})}};
+            if (pacing.wait_ms > 0) {
+                body["WaitMs"] = pacing.wait_ms;
+            }
+            const std::string text = body.dump();
+            const auto t0 = std::chrono::steady_clock::now();
+            const HttpResult hr = PerformOnClient(
+                cli, base, "/np/events/poll", &text, PollPacing::TimeoutFor(pacing.wait_ms),
+                PollPacing::ConnectFor(pacing.wait_ms), &g_poll_gate, gen);
+            o.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - t0)
+                               .count();
+            if (!g_poll_gate.Live(gen)) break;
+
+            Json reply;
+            std::string err;
+            int status = 0;
+            if (ParseReply("POST /np/events/poll", hr, reply, err, &status)) {
+                o.status = status;
+                o.answered = true;
+                o.wait_max_ms = IntOf(reply, "WaitMaxMs", 0);
+                const long long cur = g_cursor.load();
+                const long long next = IntOf(reply, "NextCursor", cur);
+                o.event = IntOf(reply, "HasEvent", 0) != 0;
+                if (o.event) {
+                    std::function<void(const Json&)> handler;
+                    {
+                        std::lock_guard lk(g_pollmu);
+                        handler = g_handler;
+                    }
+                    Log("np: event #%lld %s", IntOf(reply, "EventId", 0),
+                        StrOf(reply, "Name").c_str());
+                    if (handler) {
+                        try {
+                            handler(reply);
+                        } catch (const std::exception& e) {
+                            Log("np: event handler: %s", e.what());
+                        }
+                    }
+                    if (!g_poll_gate.Live(gen)) break;
+                    Json ack = {{"OnlineId", me}, {"Cursor", next}};
+                    Json ack_reply;
+                    std::string ack_err;
+                    NpPost("/np/events/ack", ack, ack_reply, ack_err, PollPacing::kPlainTimeoutMs);
+                    g_cursor.store(next);
+                } else {
+                    long long expected = cur;
+                    while (expected < next && !g_cursor.compare_exchange_weak(expected, next)) {
                     }
                 }
-                Json ack = {{"OnlineId", me}, {"Cursor", next}};
-                Json ack_reply;
-                std::string ack_err;
-                NpPost("/np/events/ack", ack, ack_reply, ack_err, 4000);
-                g_cursor = next;
-                continue; // drain without waiting while there are events
+            } else {
+                o.status = status;
+                o.refused = Refused();
             }
-            g_cursor = std::max(g_cursor, next);
-        } else if (Refused()) {
-            interval_ms = 60000; // nothing arrives until this PC signs in again
-        } else {
-            interval_ms = interval_ms < 4000 ? interval_ms * 2 : 4000; // the server is away
         }
-        std::unique_lock lk(g_pollmu);
-        g_pollcv.wait_for(lk, std::chrono::milliseconds(interval_ms), [] { return !g_pollrun.load(); });
+
+        const PollPacing::Next step = PollPacing::NextStep(pacing, o, uni(rng));
+        pacing = step.state;
+        if (step.sleep_ms > 0 && !g_poll_gate.Sleep(gen, step.sleep_ms)) {
+            break;
+        }
     }
 }
-
-std::atomic<bool> g_keeprun{false};
-std::mutex g_keepmu;
-std::condition_variable g_keepcv;
 
 // Our new reflexive address to the server (a relay port that changed).
 void ServerSignalingUpdate() {
@@ -768,23 +853,18 @@ void ServerSignalingUpdate() {
     }
     Json reply;
     std::string err;
-    NpPost("/mp/matching2/signaling_update", body, reply, err, 4000);
+    NpPost("/mp/matching2/signaling_update", body, reply, err, PollPacing::kPlainTimeoutMs);
 }
 
 // The STUN binding every 15 s while the context runs: it keeps our NAT's mapping to the server
 // open (routers forget an idle UDP mapping in 30 s to a few minutes) and the relay port alive.
-void KeepaliveMain() {
+void KeepaliveMain(std::uint64_t gen) {
     std::string last;
     {
         std::lock_guard lk(g_mapped.mu);
         last = g_mapped.addr + ":" + std::to_string(g_mapped.port);
     }
-    while (g_keeprun.load()) {
-        {
-            std::unique_lock lk(g_keepmu);
-            g_keepcv.wait_for(lk, std::chrono::seconds(15), [] { return !g_keeprun.load(); });
-        }
-        if (!g_keeprun.load()) break;
+    while (g_keep_gate.Sleep(gen, 15000)) {
         MappedRefresh(true);
         std::string now;
         {
@@ -801,23 +881,23 @@ void KeepaliveMain() {
 } // namespace
 
 void PollerStart(std::function<void(const Json&)> handler) {
-    std::lock_guard lk(g_pollmu);
-    g_handler = std::move(handler);
-    if (g_pollrun.exchange(true)) return;
-    g_cursor = 0;
-    std::thread(PollerMain).detach();
-    if (!g_keeprun.exchange(true)) std::thread(KeepaliveMain).detach();
+    std::uint64_t poll_gen = 0;
+    std::uint64_t keep_gen = 0;
+    {
+        std::lock_guard lk(g_pollmu);
+        g_handler = std::move(handler);
+        if (g_poll_gate.Running()) return;
+        g_cursor.store(0);
+        poll_gen = g_poll_gate.Start();
+        keep_gen = g_keep_gate.Start();
+    }
+    std::thread([poll_gen] { PollerMain(poll_gen); }).detach();
+    std::thread([keep_gen] { KeepaliveMain(keep_gen); }).detach();
 }
 
 void PollerStop() {
-    {
-        std::lock_guard lk(g_keepmu);
-        g_keeprun.store(false);
-        g_keepcv.notify_all();
-    }
-    std::lock_guard lk(g_pollmu);
-    g_pollrun.store(false);
-    g_pollcv.notify_all();
+    g_keep_gate.Stop();
+    g_poll_gate.Stop();
 }
 
 // ---- game memory: 1.09's addresses (Binary Ninja, image base 0x400000) -------------------------------

@@ -612,6 +612,17 @@ if (WIN32)
     target_link_libraries(shader-pack-test PRIVATE -mconsole pthread winmm onecore bcrypt)
 endif()
 
+add_executable(scheduler-suspend-test EXCLUDE_FROM_ALL ../tests/test_scheduler_suspend.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(scheduler-suspend-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include)
+target_compile_options(scheduler-suspend-test PRIVATE -UNDEBUG -fPIC)
+set_source_files_properties(../tests/test_scheduler_suspend.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(scheduler-suspend-test PRIVATE bbgpu Vulkan::Headers GPUOpen::VulkanMemoryAllocator)
+set_target_properties(scheduler-suspend-test PROPERTIES
+    BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib"
+    INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib")
+
 add_executable(perf-empirical-test EXCLUDE_FROM_ALL ../tests/test_perf_empirical.cpp)
 target_include_directories(perf-empirical-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_options(perf-empirical-test PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/.. -UNDEBUG -fPIC)
@@ -621,4 +632,13 @@ set_target_properties(perf-empirical-test PROPERTIES
     BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib"
     INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib")
 
-
+add_executable(recorder-rest-test EXCLUDE_FROM_ALL ../tests/test_recorder_rest.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(recorder-rest-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include)
+target_compile_options(recorder-rest-test PRIVATE -UNDEBUG -fPIC -Wall -Wextra)
+set_source_files_properties(../tests/test_recorder_rest.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(recorder-rest-test PRIVATE bbgpu Vulkan::Headers GPUOpen::VulkanMemoryAllocator)
+set_target_properties(recorder-rest-test PROPERTIES
+    BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib"
+    INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib")

@@ -366,6 +366,7 @@ bool Rasterizer::CopyRingDeduplicated(
         u64 size = 0;
         XXH128_hash_t hash{};
         u64 at = 0; ///< monotonic ring position
+        u64 ring_id = 0;
     };
     // On the heap: static TLS is reserved on every thread's stack.
     thread_local auto slots = std::make_unique<std::array<Slot, 8192>>();
@@ -382,11 +383,14 @@ bool Rasterizer::CopyRingDeduplicated(
     // The same bytes copied for another address (equal constants of other objects): by content.
     thread_local auto by_content = std::make_unique<std::array<Slot, 8192>>();
     auto& content_slot = (*by_content)[hash.low64 >> 51];
+    const u64 ring_id = constant_ring->Id();
     std::optional<u64> offset;
-    if (slot.address == address && slot.size == size && XXH128_isEqual(slot.hash, hash)) {
+    if (slot.ring_id == ring_id && slot.address == address && slot.size == size &&
+        XXH128_isEqual(slot.hash, hash)) {
         offset = constant_ring->Reuse(slot.at, size);
     }
-    if (!offset && content_slot.size == size && XXH128_isEqual(content_slot.hash, hash)) {
+    if (!offset && content_slot.ring_id == ring_id && content_slot.size == size &&
+        XXH128_isEqual(content_slot.hash, hash)) {
         offset = constant_ring->Reuse(content_slot.at, size);
         if (offset) {
             slot = content_slot;
@@ -404,7 +408,7 @@ bool Rasterizer::CopyRingDeduplicated(
         }
         std::memcpy(constant_ring->Data(*offset), bytes->data(), size);
         constant_ring->Flush(*offset, size);
-        slot = {address, size, hash, constant_ring->LastAllocated()};
+        slot = {address, size, hash, constant_ring->LastAllocated(), ring_id};
         content_slot = slot;
         ++misses;
     }

@@ -2,6 +2,14 @@ diff --git a/a/core/libraries/network/http.cpp b/b/core/libraries/network/http.c
 index a78e1eb..db1a8e8 100644
 --- a/a/core/libraries/network/http.cpp
 +++ b/b/core/libraries/network/http.cpp
+@@ -35,6 +35,7 @@
+ #include "core/libraries/libs.h"
+ #include "core/libraries/network/http.h"
+ #include "http_error.h"
++#include "thd/thd_http_timeout.h"
+ 
+ #if __has_include(<httplib.h>)
+ #include <httplib.h>
 @@ -365,6 +365,10 @@ static const HostOverrideState& GetHostOverrideState() {
      return s;
  }
@@ -10,9 +18,6 @@ index a78e1eb..db1a8e8 100644
 +extern "C" bool bbthd_enabled();
 +extern "C" void bbthd_add_game_headers(std::vector<std::pair<std::string, std::string>>* headers);
 +
- bool ApplyHostOverride(std::string& scheme, std::string& host, u16& port, bool& is_secure) {
-     const auto& state = GetHostOverrideState();
-     if (state.entries.empty()) {
 @@ -385,6 +389,17 @@ bool ApplyHostOverride(std::string& scheme, std::string& host, u16& port, bool&
      if (it == state.entries.end()) {
          it = state.entries.find(host);
@@ -31,6 +36,16 @@ index a78e1eb..db1a8e8 100644
      if (it == state.entries.end()) {
          it = state.entries.find("*");
      }
+@@ -863,7 +864,8 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
+             base_url += ":" + std::to_string(plan.port);
+         }
+         httplib::Client cli(base_url);
+-        cli.set_connection_timeout(pick_timeout_seconds(plan.settings.connect_timeout_us, 30));
++        cli.set_connection_timeout(
++            BbThd::PickConnectTimeoutMs(plan.settings.connect_timeout_us, 30, bbthd_enabled()));
+         cli.set_read_timeout(pick_timeout_seconds(plan.settings.recv_timeout_us, 120));
+         cli.set_write_timeout(pick_timeout_seconds(plan.settings.send_timeout_us, 120));
+ 
 @@ -1745,6 +1760,10 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
                                                          ? tmpl_user_agent
                                                          : BuildLibhttpUserAgent(""));

@@ -85,7 +85,12 @@ OcclusionQueries::OcclusionQueries(const Instance& instance_, Scheduler& schedul
 }
 
 OcclusionQueries::~OcclusionQueries() {
+    if (active) {
+        EndSegment();
+    }
+    started = false;
     scheduler.SetCarriedScope(nullptr);
+    scheduler.Finish();
 }
 
 void OcclusionQueries::BeginSegment(bool inside_render_pass) {
@@ -284,6 +289,11 @@ void OcclusionQueries::Resume(bool inside_render_pass) {
     }
 }
 
+bool OcclusionQueries::CanResumeInPass() const {
+    std::scoped_lock lk{mutex};
+    return !started || !Counting() || begun < reset_until;
+}
+
 bool OcclusionQueries::Counting() const {
     return !intervals || !open.empty();
 }
@@ -318,6 +328,8 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
         ResetAhead();
         started = true;
         scheduler.SetCarriedScope(this);
+    } else {
+        scheduler.BreakPendingSuspend();
     }
     // BB_OCCLUSION_TRACE=N (diagnostics): the first N events, with the frame and the render pass.
     static const u64 trace = [] {

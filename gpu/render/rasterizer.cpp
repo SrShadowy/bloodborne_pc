@@ -528,10 +528,6 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         }
     }
     read_draw = {};
-    EmitVertexBuffers();
-    if (is_indexed) {
-        EmitIndexBuffer();
-    }
     if (VertexInPlaceDiag() && !in_place_streams.empty()) {
         NoteInPlaceVertexReads(pipeline, is_indexed, index_offset);
     }
@@ -893,12 +889,24 @@ void Rasterizer::BeginDraw(const GraphicsPipeline* pipeline, const RenderState& 
     // them already: single frames were drawn with the 960x540 viewport of the passes before (the
     // final picture in the top-left quarter, black around it; docs/Flicker_video_2026-10-17.ru.md).
     // BB_DYNAMIC_STATE_ALWAYS=1 (diagnostics): all dynamic state again at every draw.
+    const bool pass_begins = scheduler.WillBeginRendering(state);
     if (BoundCmdState::ForceRebind()) {
         scheduler.GetDynamicState().Invalidate();
-    } else if (scheduler.WillBeginRendering(state)) {
+    } else if (pass_begins) {
         scheduler.GetDynamicState().InvalidateViewports();
     }
+    MarkPass(pipeline, state);
+    if (occlusion) {
+        occlusion->SetPassScale(target_scale[0] * target_scale[1]); // samples at the game's size
+    }
+    scheduler.BeginRendering(state);
+    // Emit per-draw Vulkan commands only after BeginRendering opens or resumes the dynamic pass,
+    // so pre-draw state/binding updates do not break pending VK_RENDERING_SUSPENDING_BIT chains.
     UpdateDynamicState(pipeline, is_indexed);
+    EmitVertexBuffers();
+    if (is_indexed) {
+        EmitIndexBuffer();
+    }
     // BB_DISPLAY_WATCH=1 (diagnostics): every draw into a display buffer, with its sizes and state.
     static const bool display_watch = bb_env("BB_DISPLAY_WATCH") != nullptr;
     // BB_DISPLAY_WATCH_TARGET=addr: also every draw into that color target.
@@ -912,7 +920,7 @@ void Rasterizer::BeginDraw(const GraphicsPipeline* pipeline, const RenderState& 
         const auto& rvp = Regs().viewports[0];
         std::printf("Display watch regs: vp0 %g %g %g %g vte %#x jitter %g,%g new pass %d\n", rvp.xscale,
                     rvp.xoffset, rvp.yscale, rvp.yoffset, std::bit_cast<u32>(Regs().viewport_control),
-                    draw_jitter[0], draw_jitter[1], int(scheduler.WillBeginRendering(state)));
+                    draw_jitter[0], draw_jitter[1], int(pass_begins));
         const auto& ds = scheduler.GetDynamicState();
         const auto& vps = ds.CurrentViewports();
         const auto& scs = ds.CurrentScissors();
@@ -931,12 +939,6 @@ void Rasterizer::BeginDraw(const GraphicsPipeline* pipeline, const RenderState& 
                     int(Regs().IsClipDisabled()), push_data.xscale, push_data.xoffset,
                     push_data.yscale, push_data.yoffset);
     }
-    MarkPass(pipeline, state);
-    const bool pass_begins = scheduler.WillBeginRendering(state);
-    if (occlusion) {
-        occlusion->SetPassScale(target_scale[0] * target_scale[1]); // samples at the game's size
-    }
-    scheduler.BeginRendering(state);
     // BB_GPU_PROFILE_DRAWS=1: the pass's beginning (what its boundary recorded, its load ops) apart
     // from its draws.
     if (auto* profiler = GpuProfiler::Get(); profiler && pass_begins) {
@@ -1078,9 +1080,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     }
     const auto state = BeginRendering(pipeline);
 
-    BindVertexBuffers(pipeline);
+    ResolveVertexBuffers(pipeline, nullptr);
     if (is_indexed) {
-        BindIndexBuffer();
+        ResolveIndexBuffer(0);
     }
 
     const VideoCore::Buffer* count_buffer;

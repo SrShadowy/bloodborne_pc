@@ -43,6 +43,10 @@ public:
         return buffer.Handle();
     }
 
+    [[nodiscard]] u64 Id() const noexcept {
+        return id;
+    }
+
     /// Stage A: `size` bytes at `alignment`; returns the ring offset, or nullopt when the ring is
     /// still in use by the GPU (the caller leaves the binding to stage B).
     std::optional<u64> Allocate(u64 size, u64 alignment) {
@@ -146,6 +150,8 @@ private:
         u64 end;
         u64 tick;
     };
+    static inline std::atomic<u64> next_id{1};
+    const u64 id = next_id.fetch_add(1, std::memory_order_relaxed);
     Scheduler& scheduler;
     VideoCore::Buffer buffer;
     u64 position = 0;     ///< stage A

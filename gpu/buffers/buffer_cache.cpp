@@ -59,6 +59,10 @@ static bool LayerTranslate(uint64_t va, uint64_t* phys, uint64_t* end) {
 
 namespace VideoCore {
 
+namespace {
+std::atomic<BufferCache*> hooked_cache{nullptr};
+} // namespace
+
 /// On an integrated GPU (Steam Deck) VRAM is the same memory: everything stays in place there.
 bool integrated_gpu = false;
 /// bbport: Garlic memory (type 3) is cached in VRAM, Onion in place. Optimizations, for A/B: VRAM copies uploaded by GPU copies from the
@@ -175,16 +179,28 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // game the port knows nothing about.
     const Game::Profile* game = Game::Active();
     if (game && game->install_hooks && !bb_env_off("BB_GUEST_HOOKS")) {
-        static BufferCache* hooked_cache = this;
-        game->install_hooks(Game::CoreServices{
-            .fresh_range = +[](u64 address, u64 size) {
-                hooked_cache->NoteFreshRange(address, size);
-            },
-            .dead_range = +[](u64 address, u64 size) {
-                hooked_cache->LayerDomainDead(address, size); // queued: the GPU thread forgets it
-            },
-            .live_range = +[](u64 address, u64 size) { hooked_cache->LayerDomainAdd(address, size); },
-        });
+        hooked_cache.store(this, std::memory_order_release);
+        static bool hooks_installed = false;
+        if (!hooks_installed) {
+            hooks_installed = true;
+            game->install_hooks(Game::CoreServices{
+                .fresh_range = +[](u64 address, u64 size) {
+                    if (auto* cache = hooked_cache.load(std::memory_order_acquire)) {
+                        cache->NoteFreshRange(address, size);
+                    }
+                },
+                .dead_range = +[](u64 address, u64 size) {
+                    if (auto* cache = hooked_cache.load(std::memory_order_acquire)) {
+                        cache->LayerDomainDead(address, size); // queued: the GPU thread forgets it
+                    }
+                },
+                .live_range = +[](u64 address, u64 size) {
+                    if (auto* cache = hooked_cache.load(std::memory_order_acquire)) {
+                        cache->LayerDomainAdd(address, size);
+                    }
+                },
+            });
+        }
     } else if (game && game->install_hooks) {
         std::printf("Guest hooks: off (BB_GUEST_HOOKS=0): nothing in the game's own code is hooked\n");
     }
@@ -251,7 +267,13 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     runtime.FillBuffer(bda_pagetable_buffer.get(), 0u, bda_pagetable_size, 0u);
 }
 
-BufferCache::~BufferCache() = default;
+BufferCache::~BufferCache() {
+    BufferCache* expected = this;
+    hooked_cache.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+    if (LayerMode()) {
+        BbLayer::GpuMemory::Get().ClearMirrors();
+    }
+}
 
 void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks) {
     if (LayerMode()) {
@@ -875,14 +897,16 @@ void BufferCache::NoteWriteTick(VAddr address, u64 size) {
     // The same range again in the same submission changes nothing: the copy shader's paged
     // bindings over nearly all memory (~60 a frame, ~10 a submission) were a store per MiB each.
     thread_local VAddr last_address = 0;
-    thread_local u64 last_size = 0, last_tick = 0;
+    thread_local u64 last_size = 0, last_tick = 0, last_cache_id = 0;
     const u64 tick = scheduler.CurrentTick();
-    if (address == last_address && size == last_size && tick == last_tick) {
+    if (address == last_address && size == last_size && tick == last_tick &&
+        last_cache_id == cache_id) {
         return;
     }
     last_address = address;
     last_size = size;
     last_tick = tick;
+    last_cache_id = cache_id;
     WatchGpuWrite(address, size, __LINE__), WriteTicks().Note(address, size, tick);
 }
 } // namespace VideoCore

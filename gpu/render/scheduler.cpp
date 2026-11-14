@@ -15,6 +15,7 @@
 
 #include <dlfcn.h>
 #include <execinfo.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "bbport_copy.h"
@@ -116,6 +117,16 @@ vk::CommandBuffer BeginCommandBuffer(CommandPool& pool) {
     return cmdbuf;
 }
 
+u64 CurrentThreadCpuNs() noexcept {
+#if defined(CLOCK_THREAD_CPUTIME_ID)
+    timespec ts{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) {
+        return u64(ts.tv_sec) * 1'000'000'000ull + u64(ts.tv_nsec);
+    }
+#endif
+    return 0;
+}
+
 } // namespace
 
 Scheduler::Scheduler(const Instance& instance, bool threaded_recording)
@@ -156,6 +167,11 @@ Scheduler::Scheduler(const Instance& instance, bool threaded_recording)
         if (async_submit) {
             std::printf("GPU: submissions go out from the recording threads (BB_ASYNC_SUBMIT)\n");
         }
+        suspend_resume = !bb_env_off("BB_VK_SUSPEND_RESUME");
+        if (!suspend_resume && workers.size() >= 2) {
+            std::printf(
+                "GPU: dynamic rendering suspend/resume across segments disabled (BB_VK_SUSPEND_RESUME=0)\n");
+        }
     }
     AllocateWorkerCommandBuffers();
     priority_ops_thread = std::jthread(std::bind_front(&Scheduler::PriorityOpsThread, this));
@@ -184,10 +200,39 @@ void Scheduler::BeginRendering(const RenderState& state) {
         TracePassBreak(pass_end_caller);
     }
     resume_rendering = false;
+
+    bool vk_resuming = false;
+    bool effective_resume = resume;
+    if (pending_suspend.active) {
+        const bool can_resume_in_pass =
+            suspend_resume && IsRecordingDeferred() && pending_suspend.batch == batch &&
+            resume && (!carried_scope || carried_scope->CanResumeInPass());
+        if (can_resume_in_pass) {
+            ++suspend_stats.resumed;
+            vk_resuming = true;
+            // Match the suspended VkRenderingInfo identically (even loadOp/clearValue): Vulkan
+            // skips load operations when VK_RENDERING_RESUMING_BIT is set.
+            effective_resume = pending_suspend.resumed_load_op;
+            ResolvePendingSuspend(true, false);
+        } else {
+            if (!resume) {
+                ++suspend_stats.fallback_state;
+            } else if (carried_scope && !carried_scope->CanResumeInPass()) {
+                ++suspend_stats.fallback_query_reset;
+            } else {
+                ++suspend_stats.fallback_submit_or_direct;
+            }
+            ResolvePendingSuspend(false, false);
+        }
+    }
+
     EndRendering();
-    CarrySuspend(false);
+    if (!vk_resuming) {
+        CarrySuspend(false);
+    }
     is_rendering = true;
     render_state = state;
+    staging_resumed_load_op = effective_resume;
 
     // Owned by the recorded closure (it may run later, on a recording thread).
     struct Pass {
@@ -195,15 +240,16 @@ void Scheduler::BeginRendering(const RenderState& state) {
         vk::RenderingAttachmentInfo depth;
         vk::RenderingAttachmentInfo stencil;
         vk::RenderingInfo info;
-        void Begin(vk::CommandBuffer cmdbuf) {
+        void operator()(vk::CommandBuffer cmdbuf) {
             info.pColorAttachments = colors.data();
             info.pDepthAttachment = info.pDepthAttachment ? &depth : nullptr;
             info.pStencilAttachment = info.pStencilAttachment ? &stencil : nullptr;
             cmdbuf.beginRendering(info);
         }
     } pass{};
-    const auto load = [resume](bool clear) {
-        return clear && !resume ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
+    const auto load = [effective_resume](bool clear) {
+        return clear && !effective_resume ? vk::AttachmentLoadOp::eClear
+                                          : vk::AttachmentLoadOp::eLoad;
     };
     for (u32 i = 0; i < state.num_color_attachments; ++i) {
         const auto& color = state.color_attachments[i];
@@ -227,21 +273,34 @@ void Scheduler::BeginRendering(const RenderState& state) {
     pass.stencil.loadOp = load(ds.stencil_clear);
     pass.stencil.clearValue = vk::ClearValue{.depthStencil = {.stencil = ds.clear_value[1]}};
     pass.info = {
+        .flags = vk_resuming ? vk::RenderingFlagBits::eResuming : vk::RenderingFlags{},
         .renderArea = {{0, 0}, {state.width, state.height}},
         .layerCount = state.num_layers,
         .colorAttachmentCount = state.num_color_attachments,
         .pDepthAttachment = ds.has_depth ? &pass.depth : nullptr,
         .pStencilAttachment = ds.has_stencil ? &pass.stencil : nullptr,
     };
-    if (workers.empty()) {
-        pass.Begin(current_cmdbuf);
+    if (!IsRecordingDeferred()) {
+        Record(pass);
     } else {
-        Record([pass](vk::CommandBuffer cmdbuf) mutable { pass.Begin(cmdbuf); });
+        ProducerScope producer{*this, "Record"};
+        auto* slot = CurrentChunk().TryPush(pass);
+        if (!slot) {
+            RetireChunk();
+            slot = CurrentChunk().TryPush(pass);
+            ASSERT(slot);
+        }
+        if (CanStageSuspend()) {
+            staging_pass = true;
+            staging_full_from = full_chunks.size();
+            staging_flags = &slot->info.flags;
+        }
     }
     CarryResume(true);
 }
 
 void Scheduler::EndRendering() {
+    BreakPendingSuspend();
     if (!is_rendering) {
         return;
     }
@@ -252,6 +311,7 @@ void Scheduler::EndRendering() {
     CarrySuspend(true);
     is_rendering = false;
     Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
+    ReleasePassStaging(false);
     CarryResume(false);
 }
 
@@ -409,6 +469,130 @@ void Scheduler::WaitHostCopies() {
     BbCopy::WaitAsync();
 }
 
+bool Scheduler::CanStageSuspend() const noexcept {
+    return suspend_resume && IsRecordingDeferred() && workers.size() >= 2 &&
+           current_segment + 1 < MaxSegments &&
+           !BbToggle::Disabled(BbToggle::ParallelRecording);
+}
+
+bool Scheduler::HasOrderedWork() const noexcept {
+    return !ordered_full.empty() || (ordered_chunk && !ordered_chunk->Empty());
+}
+
+bool Scheduler::EnqueueWorkerChunksLocked(Worker& worker, u32 segment,
+                                          SubmissionBatch* target_batch,
+                                          std::span<std::unique_ptr<RecordChunk>> chunks) {
+    if (chunks.empty()) {
+        return false;
+    }
+    for (auto& chunk : chunks) {
+        chunk->segment = segment;
+        chunk->batch = target_batch;
+        worker.queue.push_back(std::move(chunk));
+        ++target_batch->handed[segment];
+    }
+    worker.queued.store(worker.queue.size(), std::memory_order_release);
+    return worker.sleeping;
+}
+
+bool Scheduler::EnqueueOrderedChunksLocked(Worker& worker, u32 segment,
+                                           SubmissionBatch* target_batch,
+                                           std::unique_ptr<RecordChunk> next_ordered) {
+    // Ordered tasks run after the commands handed over before them in stream order.
+    const auto queue = [&](std::unique_ptr<RecordChunk> chunk) {
+        chunk->segment = segment;
+        chunk->batch = target_batch;
+        chunk->after = target_batch->handed[segment];
+        ordered_queue.push_back(std::move(chunk));
+    };
+    for (auto& chunk : ordered_full) {
+        queue(std::move(chunk));
+    }
+    if (next_ordered) {
+        ordered_chunk.swap(next_ordered); // next_ordered: the chunk handed over
+        queue(std::move(next_ordered));
+    }
+    ordered_full.clear();
+    ordered_queued.store(ordered_queue.size(), std::memory_order_release);
+    // Any thread may run them; the current segment's thread is woken when sleeping.
+    return !ordered_running && worker.sleeping;
+}
+
+void Scheduler::ReleasePassStaging(bool flush_full_chunks) {
+    staging_pass = false;
+    staging_full_from = 0;
+    staging_flags = nullptr;
+    if (!flush_full_chunks || full_chunks.empty()) {
+        return;
+    }
+    Worker& worker = *workers[current_segment % workers.size()];
+    bool wake = false;
+    {
+        std::scoped_lock lk{recorder_mutex};
+        wake = EnqueueWorkerChunksLocked(worker, current_segment, batch, full_chunks);
+    }
+    full_chunks.clear();
+    if (wake) {
+        worker.cv.notify_one();
+    }
+}
+
+void Scheduler::HandOverPrefixChunks() {
+    const size_t prefix_count = std::min(staging_full_from, full_chunks.size());
+    const bool ordered = HasOrderedWork();
+    if (prefix_count == 0 && !ordered) {
+        return;
+    }
+    std::unique_ptr<RecordChunk> next_ordered =
+        ordered_chunk && !ordered_chunk->Empty() ? AcquireChunk() : nullptr;
+    Worker& worker = *workers[current_segment % workers.size()];
+    bool wake = false;
+    {
+        std::scoped_lock lk{recorder_mutex};
+        if (prefix_count > 0) {
+            wake |= EnqueueWorkerChunksLocked(worker, current_segment, batch,
+                                              {full_chunks.data(), prefix_count});
+        }
+        if (ordered) {
+            wake |= EnqueueOrderedChunksLocked(worker, current_segment, batch,
+                                               std::move(next_ordered));
+        }
+    }
+    if (prefix_count > 0) {
+        full_chunks.erase(full_chunks.begin(), full_chunks.begin() + ptrdiff_t(prefix_count));
+        staging_full_from = 0;
+    }
+    if (wake) {
+        worker.cv.notify_one();
+    }
+}
+
+void Scheduler::ResolvePendingSuspend(bool suspend, bool call_carry_resume) {
+    if (!pending_suspend.active) {
+        return;
+    }
+    auto state = std::move(pending_suspend);
+    pending_suspend = {};
+    if (suspend && state.flags_ptr) {
+        *state.flags_ptr |= vk::RenderingFlagBits::eSuspending;
+    }
+    if (!state.chunks.empty()) {
+        Worker& worker = *workers[state.segment % workers.size()];
+        bool wake = false;
+        {
+            std::scoped_lock lk{recorder_mutex};
+            wake = EnqueueWorkerChunksLocked(worker, state.segment, state.batch, state.chunks);
+        }
+        state.chunks.clear();
+        if (wake) {
+            worker.cv.notify_one();
+        }
+    }
+    if (call_carry_resume) {
+        CarryResume(false);
+    }
+}
+
 void Scheduler::KickRecording(bool force) {
     ProducerScope producer{*this, "KickRecording"};
     if (workers.empty()) {
@@ -421,6 +605,18 @@ void Scheduler::KickRecording(bool force) {
     direct_mode = false;
     if (!force) {
         MaybeSplit();
+    } else {
+        if (pending_suspend.active) {
+            ++suspend_stats.fallback_submit_or_direct;
+            ResolvePendingSuspend(false, true);
+        }
+        if (staging_pass) {
+            ReleasePassStaging(false);
+        }
+    }
+    if (staging_pass) {
+        HandOverPrefixChunks();
+        return;
     }
     // Batches of tens of KiB keep the queue handoff cheap relative to the work it carries.
     if (!force && full_chunks.empty() && CurrentChunk().Size() < 32 * 1024) {
@@ -439,6 +635,7 @@ void Scheduler::MaybeSplit() {
     if (bytes < (is_rendering ? 2 * split_bytes : split_bytes)) {
         return;
     }
+    const bool stage_suspend = is_rendering && staging_pass;
     if (is_rendering) {
         CarrySuspend(true);
         Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
@@ -451,7 +648,25 @@ void Scheduler::MaybeSplit() {
         // Its recording thread ends the segment's command buffer (the pool is that thread's).
         Record([](vk::CommandBuffer cmdbuf) { Check(cmdbuf.end()); });
     }
-    HandOver();
+    if (stage_suspend && staging_pass) {
+        HandOverPrefixChunks();
+        pending_suspend.active = true;
+        pending_suspend.resumed_load_op = staging_resumed_load_op;
+        pending_suspend.segment = current_segment;
+        pending_suspend.batch = batch;
+        pending_suspend.flags_ptr = staging_flags;
+        pending_suspend.chunks = std::move(full_chunks);
+        full_chunks.clear();
+        if (!CurrentChunk().Empty()) {
+            auto tail = AcquireChunk();
+            record_chunk.swap(tail);
+            segment_bytes += tail->Size();
+            pending_suspend.chunks.push_back(std::move(tail));
+        }
+        ReleasePassStaging(false);
+    } else {
+        HandOver();
+    }
     ++current_segment;
     batch->segments[current_segment] = vk::CommandBuffer{};
     segment_bytes = 0;
@@ -460,10 +675,13 @@ void Scheduler::MaybeSplit() {
     // Everything else (pipeline, vertex and index buffers, descriptors, push constants) every
     // draw and dispatch records itself.
     dynamic_state.Invalidate();
-    CarryResume(false);
+    if (!pending_suspend.active) {
+        CarryResume(false);
+    }
 }
 
 void Scheduler::HandOver() {
+    ASSERT(!staging_pass && !pending_suspend.active);
     // Entered from inside Record*() on this thread: a fault handler recording mid-command.
     if (const char* inside = producer_scope_where;
         inside && (std::strcmp(inside, "Record") == 0 || std::strcmp(inside, "RecordData") == 0 ||
@@ -484,7 +702,7 @@ void Scheduler::HandOver() {
         }
     }
     const bool commands = !full_chunks.empty() || !record_chunk->Empty();
-    const bool ordered = !ordered_full.empty() || !ordered_chunk->Empty();
+    const bool ordered = HasOrderedWork();
     if (!commands && !ordered) {
         return;
     }
@@ -498,50 +716,20 @@ void Scheduler::HandOver() {
     {
         std::scoped_lock lk{recorder_mutex};
         if (commands) {
-            for (auto& chunk : full_chunks) {
-                chunk->segment = current_segment;
-                chunk->batch = batch;
-                worker.queue.push_back(std::move(chunk));
-                ++batch->handed[current_segment];
-            }
+            wake |= EnqueueWorkerChunksLocked(worker, current_segment, batch, full_chunks);
             if (next_record) {
                 record_chunk.swap(next_record); // next_record: the chunk handed over
                 segment_bytes += next_record->Size();
-                next_record->segment = current_segment;
-                next_record->batch = batch;
-                worker.queue.push_back(std::move(next_record));
-                ++batch->handed[current_segment];
+                wake |= EnqueueWorkerChunksLocked(worker, current_segment, batch,
+                                                  std::span{&next_record, 1});
             }
-            worker.queued.store(worker.queue.size(), std::memory_order_release);
-            wake = worker.sleeping;
         }
         if (ordered) {
-            // They run after the commands handed over with them (recorded before or among them).
-            const auto queue = [&](std::unique_ptr<RecordChunk> chunk) {
-                chunk->segment = current_segment;
-                chunk->batch = batch;
-                chunk->after = batch->handed[current_segment];
-                ordered_queue.push_back(std::move(chunk));
-            };
-            for (auto& chunk : ordered_full) {
-                queue(std::move(chunk));
-            }
-            if (next_ordered) {
-                ordered_chunk.swap(next_ordered); // next_ordered: the chunk handed over
-                queue(std::move(next_ordered));
-            }
-            ordered_queued.store(ordered_queue.size(), std::memory_order_release);
-            // Any thread may run them; the current segment's thread is woken for them (when it
-            // sleeps): it spins for work anyway, and waking another thread per small copy cost
-            // a few percent of the frame rate on 4 cores / 8 threads. A thread that is awake
-            // picks them up by itself.
-            if (!ordered_running) {
-                wake |= worker.sleeping;
-            }
+            wake |= EnqueueOrderedChunksLocked(worker, current_segment, batch,
+                                               std::move(next_ordered));
         }
     }
     full_chunks.clear();
-    ordered_full.clear();
     // A busy thread picks the new chunks up by itself: waking it is a syscall per draw.
     if (wake) {
         worker.cv.notify_one();
@@ -578,12 +766,23 @@ void Scheduler::SyncRecording() {
         return;
     }
     KickRecording(true);
-    BbStats::WaitTimer timer{BbStats::sync_recording_ns};
-    std::unique_lock lk{recorder_mutex};
-    recorder_idle_cv.wait(lk, [this] { return RecordingIdle(); });
+    const auto sync_start = std::chrono::steady_clock::now();
+    {
+        std::unique_lock lk{recorder_mutex};
+        recorder_idle_cv.wait(lk, [this] { return RecordingIdle(); });
+    }
+    const u64 sync_ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - sync_start)
+                                .count());
+    BbStats::sync_recording_ns.fetch_add(sync_ns, std::memory_order_relaxed);
+    rest_tracker.sync_wait_ns += sync_ns;
 }
 
 void Scheduler::EnterDirectMode() {
+    if (pending_suspend.active) {
+        ++suspend_stats.fallback_submit_or_direct;
+        ResolvePendingSuspend(false, true);
+    }
     // With submissions going out from the recording threads, the commands recorded
     // here get a segment of their own, from this thread's pool, after the segments handed over:
     // the recording threads go on with those instead of this thread waiting for them (~90 us,
@@ -596,6 +795,7 @@ void Scheduler::EnterDirectMode() {
             Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
             is_rendering = false;
             resume_rendering = true;
+            ReleasePassStaging(false);
         } else {
             CarrySuspend(false);
         }
@@ -671,7 +871,8 @@ void Scheduler::RecorderThread(std::stop_token stoken, u32 index) {
         // chunk usually follows within microseconds, and a sleeping thread costs the producer
         // a wake-up syscall per kick. With few hardware threads (Steam Deck: 8) the spin would
         // take time from guest threads. The others sleep until a new segment reaches them.
-        if (active_worker.load(std::memory_order_relaxed) == index) {
+        if (!rest_mode.load(std::memory_order_relaxed) &&
+            active_worker.load(std::memory_order_relaxed) == index) {
             static const auto spin_time =
                 std::chrono::microseconds(BbThreads::Available() >= 12 ? 200 : 20);
             const auto spin_until = std::chrono::steady_clock::now() + spin_time;
@@ -899,6 +1100,77 @@ void Scheduler::QueueSubmit(std::span<const vk::CommandBuffer> cmdbufs, SubmitIn
     recorded_submissions.fetch_add(1, std::memory_order_relaxed);
 }
 
+void Scheduler::FinishPassForSubmit() {
+    if (pending_suspend.active) {
+        ++suspend_stats.fallback_submit_or_direct;
+        ResolvePendingSuspend(false, false);
+    }
+    EndRendering();
+    CarrySuspend(false);
+}
+
+void Scheduler::UpdateAdaptiveRest() {
+    if (workers.empty()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const u64 cap_now = BbStats::cap_wait_ns.load(std::memory_order_relaxed);
+    const u64 present_now = BbStats::present_wait_ns.load(std::memory_order_relaxed);
+    const u64 sync_now = rest_tracker.sync_wait_ns;
+    const u64 cp_now = CurrentThreadCpuNs();
+    // Loading/title transitions stay out of rest mode so workers keep full responsiveness.
+    rest_tracker.loading = rest_tracker.loading || !BbStats::world_active.load(std::memory_order_relaxed);
+    if (!rest_tracker.initialized) {
+        rest_tracker.initialized = true;
+        rest_tracker.last_at = now;
+        rest_tracker.last_cp_ns = cp_now;
+        rest_tracker.last_cap_wait_ns = cap_now;
+        rest_tracker.last_present_wait_ns = present_now;
+        rest_tracker.last_sync_wait_ns = sync_now;
+        return;
+    }
+    ++rest_tracker.frames;
+    const u64 win_ns =
+        u64(std::chrono::duration_cast<std::chrono::nanoseconds>(now - rest_tracker.last_at).count());
+    if (win_ns < 500'000'000ull && rest_tracker.frames < 120) {
+        return;
+    }
+    const double win = win_ns > 0 ? double(win_ns) : 1.0;
+    const double slack =
+        cap_now >= rest_tracker.last_cap_wait_ns
+            ? double(cap_now - rest_tracker.last_cap_wait_ns) / win
+            : 0.0;
+    const double present_share =
+        present_now >= rest_tracker.last_present_wait_ns
+            ? double(present_now - rest_tracker.last_present_wait_ns) / win
+            : 0.0;
+    const double sync_share =
+        sync_now >= rest_tracker.last_sync_wait_ns
+            ? double(sync_now - rest_tracker.last_sync_wait_ns) / win
+            : 0.0;
+    double cp = (cp_now > 0 && rest_tracker.last_cp_ns > 0 && cp_now >= rest_tracker.last_cp_ns)
+                    ? double(cp_now - rest_tracker.last_cp_ns) / win
+                    : -1.0;
+    if (sync_share >= 0.05) {
+        cp = std::max(cp, RecorderRest::kCpFull);
+    }
+    // present_wait_ns starts after CPU recording of the frame; when GPU stalls the command stream
+    // (>= 20% waited on fences), present_share + cp approximates total GPU pressure in the window.
+    const double gpu = (present_share >= 0.20 && cp >= 0.0)
+                           ? std::min(1.0, present_share + cp)
+                           : present_share;
+    const bool loading_window = std::exchange(rest_tracker.loading, false);
+    rest_tracker.last_at = now;
+    rest_tracker.last_cp_ns = cp_now;
+    rest_tracker.last_cap_wait_ns = cap_now;
+    rest_tracker.last_present_wait_ns = present_now;
+    rest_tracker.last_sync_wait_ns = sync_now;
+    rest_tracker.frames = 0;
+
+    const bool rest = RecorderRest::Step(rest_tracker.state, slack, gpu, cp, loading_window);
+    rest_mode.store(rest, std::memory_order_relaxed);
+}
+
 void Scheduler::SubmitExecution(SubmitInfo& info) {
     ProducerScope producer{*this, "SubmitExecution"};
     if (async_submit) {
@@ -906,15 +1178,18 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         return;
     }
     std::scoped_lock lk{submit_mutex};
+    const bool frame_ended = std::exchange(frame_end_submission, false);
+    if (frame_ended && renders_frames) {
+        UpdateAdaptiveRest();
+    }
     const u64 tick = work_semaphore.NextTick();
     if (on_submit) {
         on_submit(info);
     }
-    EndRendering();
-    CarrySuspend(false);
+    FinishPassForSubmit();
     if (auto* profiler = GpuProfiler::Get(); profiler && profiler->Records(this)) {
         // Until the next submission's first timestamp: mostly the GPU waiting for it.
-        if (std::exchange(frame_end_submission, false)) {
+        if (frame_ended) {
             submission_in_frame = 0;
             profiler->Mark(0x5B319ull, [] {
                 return std::string{"(after a frame's last submission: presenter, GPU idle)"};
@@ -963,14 +1238,17 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
 }
 
 void Scheduler::SubmitAsync(SubmitInfo& info) {
+    const bool frame_ended = std::exchange(frame_end_submission, false);
+    if (frame_ended && renders_frames) {
+        UpdateAdaptiveRest();
+    }
     const u64 tick = work_semaphore.NextTick();
     if (on_submit) {
         on_submit(info);
     }
-    EndRendering();
-    CarrySuspend(false);
+    FinishPassForSubmit();
     if (auto* profiler = GpuProfiler::Get(); profiler && profiler->Records(this)) {
-        if (std::exchange(frame_end_submission, false)) {
+        if (frame_ended) {
             submission_in_frame = 0;
             profiler->Mark(0x5B319ull, [] {
                 return std::string{"(after a frame's last submission: presenter, GPU idle)"};

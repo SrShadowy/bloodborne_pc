@@ -651,7 +651,9 @@ private:
     /// Retired mirrors to free, a few a frame (LayerDrainMirrorFrees).
     std::deque<std::unique_ptr<Buffer>> mirror_free_queue;
     void LayerDrainMirrorFrees();
-    u64 layer_generation = 0;
+    static inline std::atomic<u64> next_cache_id{1};
+    const u64 cache_id = next_cache_id.fetch_add(1, std::memory_order_relaxed);
+    u64 layer_generation = cache_id << 32;
     u64 layer_copied_back_bytes = 0; ///< statistics
     IntervalList<> layer_published; ///< blocks whose page table entries are written
     /// BB_PAGED_VERIFY=1 (diagnostics): the current-view entries as written (block -> address).

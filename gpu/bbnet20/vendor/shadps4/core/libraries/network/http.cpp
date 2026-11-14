@@ -35,6 +35,7 @@
 #include "core/libraries/libs.h"
 #include "core/libraries/network/http.h"
 #include "http_error.h"
+#include "thd/thd_http_timeout.h"
 
 #if __has_include(<httplib.h>)
 #include <httplib.h>
@@ -863,7 +864,8 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
             base_url += ":" + std::to_string(plan.port);
         }
         httplib::Client cli(base_url);
-        cli.set_connection_timeout(pick_timeout_seconds(plan.settings.connect_timeout_us, 30));
+        cli.set_connection_timeout(
+            BbThd::PickConnectTimeoutMs(plan.settings.connect_timeout_us, 30, bbthd_enabled()));
         cli.set_read_timeout(pick_timeout_seconds(plan.settings.recv_timeout_us, 120));
         cli.set_write_timeout(pick_timeout_seconds(plan.settings.send_timeout_us, 120));
 

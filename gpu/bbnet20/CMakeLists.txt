@@ -81,3 +81,26 @@ add_executable(bbnet20-p2p-legacy-test EXCLUDE_FROM_ALL # [extra]
 target_compile_options(bbnet20-p2p-legacy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror) # [extra]
 target_include_directories(bbnet20-p2p-legacy-test PRIVATE # [extra]
     .. "${BBNET_VENDOR}" "${CMAKE_CURRENT_SOURCE_DIR}/../..") # [extra]
+
+# Unit & in-process integration tests for The Hunter's Dream long polling, connect timeout floor,
+# and 64 KB UDP P2P datagram framing: ninja -C out/gpu thd-net-test && out/gpu/thd-net-test
+add_executable(thd-net-test EXCLUDE_FROM_ALL ../../tests/test_thd_net.cpp
+    thd/thd_session.cpp thd/thd_net.cpp)
+target_include_directories(thd-net-test PRIVATE include . .. ../shim "${BBNET_VENDOR}"
+    ../third_party/httplib)
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(thd-net-test PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+else()
+    target_include_directories(thd-net-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+endif()
+target_compile_definitions(thd-net-test PRIVATE BOOST_ASIO_STANDALONE CPPHTTPLIB_OPENSSL_SUPPORT
+    CPPHTTPLIB_ZLIB_SUPPORT BBNET_PORT_VERSION="${BBPORT_VERSION}")
+target_compile_options(thd-net-test PRIVATE -UNDEBUG -Wall -Wextra -Wno-deprecated-declarations
+    -Wno-missing-field-initializers)
+target_link_libraries(thd-net-test PRIVATE nlohmann_json::nlohmann_json OpenSSL::SSL
+    OpenSSL::Crypto ZLIB::ZLIB Vulkan::Headers fmt::fmt)
+if (WIN32)
+    target_link_libraries(thd-net-test PRIVATE ws2_32 iphlpapi crypt32)
+else()
+    target_link_libraries(thd-net-test PRIVATE pthread)
+endif()

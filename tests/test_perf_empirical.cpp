@@ -904,8 +904,8 @@ struct CoreCaches {
     VideoCore::BufferCache buffer_cache;
     VideoCore::TextureCache texture_cache;
 
-    explicit CoreCaches(Vulkan::Instance& inst)
-        : instance{inst}, scheduler{inst}, runtime{inst, scheduler},
+    explicit CoreCaches(Vulkan::Instance& inst, bool threaded = false)
+        : instance{inst}, scheduler{inst, threaded}, runtime{inst, scheduler},
           buffer_cache{inst, scheduler, runtime, &liverpool, texture_cache, page_watch},
           texture_cache{inst, scheduler, runtime, &liverpool, buffer_cache, page_watch} {}
 };
@@ -1114,6 +1114,118 @@ void RunGpuBarriersAndGc(Vulkan::Instance& instance, bool run_gpu, bool run_gc) 
         std::printf("  correctness: ts_monotonic=%s occ_valid_bit=%s\n",
                     ts_monotonic ? "OK" : "FAIL", occ_valid ? "OK" : "FAIL");
 
+        // Stress >512 segments with an active occlusion query across MaybeSplit() boundaries:
+        // verifies in-pass VK_RENDERING_SUSPENDING/RESUMING continuation up to ResetBatch (512)
+        // followed by CanResumeInPass() returning false for query pool batch reset fallback.
+        {
+            const char* prev_seg_kb_ptr = std::getenv("BB_VK_SEGMENT_KB");
+            const std::optional<std::string> prev_seg_kb =
+                prev_seg_kb_ptr ? std::optional<std::string>(prev_seg_kb_ptr) : std::nullopt;
+            setenv("BB_VK_SEGMENT_KB", "1", 1);
+            auto caches_thr = std::make_unique<CoreCaches>(instance, /*threaded=*/true);
+            if (prev_seg_kb) {
+                setenv("BB_VK_SEGMENT_KB", prev_seg_kb->c_str(), 1);
+            } else {
+                unsetenv("BB_VK_SEGMENT_KB");
+            }
+
+            auto& t_sched = caches_thr->scheduler;
+            auto& t_bcache = caches_thr->buffer_cache;
+            Vulkan::OcclusionQueries occ_thr(instance, t_sched, t_bcache);
+            t_sched.SetCarriedScope(&occ_thr);
+
+            const VAddr occ_stress_base = g_arena_base + 0x40000;
+            (void)t_bcache.ObtainBuffer(occ_stress_base, 64, false);
+            t_sched.Finish();
+
+            struct PadChunk {
+                std::array<u32, 256> words{};
+                void operator()(vk::CommandBuffer) const {}
+            };
+
+            t_sched.BeginRendering(rstate);
+            occ_thr.Event(occ_stress_base, 4);
+            constexpr u32 StressSegments = 550;
+            u32 expected_events = 2;
+            for (u32 s = 0; s < StressSegments; ++s) {
+                if (s > 0 && (s % 60) == 0) {
+                    t_sched.EndRendering();
+                    t_sched.Flush();
+                }
+                t_sched.BeginRendering(rstate);
+                if (s >= 240 && s < 284) {
+                    for (u32 q = 0; q < 5; ++q) {
+                        occ_thr.Event(occ_stress_base + 24, 4);
+                        ++expected_events;
+                    }
+                    t_sched.Record(PadChunk{});
+                } else {
+                    t_sched.Record(PadChunk{});
+                    t_sched.Record(PadChunk{});
+                }
+                t_sched.KickRecording(false);
+            }
+            t_sched.BeginRendering(rstate);
+            occ_thr.Event(occ_stress_base + 8, 4);
+            occ_thr.WriteBeforeLabel();
+            t_sched.EndRendering();
+
+            std::memset(staging_ai.pMappedData, 0, 16);
+            {
+                const auto [occ_buf, occ_off] =
+                    t_bcache.ObtainBuffer(occ_stress_base, 16, false);
+                t_sched.Record([=, sb = vk::Buffer(staging), src_occ = occ_buf->Handle()](
+                                   vk::CommandBuffer cmd) {
+                    const vk::MemoryBarrier2 mb{
+                        .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                    };
+                    cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &mb},
+                                         dispatch);
+                    const vk::BufferCopy copy{occ_off, 0, 16};
+                    cmd.copyBuffer(src_occ, sb, 1, &copy, dispatch);
+                });
+                t_sched.Finish();
+            }
+            t_sched.SetCarriedScope(nullptr);
+
+            const auto* stress_occ_vals = static_cast<const u64*>(staging_ai.pMappedData);
+            const auto t_stats = t_sched.GetSuspendResumeStats();
+            const bool stress_occ_valid = (stress_occ_vals[1] & (1ull << 63)) != 0;
+            if (!stress_occ_valid || occ_thr.Events() != expected_events ||
+                (t_sched.IsSuspendResumeEnabled() &&
+                 (t_stats.resumed == 0 || t_stats.fallback_query_reset < 1))) {
+                std::fprintf(stderr,
+                             "Suite 3b check failed: events=%llu occ1=%#llx resumed=%llu "
+                             "barrier_cmd=%llu state=%llu query_reset=%llu submit_direct=%llu "
+                             "chunk_cap=%llu\n",
+                             (unsigned long long)occ_thr.Events(),
+                             (unsigned long long)stress_occ_vals[1],
+                             (unsigned long long)t_stats.resumed,
+                             (unsigned long long)t_stats.fallback_barrier_or_cmd,
+                             (unsigned long long)t_stats.fallback_state,
+                             (unsigned long long)t_stats.fallback_query_reset,
+                             (unsigned long long)t_stats.fallback_submit_or_direct,
+                             (unsigned long long)t_stats.fallback_chunk_cap);
+            }
+            assert(occ_thr.Events() == expected_events);
+            assert(stress_occ_valid);
+            if (t_sched.IsSuspendResumeEnabled()) {
+                assert(t_stats.resumed > 0);
+                assert(t_stats.fallback_query_reset >= 1);
+            }
+            std::printf("[SUITE 3b: Threaded OcclusionQueries >512 Segments (suspend_resume=%u)]\n",
+                        t_sched.IsSuspendResumeEnabled() ? 1u : 0u);
+            std::printf("  segments: %u resumed=%llu fallback_query_reset=%llu events=%llu "
+                        "occ_valid=%s\n",
+                        StressSegments, (unsigned long long)t_stats.resumed,
+                        (unsigned long long)t_stats.fallback_query_reset,
+                        (unsigned long long)occ_thr.Events(),
+                        stress_occ_valid ? "OK" : "FAIL");
+        }
+
         vmaDestroyBuffer(allocator, staging, staging_alloc);
         device.destroyImageView(color_view, nullptr, dispatch);
         device.destroyImageView(depth_view, nullptr, dispatch);
@@ -1151,10 +1263,110 @@ struct StageBState {
     BbCp::CommandProcessor liverpool;
     Vulkan::Rasterizer rasterizer;
 
-    explicit StageBState(Vulkan::Instance& inst)
-        : scheduler{inst}, runtime{inst, scheduler},
+    explicit StageBState(Vulkan::Instance& inst, bool threaded = false)
+        : scheduler{inst, threaded}, runtime{inst, scheduler},
           rasterizer{inst, scheduler, runtime, &liverpool} {}
 };
+
+struct StageBRunResult {
+    double record_ms{};
+    Vulkan::Scheduler::SuspendResumeStats stats{};
+    bool suspend_resume{};
+};
+
+void ConfigureStageBRegs(BbCp::CommandProcessor& liverpool, VAddr vsharp_addr, VAddr fetch_addr,
+                         VAddr vs_addr, VAddr ps_addr, VAddr idx_addr) {
+    auto& regs = liverpool.regs;
+    regs.SetDefaults();
+    regs.primitive_type = Gcn::PrimitiveType::TriangleList;
+    regs.stage_enable.raw = Gcn::ShaderStageEnable::VgtStages::Vs;
+    regs.vs_program.address = vs_addr >> 8;
+    regs.vs_program.settings = {};
+    regs.vs_program.settings.num_vgprs = 2;
+    regs.vs_program.settings.num_user_regs = 4;
+    regs.vs_program.user_data[0] = u32(vsharp_addr);
+    regs.vs_program.user_data[1] = u32(vsharp_addr >> 32);
+    regs.vs_program.user_data[2] = u32(fetch_addr);
+    regs.vs_program.user_data[3] = u32(fetch_addr >> 32);
+
+    regs.ps_program.address = ps_addr >> 8;
+    regs.ps_program.settings = {};
+    regs.ps_program.settings.num_vgprs = 1;
+    regs.ps_input_ena.persp_center_ena = 1;
+    regs.ps_input_addr.persp_center_ena = 1;
+    regs.num_interp = 0;
+
+    regs.color_control.mode = Gcn::ColorControl::OperationMode::Normal;
+    regs.color_control.rop3 = Gcn::ColorControl::LogicOp::Copy;
+    regs.color_buffers[0].base_address = u32((g_arena_base + 0x100000) >> 8);
+    regs.color_buffers[0].pitch.tile_max = 31; // 256 px
+    regs.color_buffers[0].slice.tile_max = 1023;
+    regs.color_buffers[0].info.format = u32(Gcn::DataFormat::Format8_8_8_8);
+    regs.color_buffers[0].info.number_type = u32(Gcn::NumberFormat::Unorm);
+    regs.color_export_format.raw = u32(Gcn::ShaderExportFormat::ABGR_FP16);
+    regs.color_shader_mask.raw = 0xFu;
+    regs.color_target_mask.raw = 0xFu;
+
+    regs.depth_buffer.z_info.format = Gcn::DepthBuffer::ZFormat::Z32Float;
+    regs.depth_buffer.z_read_base = u32((g_arena_base + 0x200000) >> 8);
+    regs.depth_buffer.z_write_base = regs.depth_buffer.z_read_base;
+    regs.depth_buffer.depth_size.pitch_tile_max = 31;
+    regs.depth_buffer.depth_size.height_tile_max = 31;
+    regs.depth_buffer.depth_slice.tile_max = 1023;
+    regs.depth_control.depth_enable = 1;
+    regs.depth_control.depth_write_enable = 1;
+    regs.depth_control.depth_func = Gcn::CompareFunc::Less;
+
+    regs.viewports[0] = {.xscale = 128.0f, .xoffset = 128.0f, .yscale = 128.0f, .yoffset = 128.0f,
+                         .zscale = 1.0f, .zoffset = 0.0f};
+    regs.viewport_scissors[0].bottom_right_x = 256;
+    regs.viewport_scissors[0].bottom_right_y = 256;
+    regs.screen_scissor.bottom_right_x = 256;
+    regs.screen_scissor.bottom_right_y = 256;
+    regs.window_scissor.bottom_right_x = 256;
+    regs.window_scissor.bottom_right_y = 256;
+    regs.generic_scissor.bottom_right_x = 256;
+    regs.generic_scissor.bottom_right_y = 256;
+    regs.num_indices = 3;
+    regs.num_instances.num_instances = 1;
+    regs.index_buffer_type.index_type = Gcn::IndexType::Index16;
+    regs.index_base_address.base_addr_lo = u32(idx_addr);
+    regs.index_base_address.base_addr_hi = u32(idx_addr >> 32);
+}
+
+StageBRunResult ExecuteStageBLoop(Vulkan::Instance& instance, bool threaded, u32 draws,
+                                  VAddr vsharp_addr, VAddr fetch_addr, VAddr vs_addr, VAddr ps_addr,
+                                  VAddr idx_addr) {
+    auto state = std::make_unique<StageBState>(instance, threaded);
+    EnsureArenaChunk();
+    auto& scheduler = state->scheduler;
+    auto& rasterizer = state->rasterizer;
+
+    ConfigureStageBRegs(state->liverpool, vsharp_addr, fetch_addr, vs_addr, ps_addr, idx_addr);
+
+    // Warm up pipeline once before timed Stage B draw loop
+    rasterizer.Draw(true, 0);
+    scheduler.EndRendering();
+    scheduler.Finish();
+
+    const auto t0 = Clock::now();
+    for (u32 i = 0; i < draws; ++i) {
+        if ((i % 250) == 249) {
+            scheduler.EndRendering();
+            scheduler.Flush();
+        }
+        rasterizer.Draw(true, 0);
+    }
+    scheduler.EndRendering();
+    scheduler.Finish();
+    const auto t1 = Clock::now();
+
+    return StageBRunResult{
+        .record_ms = MsSince(t0, t1),
+        .stats = scheduler.GetSuspendResumeStats(),
+        .suspend_resume = scheduler.IsSuspendResumeEnabled(),
+    };
+}
 
 void RunStageBDrawSuite(Vulkan::Instance& instance) {
     setenv("BB_DRAW_PIPE", "0", 1);
@@ -1162,11 +1374,6 @@ void RunStageBDrawSuite(Vulkan::Instance& instance) {
 
     BbGuestMemory::Install(instance);
     EnsureArenaChunk();
-    auto state = std::make_unique<StageBState>(instance);
-    EnsureArenaChunk();
-    auto& scheduler = state->scheduler;
-    auto& liverpool = state->liverpool;
-    auto& rasterizer = state->rasterizer;
 
     // Seed self-contained index buffer, vertex buffer, V# table, fetch shader, VS, and PS inside
     // g_arena_base so Stage B exercises bindPipeline + setVertexInputEXT/bindVertexBuffers +
@@ -1240,84 +1447,30 @@ void RunStageBDrawSuite(Vulkan::Instance& instance) {
     ps_bi.shader_hash = 0x5A7E5B0000000002ULL;
     std::memcpy(reinterpret_cast<void*>(ps_addr + sizeof(kPsCode)), &ps_bi, sizeof(ps_bi));
 
-    auto& regs = liverpool.regs;
-    regs.SetDefaults();
-    regs.primitive_type = Gcn::PrimitiveType::TriangleList;
-    regs.stage_enable.raw = Gcn::ShaderStageEnable::VgtStages::Vs;
-    regs.vs_program.address = vs_addr >> 8;
-    regs.vs_program.settings = {};
-    regs.vs_program.settings.num_vgprs = 2;
-    regs.vs_program.settings.num_user_regs = 4;
-    regs.vs_program.user_data[0] = u32(vsharp_addr);
-    regs.vs_program.user_data[1] = u32(vsharp_addr >> 32);
-    regs.vs_program.user_data[2] = u32(fetch_addr);
-    regs.vs_program.user_data[3] = u32(fetch_addr >> 32);
-
-    regs.ps_program.address = ps_addr >> 8;
-    regs.ps_program.settings = {};
-    regs.ps_program.settings.num_vgprs = 1;
-    regs.ps_input_ena.persp_center_ena = 1;
-    regs.ps_input_addr.persp_center_ena = 1;
-    regs.num_interp = 0;
-
-    regs.color_control.mode = Gcn::ColorControl::OperationMode::Normal;
-    regs.color_control.rop3 = Gcn::ColorControl::LogicOp::Copy;
-    regs.color_buffers[0].base_address = u32((g_arena_base + 0x100000) >> 8);
-    regs.color_buffers[0].pitch.tile_max = 31; // 256 px
-    regs.color_buffers[0].slice.tile_max = 1023;
-    regs.color_buffers[0].info.format = u32(Gcn::DataFormat::Format8_8_8_8);
-    regs.color_buffers[0].info.number_type = u32(Gcn::NumberFormat::Unorm);
-    regs.color_export_format.raw = u32(Gcn::ShaderExportFormat::ABGR_FP16);
-    regs.color_shader_mask.raw = 0xFu;
-    regs.color_target_mask.raw = 0xFu;
-
-    regs.depth_buffer.z_info.format = Gcn::DepthBuffer::ZFormat::Z32Float;
-    regs.depth_buffer.z_read_base = u32((g_arena_base + 0x200000) >> 8);
-    regs.depth_buffer.z_write_base = regs.depth_buffer.z_read_base;
-    regs.depth_buffer.depth_size.pitch_tile_max = 31;
-    regs.depth_buffer.depth_size.height_tile_max = 31;
-    regs.depth_buffer.depth_slice.tile_max = 1023;
-    regs.depth_control.depth_enable = 1;
-    regs.depth_control.depth_write_enable = 1;
-    regs.depth_control.depth_func = Gcn::CompareFunc::Less;
-
-    regs.viewports[0] = {.xscale = 128.0f, .xoffset = 128.0f, .yscale = 128.0f, .yoffset = 128.0f,
-                         .zscale = 1.0f, .zoffset = 0.0f};
-    regs.viewport_scissors[0].bottom_right_x = 256;
-    regs.viewport_scissors[0].bottom_right_y = 256;
-    regs.screen_scissor.bottom_right_x = 256;
-    regs.screen_scissor.bottom_right_y = 256;
-    regs.window_scissor.bottom_right_x = 256;
-    regs.window_scissor.bottom_right_y = 256;
-    regs.generic_scissor.bottom_right_x = 256;
-    regs.generic_scissor.bottom_right_y = 256;
-    regs.num_indices = 3;
-    regs.num_instances.num_instances = 1;
-    regs.index_buffer_type.index_type = Gcn::IndexType::Index16;
-    regs.index_base_address.base_addr_lo = u32(idx_addr);
-    regs.index_base_address.base_addr_hi = u32(idx_addr >> 32);
-
-    // Warm up pipeline once before timed Stage B draw loop
-    rasterizer.Draw(true, 0);
-    scheduler.Finish();
-
     constexpr u32 Draws = 3000;
-    const auto t0 = Clock::now();
-    for (u32 i = 0; i < Draws; ++i) {
-        if ((i % 250) == 249) {
-            scheduler.EndRendering();
-            scheduler.Flush();
-        }
-        rasterizer.Draw(true, 0);
-    }
-    scheduler.EndRendering();
-    scheduler.Finish();
-    const auto t1 = Clock::now();
-
+    const auto st_res = ExecuteStageBLoop(instance, /*threaded=*/false, Draws, vsharp_addr,
+                                          fetch_addr, vs_addr, ps_addr, idx_addr);
     std::printf("[SUITE 5: Stage B Consecutive Draw Recording (BB_DYNSTATE_CHECK=1)]\n");
     std::printf("  draws:      %u\n", Draws);
-    std::printf("  record_ms:  %.2f ms (%.1f ns/draw)\n", MsSince(t0, t1),
-                MsSince(t0, t1) * 1e6 / Draws);
+    std::printf("  record_ms:  %.2f ms (%.1f ns/draw)\n", st_res.record_ms,
+                st_res.record_ms * 1e6 / Draws);
+
+    const auto thr_res = ExecuteStageBLoop(instance, /*threaded=*/true, Draws, vsharp_addr,
+                                           fetch_addr, vs_addr, ps_addr, idx_addr);
+    std::printf("[SUITE 5b: Stage B Threaded Draw Recording (suspend_resume=%u)]\n",
+                thr_res.suspend_resume ? 1u : 0u);
+    std::printf("  draws:      %u\n", Draws);
+    std::printf("  record_ms:  %.2f ms (%.1f ns/draw)\n", thr_res.record_ms,
+                thr_res.record_ms * 1e6 / Draws);
+    std::printf("  stats:      resumed=%llu fallback_barrier_or_cmd=%llu fallback_state=%llu "
+                "fallback_query_reset=%llu fallback_submit_or_direct=%llu "
+                "fallback_chunk_cap=%llu\n",
+                (unsigned long long)thr_res.stats.resumed,
+                (unsigned long long)thr_res.stats.fallback_barrier_or_cmd,
+                (unsigned long long)thr_res.stats.fallback_state,
+                (unsigned long long)thr_res.stats.fallback_query_reset,
+                (unsigned long long)thr_res.stats.fallback_submit_or_direct,
+                (unsigned long long)thr_res.stats.fallback_chunk_cap);
 }
 } // namespace
 
@@ -1361,7 +1514,7 @@ int main(int argc, char** argv) {
     }
     std::unique_ptr<Vulkan::Instance> shared_instance;
     if (do_all || suite == "gpu" || suite == "gc" || suite == "stageb") {
-        shared_instance = std::make_unique<Vulkan::Instance>(0, false);
+        shared_instance = std::make_unique<Vulkan::Instance>(0, EmulatorSettings.IsVkValidationEnabled());
     }
     if (do_all || suite == "gpu" || suite == "gc") {
         RunGpuBarriersAndGc(*shared_instance, do_all || suite == "gpu", do_all || suite == "gc");
