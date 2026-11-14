@@ -260,17 +260,19 @@ void PipelineCache::QueuePreloaded(std::vector<PreloadJob>& jobs) {
     if (!preload_compiler) {
         // One thread is left to the game.
         const u32 threads = std::clamp(std::thread::hardware_concurrency(), 2u, 9u) - 1;
-        preload_compiler = std::make_unique<PipelineCompiler>(threads);
+        preload_compiler = std::make_unique<PipelineCompiler>(threads, "bb:PipePreload", true);
     }
+    std::stable_sort(jobs.begin(), jobs.end(),
+                     [](const PreloadJob& a, const PreloadJob& b) { return a.cost < b.cost; });
     preload_start = std::chrono::steady_clock::now();
-    for (auto& [key, make] : jobs) {
-        if (graphics_pipelines.contains(key) || pending_graphics.contains(key)) {
+    for (auto& pre_job : jobs) {
+        if (graphics_pipelines.contains(pre_job.key) || pending_graphics.contains(pre_job.key)) {
             continue;
         }
         auto job = std::make_shared<PendingPipeline>();
         job->saved = true;
-        job->make = std::move(make);
-        pending_graphics.emplace(key, job);
+        job->make = std::move(pre_job.make);
+        pending_graphics.emplace(pre_job.key, job);
         ++preload_total;
         g_bb_background_pipelines_total.fetch_add(1, std::memory_order_relaxed);
         preload_compiler->Submit([this, job] {

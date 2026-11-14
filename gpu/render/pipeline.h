@@ -59,7 +59,7 @@ public:
     }
 
     vk::PipelineLayout GetLayout() const noexcept {
-        return *pipeline_layout;
+        return **pipeline_layout;
     }
 
     /// The stages present (the compute slot, or the graphics ones), null where absent.
@@ -101,8 +101,8 @@ protected:
     DescriptorHeap& desc_heap;
     const Shader::Profile& profile;
     vk::UniquePipeline pipeline;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniqueDescriptorSetLayout desc_layout;
+    std::shared_ptr<const vk::UniquePipelineLayout> pipeline_layout;
+    std::shared_ptr<const vk::UniqueDescriptorSetLayout> desc_layout;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
     bool uses_push_descriptors{};
     bool is_compute;

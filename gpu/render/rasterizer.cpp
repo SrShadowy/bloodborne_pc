@@ -773,11 +773,15 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             });
         }
     }
+    const bool bind_pipeline =
+        !hide_ui_draw && bound_cmd_state.UpdatePipeline(scheduler.GetDynamicState().Epoch(), handle);
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         if (hide_ui_draw) {
             return;
         }
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+        if (bind_pipeline) {
+            cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+        }
         if (DynCheck::Enabled()) {
             DynCheck::Draw(cmdbuf, check_viewports, check_scissors, check_vs, check_ps);
         }
@@ -889,8 +893,7 @@ void Rasterizer::BeginDraw(const GraphicsPipeline* pipeline, const RenderState& 
     // them already: single frames were drawn with the 960x540 viewport of the passes before (the
     // final picture in the top-left quarter, black around it; docs/Flicker_video_2026-10-17.ru.md).
     // BB_DYNAMIC_STATE_ALWAYS=1 (diagnostics): all dynamic state again at every draw.
-    static const bool dynamic_always = bb_env_on("BB_DYNAMIC_STATE_ALWAYS");
-    if (dynamic_always) {
+    if (BoundCmdState::ForceRebind()) {
         scheduler.GetDynamicState().Invalidate();
     } else if (scheduler.WillBeginRendering(state)) {
         scheduler.GetDynamicState().InvalidateViewports();
@@ -1122,8 +1125,12 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
             });
         }
     }
+    const bool bind_pipeline =
+        bound_cmd_state.UpdatePipeline(scheduler.GetDynamicState().Epoch(), handle);
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+        if (bind_pipeline) {
+            cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
+        }
         if (is_indexed) {
             if (counts) {
                 cmdbuf.drawIndexedIndirectCount(args, args_offset, counts, counts_offset, max_count,

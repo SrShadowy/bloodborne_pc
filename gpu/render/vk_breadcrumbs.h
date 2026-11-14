@@ -37,6 +37,8 @@ struct Crumb {
 
 /// A stream for a new scheduler (`name` a string literal); the first call creates the buffer.
 u32 NewStream(const Instance& instance, const char* name);
+/// Releases the marker buffer and resets state when the owning Vulkan::Instance is destroyed.
+void Shutdown(const Instance& instance);
 [[nodiscard]] bool Enabled() noexcept;
 /// Recording side, in command order: numbers the next command of `stream`.
 u32 Note(u32 stream, const Crumb& crumb);

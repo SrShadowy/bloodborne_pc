@@ -7,10 +7,13 @@
 
 #include <cstdlib>
 #include "shim/bb_env.h"
+#include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "common/types.h"
@@ -396,6 +399,14 @@ public:
         return total_memory_budget;
     }
 
+    // Layouts.
+    using LayoutPair = std::pair<std::shared_ptr<const vk::UniqueDescriptorSetLayout>,
+                                 std::shared_ptr<const vk::UniquePipelineLayout>>;
+    [[nodiscard]] LayoutPair GetOrCreateLayouts(
+        bool uses_push_descriptors, vk::ShaderStageFlags push_stages, u32 push_size,
+        std::span<const vk::DescriptorSetLayoutBinding> bindings, const char* kind,
+        const std::string& debug_name) const;
+
     // Formats.
     [[nodiscard]] bool IsFormatSupported(vk::Format format, vk::FormatFeatureFlags2 flags) const;
     /// `format`, or a stand-in with the features when it lacks them.
@@ -468,6 +479,8 @@ private:
     std::unordered_map<vk::Format, vk::FormatFeatureFlags2> format_features;
     std::vector<u32> counted_heaps; ///< the heaps of the usage and budget figures
     u64 total_memory_budget = 0;
+    struct LayoutCache;
+    std::unique_ptr<LayoutCache> layout_cache;
 };
 
 /// Memory statistics: device-local VMA blocks and the allocations in them (the difference is

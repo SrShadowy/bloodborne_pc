@@ -16,6 +16,7 @@
 #include "buffers/buffer.h"
 #include "buffers/buffer_cache.h"
 #include "render/vk_gpu_profiler.h"
+#include "render/vk_barrier_helper.h"
 #include "bbgpu/shaders/occlusion_resolve_comp.h"
 #include "vulkan/instance.h"
 #include "vulkan/shader_module.h"
@@ -34,20 +35,6 @@ struct EventEntry {
     u32 pairs;
     u32 upto;
 };
-
-/// Everything before it before everything after it (resolves are a few per frame).
-void FullBarrier(vk::CommandBuffer cmdbuf) {
-    const vk::MemoryBarrier2 barrier{
-        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-    };
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .memoryBarrierCount = 1,
-        .pMemoryBarriers = &barrier,
-    });
-}
 } // namespace
 
 OcclusionQueries::OcclusionQueries(const Instance& instance_, Scheduler& scheduler_,
@@ -217,7 +204,11 @@ void OcclusionQueries::Resolve() {
                                         vk::QueryResultFlagBits::e64 |
                                             vk::QueryResultFlagBits::eWait);
         }
-        FullBarrier(cmdbuf);
+        BarrierCopyToCompute(cmdbuf,
+                             clear_total ? vk::PipelineStageFlagBits2::eClear
+                                         : vk::PipelineStageFlagBits2::eNone,
+                             vk::AccessFlagBits2::eShaderStorageRead |
+                                 vk::AccessFlagBits2::eShaderStorageWrite);
         const std::array<vk::DescriptorBufferInfo, 4> infos{{
             {results->Handle(), 0, NumSlots * sizeof(u64)},
             {total->Handle(), 0, 8},
@@ -237,7 +228,7 @@ void OcclusionQueries::Resolve() {
         cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push),
                              &push);
         cmdbuf.dispatch(1, 1, 1);
-        FullBarrier(cmdbuf);
+        BarrierComputeToUsers(cmdbuf);
     });
     resolved = ended;
     pending.clear();

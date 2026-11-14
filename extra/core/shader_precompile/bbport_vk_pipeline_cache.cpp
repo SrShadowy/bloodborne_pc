@@ -110,16 +110,23 @@ bool WriteCacheData(const std::vector<std::uint8_t>& data, std::uint64_t covered
     return true;
 }
 
+bool WaitInterruptible(std::chrono::milliseconds delay) {
+    std::unique_lock lock(s_worker_mutex);
+    return !s_worker_cv.wait_for(lock, delay, [] {
+        return s_stop_worker.load(std::memory_order_acquire);
+    });
+}
+
 void BackgroundWorker() {
-    while (!s_stop_worker.load(std::memory_order_relaxed)) {
+    while (!s_stop_worker.load(std::memory_order_acquire)) {
         {
             std::unique_lock lock(s_worker_mutex);
             s_worker_cv.wait_for(lock, std::chrono::seconds(2), [] {
                 return s_save_requested.load(std::memory_order_relaxed) ||
-                       s_stop_worker.load(std::memory_order_relaxed);
+                       s_stop_worker.load(std::memory_order_acquire);
             });
         }
-        if (s_stop_worker.load(std::memory_order_relaxed)) {
+        if (s_stop_worker.load(std::memory_order_acquire)) {
             break;
         }
         if (!s_save_requested.exchange(false, std::memory_order_acq_rel)) {
@@ -129,7 +136,9 @@ void BackgroundWorker() {
         // Wait for a compile storm to settle.
         const auto now = Clock::now().time_since_epoch().count();
         if (now - s_last_create_ns.load(std::memory_order_relaxed) < detail::kLullNs) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (!WaitInterruptible(std::chrono::milliseconds(500))) {
+                break;
+            }
             s_save_requested.store(true, std::memory_order_release);
             continue;
         }
@@ -139,12 +148,16 @@ void BackgroundWorker() {
         if (!QueryCacheData(data, covered_creates)) {
             // A creation was in flight: come back once it is done.
             s_save_requested.store(true, std::memory_order_release);
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            if (!WaitInterruptible(std::chrono::milliseconds(20))) {
+                break;
+            }
             continue;
         }
 
         // A gentle pause so background disk writing never contests the game.
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (!WaitInterruptible(std::chrono::milliseconds(50))) {
+            break;
+        }
         WriteCacheData(data, covered_creates);
     }
 }
@@ -186,23 +199,57 @@ vk::UniquePipelineCache Create(vk::Device device, vk::PhysicalDevice physical_de
     }
     ASSERT_MSG(result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
                vk::to_string(result));
-    s_device = device;
-    s_cache = cache.get();
+    {
+        std::unique_lock lock{detail::g_mutex};
+        s_device = device;
+        s_cache = cache.get();
+        s_creates.store(0, std::memory_order_relaxed);
+        s_saved_creates.store(0, std::memory_order_relaxed);
+        s_last_create_ns.store(0, std::memory_order_relaxed);
+        s_save_requested.store(false, std::memory_order_relaxed);
+        s_last_save = {};
+        s_stats_line_creates = 0;
+    }
 
-    // Start the background saver at the lowest priority, once.
+    // Start the background saver at the lowest priority, once, and join it at exit before
+    // namespace-scope synchronization primitives are torn down.
     static std::once_flag s_worker_init_flag;
     std::call_once(s_worker_init_flag, [] {
-        s_stop_worker = false;
+        s_stop_worker.store(false, std::memory_order_release);
         s_worker_thread = std::thread([] {
 #ifdef _WIN32
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
 #endif
             BackgroundWorker();
         });
-        s_worker_thread.detach();
+        struct WorkerGuard {
+            ~WorkerGuard() {
+                {
+                    std::scoped_lock lock(s_worker_mutex);
+                    s_stop_worker.store(true, std::memory_order_release);
+                }
+                s_worker_cv.notify_all();
+                if (s_worker_thread.joinable()) {
+                    s_worker_thread.join();
+                }
+            }
+        };
+        static WorkerGuard s_worker_guard;
     });
 
     return std::move(cache);
+}
+
+void Unregister(vk::PipelineCache cache) {
+    {
+        std::unique_lock lock{detail::g_mutex};
+        if (s_cache == cache) {
+            s_cache = vk::PipelineCache{};
+            s_device = vk::Device{};
+        }
+    }
+    std::scoped_lock worker_lock{s_worker_mutex};
+    s_save_requested.store(false, std::memory_order_release);
 }
 
 PipelineCreateGuard::PipelineCreateGuard(vk::ComputePipelineCreateInfo& ci)

@@ -178,6 +178,7 @@ public:
             direct_recordings.fetch_add(1, std::memory_order_relaxed);
             TraceDirectRecording(__builtin_return_address(0));
         }
+        dynamic_state.Invalidate();
         return current_cmdbuf;
     }
 

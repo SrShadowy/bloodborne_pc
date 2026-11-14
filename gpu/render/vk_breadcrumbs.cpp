@@ -44,7 +44,8 @@ struct Stream {
 std::array<Stream, MaxStreams> streams;
 std::atomic<u32> num_streams{0};
 bool enabled = false;
-std::once_flag init_once;
+std::mutex lifecycle_mutex;
+const Instance* owner_instance = nullptr;
 vk::Buffer marker_buffer{};
 VmaAllocation marker_allocation{};
 volatile u32* markers = nullptr;
@@ -59,6 +60,9 @@ struct ArgsNote {
 std::array<ArgsNote, ArgSlots> args_notes{};
 
 const Instance* fault_instance = nullptr;
+std::atomic_flag device_lost_reported = ATOMIC_FLAG_INIT;
+std::atomic<bool> device_lost_done{false};
+std::atomic_flag stuck_reported = ATOMIC_FLAG_INIT;
 
 void Init(const Instance& instance) {
     if (instance.IsDeviceFaultSupported()) {
@@ -236,14 +240,55 @@ void DumpPrograms(const Stream& stream, u64 id) {
 } // Anonymous namespace
 
 u32 NewStream(const Instance& instance, const char* name) {
-    std::call_once(init_once, [&] { Init(instance); });
+    {
+        std::scoped_lock lk{lifecycle_mutex};
+        if (owner_instance != &instance) {
+            if (!owner_instance) {
+                Init(instance);
+                owner_instance = &instance;
+            } else {
+                return MaxStreams;
+            }
+        }
+    }
     const u32 index = num_streams.fetch_add(1, std::memory_order_relaxed);
     if (index >= MaxStreams) {
         return MaxStreams;
     }
     streams[index].name = name;
+    streams[index].next.store(1, std::memory_order_relaxed);
     streams[index].ring = std::make_unique<Entry[]>(RingSize);
     return index;
+}
+
+void Shutdown(const Instance& instance) {
+    std::scoped_lock lk{lifecycle_mutex};
+    if (fault_instance == &instance) {
+        fault_instance = nullptr;
+    }
+    if (owner_instance != &instance) {
+        return;
+    }
+    enabled = false;
+    if (marker_buffer) {
+        vmaDestroyBuffer(instance.GetAllocator(), VkBuffer(marker_buffer), marker_allocation);
+        marker_buffer = vk::Buffer{};
+        marker_allocation = VmaAllocation{};
+    }
+    markers = nullptr;
+    args = nullptr;
+    owner_instance = nullptr;
+    num_streams.store(0, std::memory_order_relaxed);
+    next_args_slot.store(0, std::memory_order_relaxed);
+    args_notes.fill({});
+    for (auto& stream : streams) {
+        stream.name = nullptr;
+        stream.next.store(1, std::memory_order_relaxed);
+        stream.ring.reset();
+    }
+    device_lost_reported.clear();
+    device_lost_done.store(false);
+    stuck_reported.clear();
 }
 
 bool Enabled() noexcept {
@@ -344,29 +389,26 @@ void PrintDeviceFault() {
 } // namespace
 
 void ReportDeviceLost(const char* where) {
-    static std::atomic_flag reported = ATOMIC_FLAG_INIT;
-    static std::atomic<bool> done{false};
     if (!enabled && !fault_instance) {
         return;
     }
-    if (!reported.test_and_set()) {
+    if (!device_lost_reported.test_and_set()) {
         PrintDeviceFault();
-        if (enabled) {
+        if (enabled && markers) {
             Report("at device lost", where);
         }
-        done.store(true);
+        device_lost_done.store(true);
         return;
     }
     // Another thread is printing the report: wait for it (up to 3 s), as the caller stops the
     // game next and the report was cut off (laptop, TEX FORMAT device losts).
-    for (int i = 0; i < 300 && !done.load(); ++i) {
+    for (int i = 0; i < 300 && !device_lost_done.load(); ++i) {
         usleep(10000);
     }
 }
 
 void ReportStuck(const char* where) {
-    static std::atomic_flag reported = ATOMIC_FLAG_INIT;
-    if (enabled && !reported.test_and_set()) {
+    if (enabled && markers && !stuck_reported.test_and_set()) {
         Report("while the GPU makes no progress", where);
     }
 }

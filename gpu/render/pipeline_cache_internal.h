@@ -37,6 +37,7 @@ extern char** environ;
 #endif
 
 #include "bbport_sections.h"
+#include "bbport_threads.h"
 #include "bbport_toggles.h"
 #include "buffers/buffer_cache.h"
 #include "common/hash.h"
@@ -83,7 +84,10 @@ extern std::atomic<bool> g_bb_shader_import_active;
 /// vkCreateGraphicsPipelines, with its own VkPipelineCache synchronization). Jobs start in order.
 class PipelineCompiler {
 public:
-    explicit PipelineCompiler(u32 threads) {
+    explicit PipelineCompiler(u32 threads, const char* name = "bb:PipeCompile",
+                              bool background_ = false)
+        : thread_name{name}, background{background_} {
+        workers.reserve(threads);
         for (u32 i = 0; i < threads; ++i) {
             workers.emplace_back([this] { Run(); });
         }
@@ -113,6 +117,10 @@ public:
 
 private:
     void Run() {
+        Common::SetCurrentThreadName(thread_name);
+        if (background) {
+            BbThreads::MakeBackground();
+        }
         for (;;) {
             std::function<void()> job;
             {
@@ -127,6 +135,8 @@ private:
             job();
         }
     }
+    const char* thread_name;
+    bool background = false;
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<std::function<void()>> jobs;

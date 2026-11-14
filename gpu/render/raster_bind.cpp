@@ -456,6 +456,67 @@ void Rasterizer::BindVertexBuffers(const GraphicsPipeline* pipeline, const Prepa
     EmitVertexBuffers();
 }
 
+bool Rasterizer::BoundCmdState::UpdateVertexInput(const VertexBinds& v, bool force) noexcept {
+    const auto same_binding = [](const vk::VertexInputBindingDescription2EXT& a,
+                                 const vk::VertexInputBindingDescription2EXT& b) noexcept {
+        return a.pNext == b.pNext && a.binding == b.binding && a.stride == b.stride &&
+               a.inputRate == b.inputRate && a.divisor == b.divisor;
+    };
+    const auto same_attr = [](const vk::VertexInputAttributeDescription2EXT& a,
+                              const vk::VertexInputAttributeDescription2EXT& b) noexcept {
+        return a.pNext == b.pNext && a.location == b.location && a.binding == b.binding &&
+               a.format == b.format && a.offset == b.offset;
+    };
+    const auto same_span = [](const auto& a, const auto& b, auto eq) noexcept {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (!eq(a[i], b[i])) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!force && has_vertex_input && same_span(v.bindings, vertex_bindings, same_binding) &&
+        same_span(v.attributes, vertex_attributes, same_attr)) {
+        return false;
+    }
+    has_vertex_input = true;
+    vertex_bindings = v.bindings;
+    vertex_attributes = v.attributes;
+    return true;
+}
+
+bool Rasterizer::BoundCmdState::UpdateVertexBuffers(const VertexBinds& v, bool dynamic_in,
+                                                    bool force) noexcept {
+    const u32 count = v.num_buffers;
+    bool unchanged = !force && has_vertex_buffers && dynamic_input == dynamic_in &&
+                     num_vertex_buffers == count;
+    for (u32 i = 0; unchanged && i < count; ++i) {
+        if (vertex_buffers[i] != v.host_buffers[i] || vertex_offsets[i] != v.host_offsets[i] ||
+            (!dynamic_in && (vertex_sizes[i] != v.host_sizes[i] ||
+                             vertex_strides[i] != v.host_strides[i]))) {
+            unchanged = false;
+        }
+    }
+    if (unchanged) {
+        return false;
+    }
+    has_vertex_buffers = true;
+    dynamic_input = dynamic_in;
+    num_vertex_buffers = count;
+    for (u32 i = 0; i < count; ++i) {
+        vertex_buffers[i] = v.host_buffers[i];
+        vertex_offsets[i] = v.host_offsets[i];
+        if (!dynamic_in) {
+            vertex_sizes[i] = v.host_sizes[i];
+            vertex_strides[i] = v.host_strides[i];
+        }
+    }
+    return true;
+}
+
 void Rasterizer::EmitVertexBuffers() {
     BB_SECTION(EmitVertexBuffers);
     // bbport: only the used entries go into the recording chunk (the static vectors hold 32 of
@@ -463,30 +524,56 @@ void Rasterizer::EmitVertexBuffers() {
     auto& v = vertex_binds;
     const bool dynamic_input = instance.IsVertexInputDynamicState();
     const u32 num_buffers = v.num_buffers;
-    scheduler.ReserveRecordData(
-        v.bindings.size() * sizeof(v.bindings[0]) + v.attributes.size() * sizeof(v.attributes[0]) +
-        num_buffers * (sizeof(vk::Buffer) + 3 * sizeof(vk::DeviceSize)) + 128);
-    if (dynamic_input) {
-        scheduler.Record([bindings = scheduler.RecordData(std::span<const vk::VertexInputBindingDescription2EXT>{v.bindings.data(), v.bindings.size()}),
-                          attributes = scheduler.RecordData(std::span<const vk::VertexInputAttributeDescription2EXT>{
-                              v.attributes.data(), v.attributes.size()})](
-                             vk::CommandBuffer cmdbuf) {
-            cmdbuf.setVertexInputEXT(bindings, attributes);
-        });
-    }
-    if (num_buffers == 0) {
+    const bool force = BoundCmdState::ForceRebind();
+    bound_cmd_state.SyncEpoch(scheduler.GetDynamicState().Epoch());
+
+    const bool need_vertex_input = dynamic_input && bound_cmd_state.UpdateVertexInput(v, force);
+    const bool need_vertex_buffers =
+        num_buffers > 0 && bound_cmd_state.UpdateVertexBuffers(v, dynamic_input, force);
+    if (!need_vertex_input && !need_vertex_buffers) {
         return;
     }
-    const auto buffers = scheduler.RecordData(std::span<const vk::Buffer>{v.host_buffers.data(), num_buffers});
-    const auto offsets = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_offsets.data(), num_buffers});
+
+    size_t reserve = 128;
+    if (need_vertex_input) {
+        reserve += v.bindings.size() * sizeof(v.bindings[0]) +
+                   v.attributes.size() * sizeof(v.attributes[0]);
+    }
+    if (need_vertex_buffers) {
+        reserve +=
+            num_buffers * (sizeof(vk::Buffer) + (dynamic_input ? 1 : 3) * sizeof(vk::DeviceSize));
+    }
+    scheduler.ReserveRecordData(reserve);
+
+    if (need_vertex_input) {
+        scheduler.Record(
+            [bindings = scheduler.RecordData(
+                 std::span<const vk::VertexInputBindingDescription2EXT>{v.bindings.data(),
+                                                                        v.bindings.size()}),
+             attributes = scheduler.RecordData(
+                 std::span<const vk::VertexInputAttributeDescription2EXT>{
+                     v.attributes.data(), v.attributes.size()})](vk::CommandBuffer cmdbuf) {
+                cmdbuf.setVertexInputEXT(bindings, attributes);
+            });
+    }
+    if (!need_vertex_buffers) {
+        return;
+    }
+
+    const auto buffers =
+        scheduler.RecordData(std::span<const vk::Buffer>{v.host_buffers.data(), num_buffers});
+    const auto offsets =
+        scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_offsets.data(), num_buffers});
     if (dynamic_input) {
         scheduler.Record([num_buffers, buffers, offsets](vk::CommandBuffer cmdbuf) {
             cmdbuf.bindVertexBuffers(0, num_buffers, buffers.data(), offsets.data());
         });
         return;
     }
-    const auto sizes = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_sizes.data(), num_buffers});
-    const auto strides = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_strides.data(), num_buffers});
+    const auto sizes =
+        scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_sizes.data(), num_buffers});
+    const auto strides =
+        scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_strides.data(), num_buffers});
     scheduler.Record([num_buffers, buffers, offsets, sizes, strides](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindVertexBuffers2(0, num_buffers, buffers.data(), offsets.data(), sizes.data(),
                                   strides.data());
@@ -745,6 +832,9 @@ void Rasterizer::BindIndexBuffer(u32 index_offset) {
 }
 
 void Rasterizer::EmitIndexBuffer() {
+    if (!bound_cmd_state.UpdateIndexBuffer(scheduler.GetDynamicState().Epoch(), index_bind)) {
+        return;
+    }
     scheduler.Record([handle = index_bind.handle, offset = index_bind.offset,
                       type = index_bind.type](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindIndexBuffer(handle, offset, type);

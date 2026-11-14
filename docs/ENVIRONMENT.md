@@ -7,7 +7,7 @@ at its start (`Environment:` in the log) and warns about `BB_*` names it does no
 `=1: ...` / `=0: ...` / `=N: ...` say what that value does; `set: ...` means any value
 turns it on (even `0`).
 
-## Settings (106)
+## Settings (108)
 
 What players and the launchers set. The menu, bbport.ini and the launcher write most of them; set one by hand to override them.
 
@@ -101,9 +101,11 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_RENDER_RES` | =WxH: render resolution through the startup patch (compatibility) |
 | `BB_SAVE_LOG` | =1: the log and frame statistics also kept in logs/ |
 | `BB_SHADER_PROGRESS` | =0: no shader compilation progress on screen |
+| `BB_SHADNET_LINK_V4` | =1: enable the v4 shadNet co-op server link (the launcher's) |
 | `BB_SHADNET_NPID` | the shadNet account name (the launcher's) |
 | `BB_SHADNET_PASSWORD` | the shadNet account password (the launcher's) |
 | `BB_SHADNET_SERVER` | the shadNet server |
+| `BB_SHADNET_SERVER_KEY` | the pinned 64-hex public key of the shadNet server (the launcher's) |
 | `BB_SHADNET_TOKEN` | the shadNet account token (the launcher's) |
 | `BB_SHADNET_WEBAPI` | the shadNet web API server |
 | `BB_SHADOW_DISTANCE` | =N: shadow draw distance scale |

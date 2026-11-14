@@ -117,8 +117,8 @@ int main() {
     BbSettings::Load();
     assert(s.menu_language.load() == static_cast<int>(BbSettings::MenuLanguage::Russian) && s.menu_language_chosen);
 
-    // Frame generation: DLSS from the file stays; FSR 3.1 only with BB_FRAME_GEN (hidden until
-    // its artifacts are fixed); the environment wins; "1"/"0" of earlier versions still parse.
+    // Frame generation: DLSS and FSR 3.1 from the file stay; the environment wins; "1"/"0" of
+    // earlier versions parse as FSR 3.1 / off.
     const auto write_frame_gen = [&](const char* text) {
         FILE* file = std::fopen(path, "w");
         assert(file);
@@ -132,7 +132,7 @@ int main() {
     assert(s.frame_generation == BbSettings::FrameGenDlss && s.frame_generation_multiplier == 3);
     write_frame_gen("frame_generation=fsr3\nframe_generation_multiplier=9\n");
     BbSettings::Load();
-    assert(s.frame_generation == BbSettings::FrameGenOff && s.frame_generation_multiplier == 4);
+    assert(s.frame_generation == BbSettings::FrameGenFsr3 && s.frame_generation_multiplier == 4);
     setenv("BB_FRAME_GEN", "1", 1);
     BbSettings::Load();
     assert(s.frame_generation == BbSettings::FrameGenFsr3);
@@ -147,7 +147,10 @@ int main() {
     unsetenv("BB_FRAME_GEN_MULTIPLIER");
     write_frame_gen("frame_generation=1\n");
     BbSettings::Load();
-    assert(s.frame_generation == BbSettings::FrameGenOff); // FSR 3.1 without BB_FRAME_GEN
+    assert(s.frame_generation == BbSettings::FrameGenFsr3);
+    write_frame_gen("frame_generation=0\n");
+    BbSettings::Load();
+    assert(s.frame_generation == BbSettings::FrameGenOff);
     s.frame_generation = BbSettings::FrameGenDlss;
     s.frame_generation_multiplier = 4;
     BbSettings::Save();

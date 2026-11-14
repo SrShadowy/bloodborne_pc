@@ -61,6 +61,10 @@ void BlobStore::Close() {
     LOG_INFO(Render, "Pipeline cache written");
 }
 
+BlobStore::~BlobStore() {
+    Close();
+}
+
 std::filesystem::path BlobStore::PathOf(BlobType type, const std::string& name) const {
     return dir / (name + Extension(type));
 }
@@ -91,7 +95,7 @@ void BlobStore::Writer(std::stop_token stop) {
     Common::SetCurrentThreadName("bb:PipeCacheIO");
     std::unique_lock lk{mutex};
     for (;;) {
-        cv.wait(lk, [&] { return !queue.empty() || stop.stop_requested(); });
+        cv.wait(lk, stop, [&] { return !queue.empty(); });
         if (queue.empty()) {
             return; // stopping with nothing left to write
         }
@@ -147,14 +151,24 @@ void BlobStore::Load(BlobType type, const std::string& name, std::vector<u32>& d
 
 void BlobStore::ForEachBlob(BlobType type,
                             const std::function<void(std::vector<u8>&& data)>& func) {
+    ForEachBlobIf(type, [](std::string_view) { return true; }, func);
+}
+
+void BlobStore::ForEachBlobIf(BlobType type, const std::function<bool(std::string_view stem)>& pred,
+                              const std::function<void(std::vector<u8>&& data)>& func) {
     const std::string ext = Extension(type);
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator{dir, ec}) {
-        if (entry.path().extension() != ext) {
+        const auto& path = entry.path();
+        if (path.extension() != ext) {
+            continue;
+        }
+        const std::string stem = path.stem().string();
+        if (!pred(stem)) {
             continue;
         }
         using namespace Common::FS;
-        const IOFile file{entry.path(), FileAccessMode::Read};
+        const IOFile file{path, FileAccessMode::Read};
         if (file.IsOpen()) {
             std::vector<u8> data(file.GetSize());
             file.Read(data);

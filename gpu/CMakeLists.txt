@@ -396,11 +396,12 @@ target_include_directories(assert-dump-test PRIVATE . shim)
 add_executable(effect-flags-test EXCLUDE_FROM_ALL ../tests/test_effect_flags.cpp)
 target_compile_options(effect-flags-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(effect-flags-test PRIVATE shim)
+file(GLOB BBPORT_STRINGS_SOURCES CONFIGURE_DEPENDS ../extra/management/i18n/*.cpp)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp
     shim/bbport_settings.cpp
-    ../extra/management/i18n/bbport_strings.cpp)
+    ${BBPORT_STRINGS_SOURCES})
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-target_include_directories(settings-test PRIVATE .. shim ../extra/management/i18n)
+target_include_directories(settings-test PRIVATE . .. shim ../extra/management/i18n)
 
 add_executable(bbt-table-test EXCLUDE_FROM_ALL ../tests/test_bbt_table.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_compile_options(bbt-table-test PRIVATE -UNDEBUG -fPIC)
@@ -470,9 +471,11 @@ target_include_directories(camera-motion-test PRIVATE . shim ${SHADER_INCLUDE} t
 target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_executable(frame-generation-test EXCLUDE_FROM_ALL ../tests/test_frame_generation.cpp ../tests/test_gpu_runtime_stubs.cpp)
-target_include_directories(frame-generation-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/fsr-vulkan/include)
+target_include_directories(frame-generation-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/fsr-vulkan/include)
 target_compile_options(frame-generation-test PRIVATE -UNDEBUG -fPIC)
-target_link_libraries(frame-generation-test PRIVATE bbgpu)
+set_source_files_properties(../tests/test_frame_generation.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(frame-generation-test PRIVATE bbgpu ffx-vulkan::portable)
 add_dependencies(frame-generation-test host_shaders)
 
 add_executable(translation-memory-test EXCLUDE_FROM_ALL ../tests/test_translation_memory.cpp
@@ -494,13 +497,13 @@ target_link_libraries(image-spares-test PRIVATE Vulkan::Headers GPUOpen::VulkanM
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp
-    ../extra/management/i18n/bbport_strings.cpp)
-target_include_directories(upscaler-support-test PRIVATE shim ../extra/management/i18n)
+    ${BBPORT_STRINGS_SOURCES})
+target_include_directories(upscaler-support-test PRIVATE . .. shim ../extra/management/i18n)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     upscale/fsr411/fsr411.cpp)
-target_include_directories(fsr4-bench PRIVATE upscale/fsr411)
+target_include_directories(fsr4-bench PRIVATE . upscale/fsr411)
 target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
 
 # bbport online module (gpu/bbnet20, libbbnet20.so): built when its libraries are there (shell.nix);
@@ -608,4 +611,14 @@ if (WIN32)
     target_link_libraries(shader-discovery-test PRIVATE -mconsole pthread winmm onecore bcrypt)
     target_link_libraries(shader-pack-test PRIVATE -mconsole pthread winmm onecore bcrypt)
 endif()
+
+add_executable(perf-empirical-test EXCLUDE_FROM_ALL ../tests/test_perf_empirical.cpp)
+target_include_directories(perf-empirical-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
+target_compile_options(perf-empirical-test PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/.. -UNDEBUG -fPIC)
+target_link_libraries(perf-empirical-test PRIVATE bbgpu Vulkan::Headers GPUOpen::VulkanMemoryAllocator)
+target_link_options(perf-empirical-test PRIVATE -rdynamic)
+set_target_properties(perf-empirical-test PROPERTIES
+    BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib"
+    INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib")
+
 

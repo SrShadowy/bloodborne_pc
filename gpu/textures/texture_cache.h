@@ -403,6 +403,7 @@ private:
     std::array<u64, 64> gc_tick_at_second{}; ///< gc_tick at each of the last 64 seconds
     u64 gc_evictions = 0, gc_downloads = 0;  ///< since the last pressure report
     std::chrono::steady_clock::time_point gc_report_time{};
+    std::chrono::steady_clock::time_point last_mem_query{};
     static inline std::atomic<u64> vram_short_until{0}; ///< steady seconds
 
     struct MetaInfo {

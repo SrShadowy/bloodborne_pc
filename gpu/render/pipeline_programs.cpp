@@ -258,6 +258,51 @@ bool PipelineCache::ProgramDecodes(const Shader::ShaderParams& params, HwStage s
     return bad < 0;
 }
 
+namespace {
+bool MatchInPlaceEnabled(SwStage sw_stage) noexcept {
+    static const bool enabled = !bb_env_off("BB_SPEC_MATCH");
+    return enabled && sw_stage != SwStage::TessellationControl &&
+           sw_stage != SwStage::TessellationEval;
+}
+
+size_t MatchPermutationInPlace(const Program& program, const Shader::Info& info,
+                               const Shader::RuntimeInfo& runtime_info,
+                               const Shader::Profile& profile,
+                               const Shader::Backend::Bindings& binding) {
+    const auto& modules = program.modules;
+    const auto* fetch_data = Shader::Gcn::ParseFetchShaderRef(info);
+    const auto matches = [&](size_t i) {
+        return modules[i].spec.Matches(info, runtime_info, profile, binding, fetch_data);
+    };
+    const size_t n = modules.size();
+    const size_t last = program.last_used.load(std::memory_order_relaxed);
+    if (last < n && matches(last)) {
+        return last;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (i != last && matches(i)) {
+            return i;
+        }
+    }
+    return n;
+}
+
+size_t MatchPermutationBySpec(const Program& program, const Shader::StageSpecialization& spec) {
+    const auto& modules = program.modules;
+    const size_t n = modules.size();
+    const size_t last = program.last_used.load(std::memory_order_relaxed);
+    if (last < n && modules[last].spec == spec) {
+        return last;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (i != last && modules[i].spec == spec) {
+            return i;
+        }
+    }
+    return n;
+}
+} // namespace
+
 PipelineCache::Result PipelineCache::LookUpProgram(PipelineSelection& sel,
                                                    const Shader::RuntimeInfo& runtime_info,
                                                    const Shader::ShaderParams& params,
@@ -292,17 +337,24 @@ PipelineCache::Result PipelineCache::LookUpProgram(PipelineSelection& sel,
         worker.failed = true; // the GPU thread reads back what the GPU wrote, or skips the draw
         return {};
     }
-    const auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
-    runtime_fault_recover = nullptr;
-    const auto it = std::ranges::find(program->modules, spec, &Program::Module::spec);
-    if (it == program->modules.end()) {
+    size_t perm_idx = program->modules.size();
+    if (MatchInPlaceEnabled(program->info.sw_stage)) {
+        perm_idx = MatchPermutationInPlace(*program, info, runtime_info, profile, binding);
+        runtime_fault_recover = nullptr;
+    } else {
+        const auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
+        runtime_fault_recover = nullptr;
+        perm_idx = MatchPermutationBySpec(*program, spec);
+    }
+    if (perm_idx >= program->modules.size()) {
         worker.failed = true;
         return {};
     }
+    program->last_used.store(perm_idx, std::memory_order_relaxed);
     info.AddBindings(binding);
-    const size_t perm_idx = std::distance(program->modules.begin(), it);
+    const auto& mod = program->modules[perm_idx];
     worker.stages.push_back({program, params.hash, hw_stage, info.pgm_base, &info.flattened_ud_buf});
-    return {&info, it->module, it->spec.fetch_shader_data, HashCombine(params.hash, perm_idx)};
+    return {&info, mod.module, mod.spec.fetch_shader_data, HashCombine(params.hash, perm_idx)};
 }
 
 PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage hw_stage,
@@ -369,24 +421,8 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     // A known permutation, compared without building the specialization (Matches; the
     // tessellation stages build theirs: their runtime info comes from a constant buffer).
     // BB_SPEC_MATCH=0: always built and compared.
-    static const bool match_in_place = !bb_env_off("BB_SPEC_MATCH");
-    if (match_in_place && sw_stage != SwStage::TessellationControl &&
-        sw_stage != SwStage::TessellationEval) {
-        const auto* fetch_data = Shader::Gcn::ParseFetchShaderRef(info);
-        const auto matches = [&](size_t i) {
-            return modules[i].spec.Matches(info, runtime_info, profile, binding, fetch_data);
-        };
-        size_t found = modules.size();
-        if (program.last_used < modules.size() && matches(program.last_used)) {
-            found = program.last_used;
-        } else {
-            for (size_t i = 0; i < modules.size(); ++i) {
-                if (i != program.last_used && matches(i)) {
-                    found = i;
-                    break;
-                }
-            }
-        }
+    if (MatchInPlaceEnabled(sw_stage)) {
+        const size_t found = MatchPermutationInPlace(program, info, runtime_info, profile, binding);
         // BB_SPEC_MATCH_CHECK=1 (diagnostics): the built specialization must find the same one.
         static const bool check = bb_env("BB_SPEC_MATCH_CHECK") != nullptr;
         if (check) {
@@ -411,7 +447,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
             }
         }
         if (found < modules.size()) {
-            program.last_used = found;
+            program.last_used.store(found, std::memory_order_relaxed);
             info.AddBindings(binding);
             return {&info, modules[found].module, modules[found].spec.fetch_shader_data,
                     HashCombine(params.hash, found)};
@@ -420,13 +456,9 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
 
     // Consecutive draws of a program almost always use the same permutation.
-    auto it = program.last_used < modules.size() && modules[program.last_used].spec == spec
-                  ? modules.begin() + program.last_used
-                  : std::ranges::find(modules, spec, &Program::Module::spec);
-    size_t perm_idx;
-    if (it != modules.end()) {
-        perm_idx = std::distance(modules.begin(), it);
-        program.last_used = perm_idx;
+    size_t perm_idx = MatchPermutationBySpec(program, spec);
+    if (perm_idx < modules.size()) {
+        program.last_used.store(perm_idx, std::memory_order_relaxed);
         info.AddBindings(binding);
     } else {
         perm_idx = modules.size();

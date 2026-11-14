@@ -62,7 +62,7 @@ struct Program {
 
     Shader::Info info;
     ModuleList modules{};
-    size_t last_used = 0; ///< permutation of the previous lookup, compared first
+    mutable std::atomic<size_t> last_used{0}; ///< permutation of the previous lookup, compared first
     /// `info` as translated, for draw-preparation workers (they must not read `info`, whose user
     /// data the GPU thread rewrites every draw). Guarded by PipelineCache::programs_mutex.
     std::unique_ptr<Shader::Info> info_template;
@@ -185,6 +185,8 @@ public:
     }
 
 private:
+    enum class MotionCheck : u8 { Unknown, Resolved, Failed };
+    MotionCheck PrecheckMotionSelection(PipelineSelection& sel);
     bool RefreshGraphicsKey(PipelineSelection& sel);
     bool RefreshGraphicsStages(PipelineSelection& sel);
     bool RefreshComputeKey();
@@ -201,14 +203,27 @@ private:
                                                 Shader::SwStage l_stage);
 
     // The pipeline cache on disk (pipeline_store.cpp).
+    struct WarmStage {
+        const Shader::Info* info{};
+        vk::ShaderModule module{};
+        std::optional<Shader::Gcn::FetchShaderData> fetch_shader{};
+        bool ok = false;
+    };
+    using WarmStageMap = tsl::robin_map<u64, WarmStage>;
     void WarmUp();
     void SaveProfile();
     void DropPreloaded();
     bool LoadComputePipeline(Serialization::Archive& ar);
     /// A preloaded graphics pipeline still to create (WarmUp creates them on several threads).
-    using PreloadJob = std::pair<GraphicsPipelineKey, std::function<std::unique_ptr<GraphicsPipeline>()>>;
+    struct PreloadJob {
+        GraphicsPipelineKey key;
+        u32 cost = 0;
+        std::function<std::unique_ptr<GraphicsPipeline>()> make;
+    };
     bool LoadGraphicsPipeline(Serialization::Archive& ar, std::vector<PreloadJob>& jobs);
+    bool LoadCachedStage(u64 perm_hash, size_t stage);
     bool LoadPipelineStage(Serialization::Archive& ar, size_t stage);
+    WarmStageMap* warm_stages = nullptr; ///< transient during WarmUp()
 
     const Instance& instance;
     Scheduler& scheduler;

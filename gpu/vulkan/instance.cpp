@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <shared_mutex>
 #include <string_view>
 #include <cstdio>
 #include <cstdlib>
@@ -16,7 +17,9 @@
 #include <vk_mem_alloc.h>
 
 #include "bbport_toggles.h"
+#include "common/hash.h"
 #include "render/gcn_to_vk.h"
+#include "render/vk_breadcrumbs.h"
 #include "sdl_window.h"
 #include "upscale/vk_dlss.h"
 #include "bbport_memory_dev.h" // [extra]
@@ -157,7 +160,81 @@ void Link(void**& tail, T& features) {
 
 const Instance* stats_instance = nullptr;
 
+struct LayoutSpecKey {
+    bool uses_push_descriptors{};
+    u32 push_stages{};
+    u32 push_size{};
+    std::vector<vk::DescriptorSetLayoutBinding> bindings;
+};
+
+struct LayoutSpecView {
+    bool uses_push_descriptors{};
+    u32 push_stages{};
+    u32 push_size{};
+    std::span<const vk::DescriptorSetLayoutBinding> bindings;
+
+    LayoutSpecView(bool uses_push, u32 stages, u32 size,
+                   std::span<const vk::DescriptorSetLayoutBinding> b) noexcept
+        : uses_push_descriptors{uses_push}, push_stages{stages}, push_size{size}, bindings{b} {}
+    LayoutSpecView(const LayoutSpecKey& k) noexcept
+        : uses_push_descriptors{k.uses_push_descriptors}, push_stages{k.push_stages},
+          push_size{k.push_size}, bindings{k.bindings} {}
+};
+
+u64 HashBindings(u64 seed, std::span<const vk::DescriptorSetLayoutBinding> bindings) noexcept {
+    seed = HashCombine(seed, bindings.size());
+    for (const auto& b : bindings) {
+        seed = HashCombine(seed, u64(b.binding) | (u64(b.descriptorType) << 32));
+        seed = HashCombine(seed, u64(b.descriptorCount) | (u64(u32(b.stageFlags)) << 32));
+    }
+    return seed;
+}
+
+bool BindingsEqual(std::span<const vk::DescriptorSetLayoutBinding> a,
+                   std::span<const vk::DescriptorSetLayoutBinding> b) noexcept {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].binding != b[i].binding || a[i].descriptorType != b[i].descriptorType ||
+            a[i].descriptorCount != b[i].descriptorCount || a[i].stageFlags != b[i].stageFlags ||
+            a[i].pImmutableSamplers != b[i].pImmutableSamplers) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct LayoutSpecHash {
+    using is_transparent = void;
+    size_t operator()(const LayoutSpecView& k) const noexcept {
+        u64 h = k.uses_push_descriptors ? 1ull : 0ull;
+        if (k.push_stages != 0 || k.push_size != 0) {
+            h = HashCombine(h, u64(k.push_stages) | (u64(k.push_size) << 32));
+        }
+        return HashBindings(h, k.bindings);
+    }
+};
+
+struct LayoutSpecEq {
+    using is_transparent = void;
+    bool operator()(const LayoutSpecView& a, const LayoutSpecView& b) const noexcept {
+        return a.uses_push_descriptors == b.uses_push_descriptors &&
+               a.push_stages == b.push_stages && a.push_size == b.push_size &&
+               BindingsEqual(a.bindings, b.bindings);
+    }
+};
+
 } // namespace
+
+struct Instance::LayoutCache {
+    std::shared_mutex mutex;
+    std::unordered_map<LayoutSpecKey, std::shared_ptr<const vk::UniqueDescriptorSetLayout>,
+                       LayoutSpecHash, LayoutSpecEq>
+        desc_layouts;
+    std::unordered_map<LayoutSpecKey, Instance::LayoutPair, LayoutSpecHash, LayoutSpecEq>
+        pipeline_layouts;
+};
 
 Instance::Instance(Frontend::WindowSDL& window, s32 device_index, bool validation,
                    bool crash_diagnostic)
@@ -168,7 +245,8 @@ Instance::Instance(s32 device_index, bool validation)
 
 Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 device_index,
                    bool validation, bool crash_diagnostic)
-    : instance{CreateInstance(window_info.type, validation, crash_diagnostic)} {
+    : instance{CreateInstance(window_info.type, validation, crash_diagnostic)},
+      layout_cache{std::make_unique<LayoutCache>()} {
     if (validation) {
         debug_callback = CreateDebugCallback(*instance);
     }
@@ -188,6 +266,8 @@ Instance::~Instance() {
     if (stats_instance == this) {
         stats_instance = nullptr;
     }
+    Breadcrumbs::Shutdown(*this);
+    layout_cache.reset();
     vmaDestroyAllocator(allocator);
 }
 
@@ -974,6 +1054,73 @@ vk::Format Instance::GetSupportedFormat(vk::Format format, vk::FormatFeatureFlag
     default:
         return format;
     }
+}
+
+Instance::LayoutPair Instance::GetOrCreateLayouts(
+    bool uses_push_descriptors, vk::ShaderStageFlags push_stages, u32 push_size,
+    std::span<const vk::DescriptorSetLayoutBinding> bindings, const char* kind,
+    const std::string& debug_name) const {
+    const u32 stages_mask = static_cast<u32>(push_stages);
+    const LayoutSpecView pipe_view{uses_push_descriptors, stages_mask, push_size, bindings};
+    {
+        std::shared_lock lk{layout_cache->mutex};
+        if (const auto it = layout_cache->pipeline_layouts.find(pipe_view);
+            it != layout_cache->pipeline_layouts.end()) {
+            return it->second;
+        }
+    }
+
+    std::unique_lock lk{layout_cache->mutex};
+    if (const auto it = layout_cache->pipeline_layouts.find(pipe_view);
+        it != layout_cache->pipeline_layouts.end()) {
+        return it->second;
+    }
+
+    const vk::Device dev = *device;
+    std::shared_ptr<const vk::UniqueDescriptorSetLayout> desc_ptr;
+    const LayoutSpecView desc_view{uses_push_descriptors, 0, 0, bindings};
+    if (const auto it = layout_cache->desc_layouts.find(desc_view);
+        it != layout_cache->desc_layouts.end()) {
+        desc_ptr = it->second;
+    } else {
+        auto [set_result, set_layout] = dev.createDescriptorSetLayoutUnique({
+            .flags = uses_push_descriptors
+                         ? vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR
+                         : vk::DescriptorSetLayoutCreateFlagBits{},
+            .bindingCount = static_cast<u32>(bindings.size()),
+            .pBindings = bindings.data(),
+        });
+        ASSERT_MSG(set_result == vk::Result::eSuccess,
+                   "Failed to create {} descriptor set layout: {}", kind,
+                   vk::to_string(set_result));
+        desc_ptr = std::make_shared<const vk::UniqueDescriptorSetLayout>(std::move(set_layout));
+        layout_cache->desc_layouts.emplace(
+            LayoutSpecKey{uses_push_descriptors, 0, 0, {bindings.begin(), bindings.end()}},
+            desc_ptr);
+    }
+
+    const vk::PushConstantRange push_constants{
+        .stageFlags = push_stages,
+        .offset = 0,
+        .size = push_size,
+    };
+    const vk::DescriptorSetLayout set = **desc_ptr;
+    auto [layout_result, layout] = dev.createPipelineLayoutUnique({
+        .setLayoutCount = 1U,
+        .pSetLayouts = &set,
+        .pushConstantRangeCount = 1U,
+        .pPushConstantRanges = &push_constants,
+    });
+    ASSERT_MSG(layout_result == vk::Result::eSuccess, "Failed to create {} pipeline layout: {}",
+               kind, vk::to_string(layout_result));
+    SetObjectName(dev, *layout, "{} PipelineLayout {}", kind, debug_name);
+    auto pipe_ptr = std::make_shared<const vk::UniquePipelineLayout>(std::move(layout));
+    LayoutPair pair{std::move(desc_ptr), std::move(pipe_ptr)};
+    layout_cache->pipeline_layouts.emplace(
+        LayoutSpecKey{uses_push_descriptors, stages_mask, push_size,
+                      {bindings.begin(), bindings.end()}},
+        pair);
+    return pair;
 }
 
 } // namespace Vulkan
