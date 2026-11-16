@@ -15,6 +15,7 @@ BB_ENV(BB_ASYNC_PIPELINES, SETTING, "=0: new pipelines of passes drawn every fra
 BB_ENV(BB_AUTO_RENDER_RES, SETTING, "=1: render resolution picked from the measured frame rate")
 BB_ENV(BB_BBSC, SETTING, "=1: seamless co-op (BBSC), the launcher's co-op switch")
 BB_ENV(BB_BBSC_LOCAL_SERVER, SETTING, "=1 / auto (default) / 0: the BBSC game server on this PC (scripts/bbsc_gameserver)")
+BB_ENV(BB_BBSC_VERSION, SETTING, "=version: BBSC co-op release version sent to the server (default: 1.5.0)")
 BB_ENV(BB_BUTTON_PROMPTS, SETTING, "=0: the game's PlayStation button icons always")
 BB_ENV(BB_COMMUNITY_SERVER, SETTING, "URL of the online pool server (default: the community server)")
 BB_ENV(BB_CONFIG, SETTING, "=path: the controls file (default bbport.ini)")

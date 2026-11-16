@@ -7,7 +7,7 @@ at its start (`Environment:` in the log) and warns about `BB_*` names it does no
 `=1: ...` / `=0: ...` / `=N: ...` say what that value does; `set: ...` means any value
 turns it on (even `0`).
 
-## Settings (108)
+## Settings (109)
 
 What players and the launchers set. The menu, bbport.ini and the launcher write most of them; set one by hand to override them.
 
@@ -18,6 +18,7 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_AUTO_RENDER_RES` | =1: render resolution picked from the measured frame rate |
 | `BB_BBSC` | =1: seamless co-op (BBSC), the launcher's co-op switch |
 | `BB_BBSC_LOCAL_SERVER` | =1 / auto (default) / 0: the BBSC game server on this PC (scripts/bbsc_gameserver) |
+| `BB_BBSC_VERSION` | =version: BBSC co-op release version sent to the server (default: 1.5.0) |
 | `BB_BUTTON_PROMPTS` | =0: the game's PlayStation button icons always |
 | `BB_COMMUNITY_SERVER` | URL of the online pool server (default: the community server) |
 | `BB_CONFIG` | =path: the controls file (default bbport.ini) |
@@ -122,7 +123,7 @@ What players and the launchers set. The menu, bbport.ini and the launcher write 
 | `BB_VIDEO_BACKEND` | =x11 / wayland: forced video backend for game window |
 | `BB_VRAM_LIMIT` | VRAM memory limit in MiB |
 
-## Tuning (241)
+## Tuning (242)
 
 Defaults to change on a machine where they misbehave, workarounds, and switches that turn a fix off for comparison.
 
@@ -360,6 +361,7 @@ Defaults to change on a machine where they misbehave, workarounds, and switches 
 | `BB_VK_RECORD_THREAD` | =0: Vulkan commands recorded on the calling thread |
 | `BB_VK_RECORD_THREADS` | =N (1-8): Vulkan recording threads (default 2 from 8 hardware threads) |
 | `BB_VK_SEGMENT_KB` | =N (default 64): recording segment size |
+| `BB_VK_SUSPEND_RESUME` | =0: disable VK_RENDERING_SUSPENDING_BIT/RESUMING_BIT across segments (always store+load) |
 | `BB_VMA_BLOCK_MB` | =N (default 64): VMA block size |
 | `BB_VMA_DEDICATED_MB` | =N (default 4): images from this size get dedicated memory |
 | `BB_VRAM_FLOOR_IDLE_SECONDS` | =N (default 30): mirror floor idle time before textures make room |
