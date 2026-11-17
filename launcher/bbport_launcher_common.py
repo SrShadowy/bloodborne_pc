@@ -283,6 +283,7 @@ INI_DEFAULTS = {
     "p2p_relay": "1",
     "p2p_gen19": "1",
     "discord_client_id": DISCORD_CLIENT_ID,
+    "disable_gyro": "0",
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 
@@ -492,6 +493,8 @@ def game_environment(s):
     env["BB_PRESENT_MODE"] = s["present_mode"]
     if s.get("gamepad"):
         env["BB_GAMEPAD"] = s["gamepad"]
+    if s.get("disable_gyro") == "1" or s.get("disable_gyro") is True:
+        env["BB_DISABLE_GYRO"] = "1"
     if s.get("display"):
         env["BB_DISPLAY"] = s["display"]
     env["BB_SKIP_NETWORK_CHOICE"] = "1" if s.get("skip_network_choice", True) else "0"

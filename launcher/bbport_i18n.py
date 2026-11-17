@@ -2683,6 +2683,8 @@ FR_FR = {
     "Камера влево": "Caméra vers la gauche",
     "Камера вправо": "Caméra vers la droite",
     "Контроллер": "Manette",
+    "Отключить гироскоп": "Désactiver le gyroscope",
+    "Игнорировать датчики движения (жесты SixAxis)": "Ignorer les capteurs de mouvement (gestes SixAxis)",
     "Выбранный берётся, как только подключится": "La manette choisie est utilisée dès qu'elle se connecte",
     "Первый подключённый": "Première connectée",
     "{} (не подключён)": "{} (non connectée)",

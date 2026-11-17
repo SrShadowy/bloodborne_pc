@@ -636,6 +636,11 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
                                                 lambda _button: self.fill_gamepads()))
         self.fill_gamepads()
         controls.add(self.gamepad_row)
+        self.disable_gyro_row = Adw.SwitchRow(
+            title=tr("Отключить гироскоп"),
+            subtitle=tr("Игнорировать датчики движения (жесты SixAxis)"),
+            active=self.ini.get("disable_gyro", "0") == "1")
+        controls.add(self.disable_gyro_row)
         # Bindings: "Assign" waits for a key or button (bb-gpu-capabilities --read-input).
         self.control_rows = {}
         for kind, title, icon in (("key", tr("Клавиатура и мышь"), "input-keyboard-symbolic"),
@@ -947,7 +952,8 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             "fps_mode": self.fps_row, "fps_limit": self.limit_row, "low_latency": self.low_latency_row,
             "gpu": self.gpu_row, "draw_pipe": self.pipe_row, "gamepad": self.gamepad_row,
             "mouse_look": self.mouse_look_row, "mouse_sensitivity": self.mouse_sensitivity_row,
-            "mouse_invert_y": self.mouse_invert_row, "mouse_invert_x": self.mouse_invert_x_row, "button_prompts": self.prompts_row,
+            "mouse_invert_y": self.mouse_invert_row, "mouse_invert_x": self.mouse_invert_x_row,
+            "disable_gyro": self.disable_gyro_row, "button_prompts": self.prompts_row,
             "mods_enabled": self.mods_enabled_row, "mangohud": self.mangohud_row,
             "save_log": self.save_log_row, "crash_diag": self.crash_diag_row,
             "frame_stats": self.stats_row, "gpu_profile": self.profile_row,
@@ -1393,6 +1399,7 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
             "mouse_sensitivity": f"{self.mouse_sensitivity_row.get_value():.2f}",
             "mouse_invert_y": "1" if self.mouse_invert_row.get_active() else "0",
             "mouse_invert_x": "1" if self.mouse_invert_x_row.get_active() else "0",
+            "disable_gyro": "1" if self.disable_gyro_row.get_active() else "0",
             **{key: f"{row.get_value():.2f}" for key, row in self.camera_speed_rows.items()},
             "button_prompts": combo_value(self.prompts_row),
             "game_text_language": combo_value(self.text_language_row),
@@ -1404,7 +1411,12 @@ class LauncherWindow(ContentPages, OnlinePage, TrophiesPage, LogPage, UpscalerFi
         self.ini, self.ini_lines = load_ini()
 
     def environment(self):
-        return game_environment(self.settings)
+        s = dict(self.settings)
+        if hasattr(self, "disable_gyro_row"):
+            s["disable_gyro"] = "1" if self.disable_gyro_row.get_active() else "0"
+        elif "disable_gyro" in self.ini:
+            s["disable_gyro"] = self.ini["disable_gyro"]
+        return game_environment(s)
 
     # --- mods ----------------------------------------------------------------------------
 

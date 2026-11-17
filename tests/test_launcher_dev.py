@@ -376,6 +376,20 @@ class LauncherDevUITests(unittest.TestCase):
         self.assertEqual(common.INI_DEFAULTS.get("discord_client_id"),
                          common.DISCORD_CLIENT_ID)
 
+    def test_disable_gyro_setting_and_env(self):
+        import bbport_launcher_common as common
+        self.assertEqual(common.INI_DEFAULTS.get("disable_gyro"), "0")
+
+        s_off = dict(common.DEFAULTS)
+        s_off["disable_gyro"] = "0"
+        env_off = common.game_environment(s_off)
+        self.assertNotIn("BB_DISABLE_GYRO", env_off)
+
+        s_on = dict(common.DEFAULTS)
+        s_on["disable_gyro"] = "1"
+        env_on = common.game_environment(s_on)
+        self.assertEqual(env_on.get("BB_DISABLE_GYRO"), "1")
+
     def test_thd_account_fallback(self):
         # A settings file without the THD sign-in still plays with account.json's account.
         import tempfile
