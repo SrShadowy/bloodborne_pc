@@ -46,6 +46,9 @@ DriverCacheStatus GetDriverCacheStatus();
 // regression from a corrupt file); aborts only if an empty cache cannot be created.
 vk::UniquePipelineCache Create(vk::Device device, vk::PhysicalDevice physical_device);
 
+// Clears the active cache registration under detail::g_mutex before destroying the Vulkan cache.
+void Unregister(vk::PipelineCache cache);
+
 // Held across every vkCreate*Pipelines call: shared (creations stay parallel), while the
 // periodic FlushTick save takes it exclusively (vkGetPipelineCacheData needs external sync
 // against concurrent creates). One overload per call site's create-info type; also times the

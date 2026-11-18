@@ -35,14 +35,15 @@ class RecordChunk {
 public:
     static constexpr size_t Capacity = 128 * 1024;
 
-    /// Returns false (and leaves `func` untouched) when the chunk has no room.
+    /// Like Push, returning a pointer to the stored closure (null when the chunk has no room).
     template <typename Func>
-    bool Push(Func&& func) {
-        using Command = TypedCommand<std::decay_t<Func>>;
+    auto* TryPush(Func&& func) {
+        using Stored = std::decay_t<Func>;
+        using Command = TypedCommand<Stored>;
         static_assert(sizeof(Command) <= Capacity, "recorded command is too large");
         const size_t offset = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
         if (offset + sizeof(Command) > Capacity) {
-            return false;
+            return static_cast<Stored*>(nullptr);
         }
         auto* command = new (storage + offset) Command(std::forward<Func>(func));
         if (last) {
@@ -53,7 +54,13 @@ public:
         last = command;
         used = offset + sizeof(Command);
         PrefetchAhead();
-        return true;
+        return &command->func;
+    }
+
+    /// Returns false (and leaves `func` untouched) when the chunk has no room.
+    template <typename Func>
+    bool Push(Func&& func) {
+        return TryPush(std::forward<Func>(func)) != nullptr;
     }
 
     /// Raw storage in the chunk for a command's variable-length data; null when full.

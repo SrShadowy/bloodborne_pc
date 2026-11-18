@@ -427,15 +427,16 @@ void BufferCache::NoteUse(VAddr address, u64 size) {
     // groups each, for every draw.
     struct Noted {
         VAddr address = 0;
-        u64 size = 0;
+        u64 size = 0, cache_id = 0;
         u32 second = ~0u;
     };
     thread_local std::array<Noted, 256> noted{};
     auto& memo = noted[((address >> 12) ^ (size * 0x9E3779B97F4A7C15ull >> 40)) & 255];
-    if (memo.address == address && memo.size == size && memo.second == now) {
+    if (memo.address == address && memo.size == size && memo.cache_id == cache_id &&
+        memo.second == now) {
         return;
     }
-    memo = {address, size, now};
+    memo = {address, size, cache_id, now};
     const u64 last = std::min<u64>((address + size - 1) >> USE_GROUP_BITS, group_use.size() - 1);
     for (u64 group = address >> USE_GROUP_BITS; group <= last; ++group) {
         if (group_use[group] != now) {
@@ -839,20 +840,20 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerInPlace(VAddr add
     // Only ranges found in place: a mapping made later at a range not mapped before counts.
     struct Memo {
         VAddr address = 0;
-        u64 size = 0, unmaps = 0;
+        u64 size = 0, unmaps = 0, cache_id = 0;
         bool clamp_huge = false;
         std::pair<const Buffer*, u64> result{};
     };
     thread_local auto memo = std::make_unique<std::array<Memo, 1024>>(); // heap: see LayerBind
     auto& m = (*memo)[((address * 0x9E3779B97F4A7C15ull) ^ (size * 0xC2B2AE3D27D4EB4Full)) >> 54];
     const u64 unmaps = unmaps_queued.load(std::memory_order_acquire) + 1;
-    if (m.address == address && m.size == size && m.unmaps == unmaps &&
+    if (m.address == address && m.size == size && m.unmaps == unmaps && m.cache_id == cache_id &&
         m.clamp_huge == clamp_huge) {
         return m.result;
     }
     const auto result = LayerInPlaceUncached(address, size, clamp_huge);
     if (result) {
-        m = {address, size, unmaps, clamp_huge, *result};
+        m = {address, size, unmaps, cache_id, clamp_huge, *result};
     }
     return result;
 }

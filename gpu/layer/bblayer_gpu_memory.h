@@ -129,6 +129,8 @@ public:
                    VkDeviceAddress device_address, void* owner);
     /// Forgets the mirror starting at `start` (its blocks must be invalid or moved first).
     void RemoveMirror(std::uint64_t start);
+    /// Drops all mirrors and valid blocks on BufferCache teardown (guest sources stay).
+    void ClearMirrors();
     /// The mirror holding guest address va, or null (a copy: valid until the next change).
     std::optional<MemorySource> MirrorAt(std::uint64_t va) const;
     /// Mirrors overlapping [start, end), in address order.

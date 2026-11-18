@@ -43,7 +43,6 @@ constexpr std::size_t kMaxNameLength = 64;
 
 std::once_flag s_loader_started;
 std::once_flag s_loader_joined;
-std::thread s_loader;
 
 u32 Be32(const u8* p) {
     return u32(p[0]) << 24 | u32(p[1]) << 16 | u32(p[2]) << 8 | p[3];
@@ -210,21 +209,29 @@ void LoadTable() {
                            : "off");
 }
 
+namespace {
+// Constructed after namespace-scope prompt tables so teardown joins it before they are destroyed.
+std::jthread& LoaderThread() {
+    static std::jthread thread;
+    return thread;
+}
+} // namespace
+
 void StartLoader() {
     std::call_once(s_loader_started, [] {
         if (!Switch()) {
             return;
         }
         InitFont();
-        s_loader = std::thread{LoadTable};
+        LoaderThread() = std::jthread{LoadTable};
     });
 }
 
 void WaitTable() {
     std::call_once(s_loader_joined, [] {
         StartLoader();
-        if (s_loader.joinable()) {
-            s_loader.join();
+        if (auto& thread = LoaderThread(); thread.joinable()) {
+            thread.join();
         }
         g_table_ready = true;
     });

@@ -686,6 +686,61 @@ private:
         u64 offset;
         vk::IndexType type;
     } index_bind{};
+    struct BoundCmdState {
+        u64 epoch = 0;
+        vk::Pipeline graphics_pipeline{};
+        bool has_vertex_input = false;
+        VertexInputs<vk::VertexInputBindingDescription2EXT> vertex_bindings;
+        VertexInputs<vk::VertexInputAttributeDescription2EXT> vertex_attributes;
+        bool has_vertex_buffers = false;
+        bool dynamic_input = false;
+        u32 num_vertex_buffers = 0;
+        std::array<vk::Buffer, MaxVertexBufferCount> vertex_buffers{};
+        std::array<vk::DeviceSize, MaxVertexBufferCount> vertex_offsets{};
+        std::array<vk::DeviceSize, MaxVertexBufferCount> vertex_sizes{};
+        std::array<vk::DeviceSize, MaxVertexBufferCount> vertex_strides{};
+        bool has_index_buffer = false;
+        IndexBind index_bind{};
+
+        static bool ForceRebind() noexcept {
+            static const bool always = bb_env_on("BB_DYNAMIC_STATE_ALWAYS");
+            return always;
+        }
+
+        void SyncEpoch(u64 cur_epoch) noexcept {
+            if (epoch == cur_epoch) {
+                return;
+            }
+            epoch = cur_epoch;
+            graphics_pipeline = vk::Pipeline{};
+            has_vertex_input = false;
+            has_vertex_buffers = false;
+            has_index_buffer = false;
+        }
+
+        bool UpdatePipeline(u64 cur_epoch, vk::Pipeline handle) noexcept {
+            SyncEpoch(cur_epoch);
+            if (!ForceRebind() && graphics_pipeline == handle) {
+                return false;
+            }
+            graphics_pipeline = handle;
+            return true;
+        }
+
+        bool UpdateVertexInput(const VertexBinds& v, bool force) noexcept;
+        bool UpdateVertexBuffers(const VertexBinds& v, bool dynamic_in, bool force) noexcept;
+
+        bool UpdateIndexBuffer(u64 cur_epoch, const IndexBind& next) noexcept {
+            SyncEpoch(cur_epoch);
+            if (!ForceRebind() && has_index_buffer && index_bind.handle == next.handle &&
+                index_bind.offset == next.offset && index_bind.type == next.type) {
+                return false;
+            }
+            has_index_buffer = true;
+            index_bind = next;
+            return true;
+        }
+    } bound_cmd_state{};
     /// The direct draw whose vertex/index buffers BindResources may resolve early.
     struct DrawInputs {
         const GraphicsPipeline* pipeline;

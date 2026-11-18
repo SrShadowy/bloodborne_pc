@@ -6,6 +6,7 @@
 #include "shim/bb_env.h"
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include <unordered_set>
 
 #include "common/hash.h"
+#include "common/scope_exit.h"
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
 #include "render/blob_store.h"
@@ -57,7 +59,8 @@ void SavePipeline(const Key& key, const Support& sdata, u32 is_compute, const st
 /// A permutation's metadata. False when it is from another build, or a motion vertex shader:
 /// those embed session-local buffer device addresses and are translated again.
 bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
-                    Shader::StageSpecialization& spec, size_t& perm_idx) {
+                    Shader::StageSpecialization& spec, size_t& perm_idx,
+                    u64* out_perm_hash = nullptr) {
     Serialization::Reader reader{ar};
     u32 meta_version{}, binary_version{};
     reader.Read(meta_version);
@@ -70,6 +73,9 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     }
     u64 perm_hash{};
     reader.Read(perm_hash);
+    if (out_perm_hash) {
+        *out_perm_hash = perm_hash;
+    }
     reader.Read(perm_idx);
     u64 motion_params{}, motion_positions{};
     reader.Read(motion_params);
@@ -181,16 +187,88 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
     return true;
 }
 
+bool PipelineCache::LoadCachedStage(u64 perm_hash, size_t stage) {
+    if (warm_stages) {
+        if (const auto it = warm_stages->find(perm_hash); it != warm_stages->end()) {
+            const auto& cached = it->second;
+            if (!cached.ok) {
+                return false;
+            }
+            if (cached.fetch_shader) {
+                sel.fetch_shader = cached.fetch_shader;
+            }
+            sel.infos[stage] = cached.info;
+            sel.modules[stage] = cached.module;
+            return true;
+        }
+    }
+    std::vector<u8> meta;
+    Store().Load(BbCache::BlobType::ShaderMeta, MetaName(perm_hash), meta);
+    if (meta.empty()) {
+        if (warm_stages) {
+            warm_stages->emplace(perm_hash, WarmStage{.ok = false});
+        }
+        return false;
+    }
+    Serialization::Archive meta_ar{std::move(meta)};
+    if (!LoadPipelineStage(meta_ar, stage)) {
+        if (warm_stages) {
+            warm_stages->try_emplace(perm_hash, WarmStage{.ok = false});
+        }
+        return false;
+    }
+    return true;
+}
+
 bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) {
     auto program = std::make_unique<Program>();
     Shader::StageSpecialization spec{};
     spec.info = &program->info;
     size_t perm_idx{};
-    if (!LoadShaderMeta(ar, program->info, spec, perm_idx)) {
+    u64 perm_hash{};
+    if (!LoadShaderMeta(ar, program->info, spec, perm_idx, &perm_hash)) {
+        if (warm_stages && perm_hash != 0) {
+            warm_stages->emplace(perm_hash, WarmStage{.ok = false});
+        }
         return false;
     }
-    if (spec.fetch_shader_data) {
-        sel.fetch_shader = spec.fetch_shader_data; // the vertex stage's (as when selected)
+    const auto cached_fetch = spec.fetch_shader_data;
+    if (cached_fetch) {
+        sel.fetch_shader = cached_fetch; // the vertex stage's (as when selected)
+    }
+
+    auto cache_stage = [&](const Shader::Info* info, vk::ShaderModule mod) {
+        sel.infos[stage] = info;
+        sel.modules[stage] = mod;
+        if (warm_stages && perm_hash != 0) {
+            (*warm_stages)[perm_hash] =
+                WarmStage{.info = info, .module = mod, .fetch_shader = cached_fetch, .ok = true};
+        }
+    };
+
+    if (const auto it_pgm = program_cache.find(program->info.pgm_hash);
+        it_pgm != program_cache.end() && it_pgm.value()) {
+        const auto& modules = it_pgm.value()->modules;
+        if (const auto it = std::ranges::find(modules, spec, &Program::Module::spec);
+            it != modules.end()) {
+            // A permutation is valid only at its original index (its hash includes it): another
+            // index means entries of more than one cache generation, so the pipeline is left to
+            // compile at run time.
+            const size_t idx = size_t(std::distance(modules.begin(), it));
+            if (perm_idx != idx) {
+                static u32 reported = 0; // old caches hold many: the first few tell the story
+                if (reported++ < 3) LOG_WARNING(Render_Vulkan,
+                            "Cached permutation {} of {}_{:x} conflicts with index {}, skipping "
+                            "preload",
+                            perm_idx, program->info.hw_stage, program->info.pgm_hash, idx);
+                if (warm_stages && perm_hash != 0) {
+                    warm_stages->emplace(perm_hash, WarmStage{.ok = false});
+                }
+                return false;
+            }
+            cache_stage(&it_pgm.value()->info, it->module);
+            return true;
+        }
     }
 
     std::vector<u32> spv{};
@@ -202,48 +280,25 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
         if (!spv.empty()) {
             throw Serialization::CorruptData{"damaged SPIR-V in the shader cache"};
         }
+        if (warm_stages && perm_hash != 0) {
+            warm_stages->emplace(perm_hash, WarmStage{.ok = false});
+        }
         return false;
     }
     // A module the driver rejects is a damaged entry (the cache is rebuilt), not a fatal error.
-    const auto compile = [&] {
-        auto [result, created] = instance.GetDevice().createShaderModule(
-            {.codeSize = spv.size() * sizeof(u32), .pCode = spv.data()});
-        if (result != vk::Result::eSuccess) {
-            throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
-        }
-        return created;
-    };
+    auto [result, module] = instance.GetDevice().createShaderModule(
+        {.codeSize = spv.size() * sizeof(u32), .pCode = spv.data()});
+    if (result != vk::Result::eSuccess) {
+        throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
+    }
 
-    vk::ShaderModule module{};
     auto [it_pgm, new_program] = program_cache.try_emplace(program->info.pgm_hash);
     if (new_program) {
-        module = compile();
         it_pgm.value() = std::move(program);
-    } else {
-        auto& modules = it_pgm.value()->modules;
-        const auto it = std::ranges::find(modules, spec, &Program::Module::spec);
-        if (it == modules.end()) {
-            module = compile();
-        } else {
-            // A permutation is valid only at its original index (its hash includes it): another
-            // index means entries of more than one cache generation, so the pipeline is left to
-            // compile at run time.
-            const size_t idx = std::distance(modules.begin(), it);
-            if (perm_idx != idx) {
-                static u32 reported = 0; // old caches hold many: the first few tell the story
-                if (reported++ < 3) LOG_WARNING(Render_Vulkan,
-                            "Cached permutation {} of {}_{:x} conflicts with index {}, skipping "
-                            "preload",
-                            perm_idx, program->info.hw_stage, program->info.pgm_hash, idx);
-                return false;
-            }
-            module = it->module;
-        }
     }
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
     extra_shader_discovery_record_compile(it_pgm.value()->info.pgm_hash, u32(it_pgm.value()->info.hw_stage), u32(it_pgm.value()->info.sw_stage), perm_idx, 0, spv.size(), 0, it_pgm.value()->info.has_fetch_shader, false); // [extra]
-    sel.infos[stage] = &it_pgm.value()->info;
-    sel.modules[stage] = module;
+    cache_stage(&it_pgm.value()->info, module);
     return true;
 }
 
@@ -299,13 +354,7 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     ComputePipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
 
-    std::vector<u8> meta;
-    Store().Load(BbCache::BlobType::ShaderMeta, MetaName(compute_key.value), meta);
-    if (meta.empty()) {
-        return false;
-    }
-    Serialization::Archive meta_ar{std::move(meta)};
-    if (!LoadPipelineStage(meta_ar, 0)) {
+    if (!LoadCachedStage(compute_key.value, 0)) {
         return false;
     }
     // Built before it is inserted: a pipeline the driver rejects throws
@@ -332,31 +381,37 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar, std::vector
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
 
+    u32 cost = sel.graphics_key.num_samples > 1 ? 8u : 0u;
     for (u32 stage = 0; stage < MaxShaderStages; ++stage) {
         const u64 hash = sel.graphics_key.stage_hashes[stage];
         if (!hash) {
             continue;
         }
-        std::vector<u8> meta;
-        Store().Load(BbCache::BlobType::ShaderMeta, MetaName(hash), meta);
-        if (meta.empty()) {
+        if (!LoadCachedStage(hash, stage)) {
             return false;
         }
-        Serialization::Archive meta_ar{std::move(meta)};
-        if (!LoadPipelineStage(meta_ar, stage)) {
-            return false;
+        if (const auto* info = sel.infos[stage]) {
+            const bool complex_stage =
+                info->sw_stage == Shader::SwStage::TessellationControl ||
+                info->sw_stage == Shader::SwStage::TessellationEval ||
+                info->sw_stage == Shader::SwStage::Geometry;
+            cost += complex_stage ? 64u : 16u;
+            cost += u32(info->buffers.size() + info->images.size() + info->samplers.size());
         }
     }
     // Created later, on several threads: the driver compiles them (seconds with a cold driver
     // cache, the first start after a driver or SPIR-V change).
-    jobs.emplace_back(sel.graphics_key,
-                      [this, key = sel.graphics_key, infos = sel.infos,
-                       runtime_infos = sel.runtime_infos, fetch = sel.fetch_shader,
-                       modules = sel.modules, sdata = std::move(sdata)]() mutable {
-                          return std::make_unique<GraphicsPipeline>(
-                              instance, scheduler, desc_heap, profile, key, *pipeline_cache,
-                              infos, runtime_infos, fetch, modules, sdata, true);
-                      });
+    jobs.push_back(PreloadJob{
+        .key = sel.graphics_key,
+        .cost = cost,
+        .make =
+            [this, key = sel.graphics_key, infos = sel.infos, runtime_infos = sel.runtime_infos,
+             fetch = sel.fetch_shader, modules = sel.modules, sdata = std::move(sdata)]() mutable {
+                return std::make_unique<GraphicsPipeline>(
+                    instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,
+                    runtime_infos, fetch, modules, sdata, true);
+            },
+    });
     extra_shader_discovery_record_pipeline(std::hash<GraphicsPipelineKey>{}(sel.graphics_key), false, sel.graphics_key.stage_hashes, sel.graphics_key.num_color_attachments, sel.graphics_key.num_samples, 0, false, true); // [extra]
     sel.infos.fill(nullptr);
     sel.modules.fill(nullptr);
@@ -440,6 +495,12 @@ void PipelineCache::WarmUp() {
         return;
     }
 
+    WarmStageMap warm_map;
+    warm_stages = &warm_map;
+    SCOPE_EXIT {
+        warm_stages = nullptr;
+    };
+
     u32 num_pipelines = 0, num_total = 0, num_damaged = 0;
     std::vector<PreloadJob> jobs;
     Store().ForEachBlob(BbCache::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
@@ -473,22 +534,46 @@ void PipelineCache::WarmUp() {
     // Every other cached permutation too: one in no pipeline (an object motion draw selects its
     // stages without motion first, then with it) was translated again at every start, and at
     // another index each time.
+    const auto parse_meta_hash = [](std::string_view stem, u64& out) -> bool {
+        if (stem.size() <= 2 || stem[0] != '0' || (stem[1] != 'x' && stem[1] != 'X')) {
+            return false;
+        }
+        const auto* begin = stem.data() + 2;
+        const auto* end = stem.data() + stem.size();
+        const auto [ptr, ec] = std::from_chars(begin, end, out, 16);
+        return ec == std::errc{} && ptr == end;
+    };
     u32 num_stages = 0;
     if (!num_damaged) {
-        Store().ForEachBlob(BbCache::BlobType::ShaderMeta, [&](std::vector<u8>&& data) {
-            try {
-                Serialization::Archive ar{std::move(data)};
-                num_stages += LoadPipelineStage(ar, 0) ? 1 : 0;
-            } catch (const std::exception& e) {
-                if (num_damaged++ == 0) {
-                    LOG_WARNING(Render, "Pipeline cache: damaged entry ({})", e.what());
+        Store().ForEachBlobIf(
+            BbCache::BlobType::ShaderMeta,
+            [&](std::string_view stem) {
+                u64 hash{};
+                if (parse_meta_hash(stem, hash)) {
+                    if (const auto it = warm_map.find(hash); it != warm_map.end()) {
+                        if (it->second.ok) {
+                            ++num_stages;
+                        }
+                        return false;
+                    }
                 }
-            }
-            sel.infos.fill(nullptr);
-            sel.modules.fill(nullptr);
-            sel.fetch_shader.reset();
-        });
+                return true;
+            },
+            [&](std::vector<u8>&& data) {
+                try {
+                    Serialization::Archive ar{std::move(data)};
+                    num_stages += LoadPipelineStage(ar, 0) ? 1 : 0;
+                } catch (const std::exception& e) {
+                    if (num_damaged++ == 0) {
+                        LOG_WARNING(Render, "Pipeline cache: damaged entry ({})", e.what());
+                    }
+                }
+                sel.infos.fill(nullptr);
+                sel.modules.fill(nullptr);
+                sel.fetch_shader.reset();
+            });
     }
+    warm_stages = nullptr;
 
     // The graphics pipelines: in the background (QueuePreloaded), or here on several threads (each
     // job only reads the programs above).
@@ -503,7 +588,7 @@ void PipelineCache::WarmUp() {
         const auto work = [&] {
             for (size_t i; (i = next.fetch_add(1)) < jobs.size();) {
                 try {
-                    made[i] = jobs[i].second();
+                    made[i] = jobs[i].make();
                 } catch (const std::exception&) {
                     failed.fetch_add(1);
                 }
@@ -520,7 +605,7 @@ void PipelineCache::WarmUp() {
         num_damaged += failed.load();
         for (size_t i = 0; i < jobs.size(); ++i) {
             if (made[i]) {
-                graphics_pipelines.try_emplace(jobs[i].first).first.value() = std::move(made[i]);
+                graphics_pipelines.try_emplace(jobs[i].key).first.value() = std::move(made[i]);
             }
         }
     }

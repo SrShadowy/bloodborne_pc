@@ -501,14 +501,14 @@ void PipelineCache::QueueImportedGraphics(ShaderImport& state, Serialization::Ar
         std::unique_lock lk{programs_mutex};
         LoadGraphicsPipeline(ar, jobs);
     }
-    for (auto& [key, make] : jobs) {
-        if (graphics_pipelines.contains(key) || pending_graphics.contains(key)) {
+    for (auto& pre_job : jobs) {
+        if (graphics_pipelines.contains(pre_job.key) || pending_graphics.contains(pre_job.key)) {
             continue;
         }
         auto job = std::make_shared<PendingPipeline>();
         job->saved = true;
-        job->make = std::move(make);
-        pending_graphics.emplace(key, job);
+        job->make = std::move(pre_job.make);
+        pending_graphics.emplace(pre_job.key, job);
         ++state.queued;
         g_bb_background_pipelines_total.fetch_add(1, std::memory_order_relaxed);
         Compiler().Submit([job] {

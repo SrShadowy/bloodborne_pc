@@ -53,10 +53,14 @@ std::string OnlineId();
 std::string StrOf(const Json& o, const char* key, const std::string& dflt = "");
 long long IntOf(const Json& o, const char* key, long long dflt = 0);
 
+inline constexpr std::size_t kMaxDatagram = 65507;
+
 std::string NpBase();
 bool NpPost(const std::string& path, const Json& body, Json& out, std::string& error,
-            int timeout_ms = 8000);
+            int read_timeout_ms = 8000, int connect_timeout_ms = -1, int* out_status = nullptr);
 bool NpGet(const std::string& path, Json& out, std::string& error, int timeout_ms = 8000);
+void SetTestServer(const std::string& np_base, const std::string& online_id = "TestPlayer",
+                   const std::string& token = "test-token");
 
 // ---- the dispatcher: one guest thread, so the callbacks run where the game expects them.
 enum class Prio { Context = 0, Request = 1, Signaling = 2, RoomEvent = 3 };

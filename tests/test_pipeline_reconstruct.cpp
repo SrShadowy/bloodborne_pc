@@ -49,6 +49,7 @@ int main(int argc, char** argv) {
     setenv("BB_SHADER_DISCOVERY", "1", 1);
     setenv("BB_GUEST_IN_PLACE", "1", 1);
     setenv("BB_LAYER_MEMORY", "1", 1);
+    setenv("BB_PRELOAD_BACKGROUND", "0", 1);
 
     if (force_cold) {
         setenv("BB_SHADER_COLD_RUN", "1", 1);
@@ -94,6 +95,7 @@ int main(int argc, char** argv) {
         std::printf("[Audit 3/4] Rebuilding pipelines in Vulkan driver...\n");
         const auto t_warmup_start = std::chrono::steady_clock::now();
         Vulkan::PipelineCache pipeline_cache(instance, scheduler, &liverpool, 16);
+        pipeline_cache.Preload();
         const auto t_warmup_end = std::chrono::steady_clock::now();
         const double warmup_sec = std::chrono::duration_cast<std::chrono::microseconds>(t_warmup_end - t_warmup_start).count() / 1000000.0;
 

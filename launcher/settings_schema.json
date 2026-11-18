@@ -1773,6 +1773,33 @@
      }
     },
     {
+     "key": "disable_gyro",
+     "type": "bool",
+     "store": "ini",
+     "default": false,
+     "title": {
+      "ru": "Отключить гироскоп",
+      "en": "Disable gyroscope",
+      "pt_BR": "Desativar giroscópio",
+      "zh_CN": "禁用陀螺仪",
+      "fr_FR": "Désactiver le gyroscope"
+     },
+     "description": {
+      "ru": "Игнорировать датчики движения (жесты SixAxis).",
+      "en": "Ignore controller motion sensors (SixAxis gestures).",
+      "pt_BR": "Ignorar sensores de movimento (gestos SixAxis).",
+      "zh_CN": "忽略控制器动作感应（SixAxis手势）。",
+      "fr_FR": "Ignorer les capteurs de mouvement de la manette (gestes SixAxis)."
+     },
+     "group": {
+      "ru": "Устройства",
+      "en": "Devices",
+      "pt_BR": "Dispositivos",
+      "zh_CN": "设备",
+      "fr_FR": "Périphériques"
+     }
+    },
+    {
      "key": "controls",
      "type": "special",
      "platforms": [

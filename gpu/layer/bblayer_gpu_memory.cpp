@@ -305,6 +305,14 @@ void GpuMemory::RemoveMirror(std::uint64_t start) {
     mirrors.erase(start);
 }
 
+void GpuMemory::ClearMirrors() {
+    std::unique_lock lk{mirror_mutex};
+    mirrors.clear();
+    valid.clear();
+    valid_blocks = 0;
+    valid_version.fetch_add(1, std::memory_order_release);
+}
+
 std::optional<MemorySource> GpuMemory::MirrorAt(std::uint64_t va) const {
     std::shared_lock lk{mirror_mutex};
     auto it = mirrors.upper_bound(va);

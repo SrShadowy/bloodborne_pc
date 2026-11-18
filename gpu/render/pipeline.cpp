@@ -97,33 +97,8 @@ void Pipeline::CreateLayouts(vk::ShaderStageFlags push_stages, const char* kind,
         }
     }
     uses_push_descriptors = binding < instance.MaxPushDescriptors();
-    const auto device = instance.GetDevice();
-    auto [set_result, set_layout] = device.createDescriptorSetLayoutUnique({
-        .flags = uses_push_descriptors ? vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR
-                                       : vk::DescriptorSetLayoutCreateFlagBits{},
-        .bindingCount = static_cast<u32>(bindings.size()),
-        .pBindings = bindings.data(),
-    });
-    ASSERT_MSG(set_result == vk::Result::eSuccess, "Failed to create {} descriptor set layout: {}",
-               kind, vk::to_string(set_result));
-    desc_layout = std::move(set_layout);
-
-    const vk::PushConstantRange push_constants{
-        .stageFlags = push_stages,
-        .offset = 0,
-        .size = sizeof(Shader::PushData),
-    };
-    const vk::DescriptorSetLayout set = *desc_layout;
-    auto [layout_result, layout] = device.createPipelineLayoutUnique({
-        .setLayoutCount = 1U,
-        .pSetLayouts = &set,
-        .pushConstantRangeCount = 1U,
-        .pPushConstantRanges = &push_constants,
-    });
-    ASSERT_MSG(layout_result == vk::Result::eSuccess, "Failed to create {} pipeline layout: {}",
-               kind, vk::to_string(layout_result));
-    pipeline_layout = std::move(layout);
-    SetObjectName(device, *pipeline_layout, "{} PipelineLayout {}", kind, debug_name);
+    std::tie(desc_layout, pipeline_layout) = instance.GetOrCreateLayouts(
+        uses_push_descriptors, push_stages, sizeof(Shader::PushData), bindings, kind, debug_name);
 }
 
 void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data,
@@ -132,7 +107,7 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
     const auto bind_point =
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
     const auto stage_flags = IsCompute() ? vk::ShaderStageFlagBits::eCompute : AllGraphicsStageBits;
-    const vk::PipelineLayout layout = *pipeline_layout;
+    const vk::PipelineLayout layout = **pipeline_layout;
     scheduler.Record([layout, stage_flags, push_data](vk::CommandBuffer cmdbuf) {
         cmdbuf.pushConstants(layout, stage_flags, 0u, sizeof(push_data), &push_data);
     });
@@ -141,7 +116,7 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
     }
     if (!uses_push_descriptors) {
         // Descriptor set updates are device calls: they stay on this thread.
-        const auto desc_set = desc_heap.Commit(*desc_layout);
+        const auto desc_set = desc_heap.Commit(**desc_layout);
         for (auto& write : set_writes) {
             write.dstSet = desc_set;
         }
@@ -251,7 +226,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                 .module = module,
                 .pName = "main",
             },
-        .layout = *pipeline_layout,
+        .layout = **pipeline_layout,
     };
     const BbVkPipelineCache::PipelineCreateGuard create_guard{pipeline_ci}; // [extra]
     pipeline = CheckPipeline(instance.GetDevice().createComputePipelineUnique(pipeline_cache,
@@ -581,7 +556,7 @@ GraphicsPipeline::GraphicsPipeline(
             !instance.IsExtendedDynamicState3Supported() ? &depth_stencil_info : nullptr,
         .pColorBlendState = &color_blending,
         .pDynamicState = &dynamic_info,
-        .layout = *pipeline_layout,
+        .layout = **pipeline_layout,
     };
     const BbVkPipelineCache::PipelineCreateGuard create_guard{pipeline_ci}; // [extra]
     pipeline = CheckPipeline(device.createGraphicsPipelineUnique(pipeline_cache, pipeline_ci),

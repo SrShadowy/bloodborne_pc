@@ -96,7 +96,8 @@ public:
 
         if (build_.empty()) {
             BloodborneCoop::BuildFingerprint fp;
-            fp.Set("version", "1.4.0");
+            const char* ver = std::getenv("BB_BBSC_VERSION");
+            fp.Set("version", (ver && *ver) ? ver : "1.5.0");
             fp.Set("protocol", std::to_string(BloodborneCoop::CoopFrameProtocol));
             build_ = BloodborneCoop::EncodeBuildFingerprint(fp);
         }

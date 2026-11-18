@@ -1,17 +1,20 @@
 @echo off
 setlocal enabledelayedexpansion
+pushd "%~dp0"
 
 :: Clean option
 if /I "%1"=="clean" (
     echo [INFO] Cleaning build directories...
     rmdir /s /q out\win-native out\win-dev out\launcher-win 2>nul
     echo [SUCCESS] Clean completed.
+    popd
     exit /b 0
 )
 if /I "%1"=="--clean" (
     echo [INFO] Cleaning build directories...
     rmdir /s /q out\win-native out\win-dev out\launcher-win 2>nul
     echo [SUCCESS] Clean completed.
+    popd
     exit /b 0
 )
 
@@ -22,8 +25,6 @@ if not exist "C:\msys64\usr\bin\bash.exe" (
     pause
     exit /b 1
 )
-
-cd /d "%~dp0"
 
 echo [INFO] Starting Windows build via MSYS2 CLANG64...
 set "MSYSTEM=CLANG64"
@@ -48,4 +49,5 @@ if %ERRORLEVEL% equ 0 (
     echo [ERROR] Build failed with exit code %ERRORLEVEL%
 )
 
+popd
 if "%1"=="" pause

@@ -330,6 +330,7 @@ void Display::Flip(const Request& request) {
         }
         last_flip = now;
         world_active.store(world, std::memory_order_relaxed);
+        BbStats::world_active.store(world, std::memory_order_relaxed);
         last_draws = draws;
     }
     BbTimeline::Note(BbTimeline::FlipProcessed, ++flips);
@@ -465,6 +466,7 @@ void Display::VblankThread(std::stop_token stop) {
             continue;
         }
         // Until the next vblank: flips as they come.
+        bool slept_to_tick = false;
         while (!stop.stop_requested()) {
             {
                 std::unique_lock lock{request_mutex};
@@ -476,18 +478,32 @@ void Display::VblankThread(std::stop_token stop) {
             if (period_fps() != scheduled_fps) {
                 break; // the limit changed: the outer loop starts the new schedule
             }
-            if (std::chrono::steady_clock::now() < next_flip) {
+            if (const auto now_pre = std::chrono::steady_clock::now(); now_pre < next_flip) {
                 if (next_flip >= tick_deadline) {
+                    Common::SleepUntil(tick_deadline);
+                    BbStats::cap_wait_ns.fetch_add(
+                        u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - now_pre)
+                                .count()),
+                        std::memory_order_relaxed);
+                    slept_to_tick = true;
                     break;
                 }
                 Common::SleepUntil(next_flip);
+                BbStats::cap_wait_ns.fetch_add(
+                    u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - now_pre)
+                            .count()),
+                    std::memory_order_relaxed);
             }
             Request request;
             if (TakeRequest(request)) {
                 flip(request, std::chrono::steady_clock::now());
             }
         }
-        Common::SleepUntil(tick_deadline);
+        if (!slept_to_tick) {
+            Common::SleepUntil(tick_deadline);
+        }
     }
 }
 

@@ -145,6 +145,23 @@ Gcn::PrimitiveType GsInputPrimitive(const Gcn::Regs& regs) {
         UNREACHABLE();
     }
 }
+
+bool VsHasMotionPalette(const Shader::Info& vs) {
+    // Shaders with a bone palette (motion_history.h). Small skeletons (weapons, props)
+    // also include static world pieces: the rasterizer gives those history only while
+    // their constants change.
+    for (const auto& resource : vs.buffers) {
+        if (resource.IsSpecial()) {
+            continue;
+        }
+        const auto buffer = resource.GetSharp(vs);
+        if (buffer.Valid() && buffer.GetStride() == 16 &&
+            Motion::ClassifyBuffer(buffer.GetSize()) != Motion::BufferRole::Other) {
+            return true;
+        }
+    }
+    return false;
+}
 } // namespace
 
 const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& sel, HwStage stage,
@@ -288,6 +305,65 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
     return info;
 }
 
+PipelineCache::MotionCheck PipelineCache::PrecheckMotionSelection(PipelineSelection& sel) {
+    const auto& pgm = sel.regs->vs_program;
+    if (!pgm.Address<u32*>() || !LooksLikeProgram(pgm.Address<u32*>(), HwStage::Vertex, !sel.worker)) {
+        return MotionCheck::Unknown;
+    }
+    const auto params = Gcn::GetParams(pgm);
+
+    const auto check_info = [&](Shader::Info& info, bool may_fault) -> MotionCheck {
+        bool has_non_special_buf = false;
+        for (const auto& resource : info.buffers) {
+            if (!resource.IsSpecial()) {
+                has_non_special_buf = true;
+                break;
+            }
+        }
+        if (!has_non_special_buf) {
+            sel.motion = false;
+            return MotionCheck::Resolved;
+        }
+        info.pgm_base = params.Base();
+        info.user_data = params.user_data;
+        if (may_fault) {
+            sigjmp_buf recover;
+            if (sigsetjmp(recover, 0)) {
+                sel.worker->failed = true;
+                return MotionCheck::Failed;
+            }
+            runtime_fault_recover = &recover;
+            info.RefreshFlatBuf();
+            const bool motion = VsHasMotionPalette(info);
+            runtime_fault_recover = nullptr;
+            sel.motion = motion;
+            return MotionCheck::Resolved;
+        }
+        info.RefreshFlatBuf();
+        sel.motion = VsHasMotionPalette(info);
+        return MotionCheck::Resolved;
+    };
+
+    if (sel.worker) {
+        std::shared_lock lk{programs_mutex};
+        const auto found = program_cache.find(params.hash);
+        if (found == program_cache.end() || !found->second->info_template) {
+            sel.worker->failed = true;
+            return MotionCheck::Failed;
+        }
+        const Program* program = found->second.get();
+        auto& info =
+            sel.worker->infos.try_emplace(program, *program->info_template).first->second;
+        return check_info(info, true);
+    }
+
+    const auto found = program_cache.find(params.hash); // GPU thread is the sole writer
+    if (found == program_cache.end()) {
+        return MotionCheck::Unknown;
+    }
+    return check_info(found.value()->info, false);
+}
+
 bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
     std::memset(&sel.graphics_key, 0, sizeof(GraphicsPipelineKey));
     const auto& regs = *sel.regs;
@@ -340,9 +416,9 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
             bc.color_dst_factor == Gcn::BlendControl::BlendFactor::DstColor;
     }
 
-    // Only potentially animated G-buffer draws may use the extra motion attachment. The
-    // ordinary stage variant is needed first to inspect the vertex shader's resources.
-    // Not for FSR 1 (spatial: no motion vectors).
+    // Only potentially animated G-buffer draws may use the extra motion attachment. Pre-check
+    // the cached vertex shader's resources before RefreshGraphicsStages so draws do not select
+    // stages twice (first without motion, then with it). Not for FSR 1 (spatial: no motion).
     const auto upscaler = BbSettings::Get().upscaler.load(std::memory_order_relaxed);
     const auto fg = BbSettings::Get().frame_generation.load(std::memory_order_relaxed);
     const bool motion_possible =
@@ -351,32 +427,34 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
         !regs.color_buffers[Shader::MotionVectors::Output] && db.DepthValid() &&
         db.NumSamples() == 1 && !regs.IsClipDisabled() &&
         regs.stage_enable.raw == Gcn::ShaderStageEnable::VgtStages::Vs;
+    // BB_OBJECT_MOTION_ALL=1: the old broad selection, for visual A/B tests.
+    static const bool all_motion = bb_env_on("BB_OBJECT_MOTION_ALL");
+    // BB_MOTION_SELECT_LOG=1: each G-buffer vertex shader once, with its buffer sizes and
+    // the selection, to find animated models that the size rule leaves out.
+    static const bool select_log = bb_env_on("BB_MOTION_SELECT_LOG");
     sel.motion = false;
+    bool motion_resolved = false;
+    if (motion_possible) {
+        if (all_motion) {
+            sel.motion = true;
+            motion_resolved = true;
+        } else if (!select_log) {
+            const MotionCheck check = PrecheckMotionSelection(sel);
+            if (check == MotionCheck::Failed) {
+                return false;
+            }
+            motion_resolved = check == MotionCheck::Resolved;
+        }
+    }
 
     if (!RefreshGraphicsStages(sel)) {
         return false;
     }
-    if (motion_possible) {
+    if (motion_possible && !motion_resolved) {
         const auto* vs = sel.infos[static_cast<u32>(SwStage::Vertex)];
-        if (vs) {
-            // Shaders with a bone palette (motion_history.h). Small skeletons (weapons, props)
-            // also include static world pieces: the rasterizer gives those history only while
-            // their constants change.
-            for (const auto& resource : vs->buffers) {
-                if (resource.IsSpecial()) {
-                    continue;
-                }
-                const auto buffer = resource.GetSharp(*vs);
-                if (buffer.Valid() && buffer.GetStride() == 16 &&
-                    Motion::ClassifyBuffer(buffer.GetSize()) != Motion::BufferRole::Other) {
-                    sel.motion = true;
-                    break;
-                }
-            }
+        if (vs && VsHasMotionPalette(*vs)) {
+            sel.motion = true;
         }
-        // BB_MOTION_SELECT_LOG=1: each G-buffer vertex shader once, with its buffer sizes and
-        // the selection, to find animated models that the size rule leaves out.
-        static const bool select_log = bb_env_on("BB_MOTION_SELECT_LOG");
         if (select_log && vs) {
             std::string sizes;
             for (const auto& resource : vs->buffers) {
@@ -395,8 +473,6 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
                             sel.motion ? "ON " : "off", sizes.c_str());
             }
         }
-        // BB_OBJECT_MOTION_ALL=1: the old broad selection, for visual A/B tests.
-        static const bool all_motion = bb_env_on("BB_OBJECT_MOTION_ALL");
         if (all_motion) {
             sel.motion = true;
         }

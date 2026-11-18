@@ -200,6 +200,10 @@ inline std::atomic<std::uint64_t> sync_recording_ns{0}, host_copies_wait_ns{0}, 
 /// Wall time the frame preparation waited for the GPU to finish an earlier frame (BB_FRAMES_AHEAD):
 /// how GPU-bound the frames are (BB_FRAME_LOG).
 inline std::atomic<std::uint64_t> present_wait_ns{0};
+/// Monotonic nanoseconds Display::VblankThread slept holding a queued flip to its FPS limit.
+inline std::atomic<std::uint64_t> cap_wait_ns{0};
+/// True while Display::Flip sees a world frame (>= BB_PAD_WORLD_DRAWS draws); false on loading/title screens.
+inline std::atomic<bool> world_active{false};
 /// Wall time the frame preparation waited for a free presenter frame (all of them still being
 /// presented: with frame generation the presenter keeps each for the generated frames too).
 inline std::atomic<std::uint64_t> frame_pool_wait_ns{0};

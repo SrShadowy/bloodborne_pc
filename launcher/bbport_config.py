@@ -595,9 +595,15 @@ def game_environment(s):
             env["BB_GUEST_GPU_MEMORY"] = "1"
             env["BB_CHUNK_UPLOADS"] = "1"
             env["BB_CHUNK_TEXTURES"] = "1"
+            env.setdefault("BB_STREAM_BUFFER_MB", "32")
+            env.setdefault("BB_CONSTANT_RING_MB", "16")
+            env.setdefault("BB_STAGING_KEEP_MB", "128")
+            env.setdefault("BB_IMAGE_RECYCLE_MB", "64")
             env.setdefault("BB_FRAME_GEN", "0")
-            env.setdefault("BB_FPS_LIMIT", "30")
-            env.setdefault("BB_FPS", "30")
+            if "BB_FPS_LIMIT" not in os.environ and not int(s.get("fps_limit") or 0):
+                env["BB_FPS_LIMIT"] = "30"
+            if "BB_FPS" not in os.environ and s.get("fps_mode", "uncap") == "uncap":
+                env["BB_FPS"] = "30"
             env.setdefault("BB_UPSCALE_PRESET", "3")
             env.setdefault("BB_SHADOW_DISTANCE", "0.4")
             env.setdefault("BB_LIGHT_GRID_OPT", "1")

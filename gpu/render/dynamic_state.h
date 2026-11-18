@@ -47,6 +47,12 @@ public:
     /// Marks everything changed (a new command buffer, or commands that set state themselves).
     void Invalidate() {
         dirty = AllBits;
+        ++epoch;
+    }
+
+    /// Monotonically incremented whenever command buffer or external dynamic state changes.
+    [[nodiscard]] u64 Epoch() const noexcept {
+        return epoch;
     }
 
     /// The viewports and scissors only: set again at the start of every render pass.
@@ -332,6 +338,7 @@ private:
     ColorWriteMasks color_write_masks{};
     float line_width = 0.0f;
     bool feedback_loop = false;
+    u64 epoch = 1;
 };
 
 } // namespace Vulkan

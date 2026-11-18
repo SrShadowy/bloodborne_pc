@@ -16,6 +16,7 @@
 #include "buffers/buffer.h"
 #include "buffers/buffer_cache.h"
 #include "render/vk_gpu_profiler.h"
+#include "render/vk_barrier_helper.h"
 #include "bbgpu/shaders/occlusion_resolve_comp.h"
 #include "vulkan/instance.h"
 #include "vulkan/shader_module.h"
@@ -34,20 +35,6 @@ struct EventEntry {
     u32 pairs;
     u32 upto;
 };
-
-/// Everything before it before everything after it (resolves are a few per frame).
-void FullBarrier(vk::CommandBuffer cmdbuf) {
-    const vk::MemoryBarrier2 barrier{
-        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-    };
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .memoryBarrierCount = 1,
-        .pMemoryBarriers = &barrier,
-    });
-}
 } // namespace
 
 OcclusionQueries::OcclusionQueries(const Instance& instance_, Scheduler& scheduler_,
@@ -98,7 +85,12 @@ OcclusionQueries::OcclusionQueries(const Instance& instance_, Scheduler& schedul
 }
 
 OcclusionQueries::~OcclusionQueries() {
+    if (active) {
+        EndSegment();
+    }
+    started = false;
     scheduler.SetCarriedScope(nullptr);
+    scheduler.Finish();
 }
 
 void OcclusionQueries::BeginSegment(bool inside_render_pass) {
@@ -217,7 +209,11 @@ void OcclusionQueries::Resolve() {
                                         vk::QueryResultFlagBits::e64 |
                                             vk::QueryResultFlagBits::eWait);
         }
-        FullBarrier(cmdbuf);
+        BarrierCopyToCompute(cmdbuf,
+                             clear_total ? vk::PipelineStageFlagBits2::eClear
+                                         : vk::PipelineStageFlagBits2::eNone,
+                             vk::AccessFlagBits2::eShaderStorageRead |
+                                 vk::AccessFlagBits2::eShaderStorageWrite);
         const std::array<vk::DescriptorBufferInfo, 4> infos{{
             {results->Handle(), 0, NumSlots * sizeof(u64)},
             {total->Handle(), 0, 8},
@@ -237,7 +233,7 @@ void OcclusionQueries::Resolve() {
         cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push),
                              &push);
         cmdbuf.dispatch(1, 1, 1);
-        FullBarrier(cmdbuf);
+        BarrierComputeToUsers(cmdbuf);
     });
     resolved = ended;
     pending.clear();
@@ -293,6 +289,11 @@ void OcclusionQueries::Resume(bool inside_render_pass) {
     }
 }
 
+bool OcclusionQueries::CanResumeInPass() const {
+    std::scoped_lock lk{mutex};
+    return !started || !Counting() || begun < reset_until;
+}
+
 bool OcclusionQueries::Counting() const {
     return !intervals || !open.empty();
 }
@@ -327,6 +328,8 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
         ResetAhead();
         started = true;
         scheduler.SetCarriedScope(this);
+    } else {
+        scheduler.BreakPendingSuspend();
     }
     // BB_OCCLUSION_TRACE=N (diagnostics): the first N events, with the frame and the render pass.
     static const u64 trace = [] {

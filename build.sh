@@ -3,11 +3,12 @@ set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
 
+run_tests=0
 for arg in "$@"; do
-    if [[ "$arg" == "--no-bump" ]]; then
-        export BB_SKIP_VERSION_INC=1
-        break
-    fi
+    case "$arg" in
+        --no-bump) export BB_SKIP_VERSION_INC=1 ;;
+        --test) run_tests=1 ;;
+    esac
 done
 
 # Auto-increment build version unless skipped (e.g. docker-appimage, AppImage packaging, or package.py)
@@ -127,7 +128,7 @@ fi
 echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto) and the launcher's gamepad list (--gamepads).
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror "${march_opt[@]}" "${includes[@]}" -I. -Isrc tools/gpu_capabilities.c -Wl,-rpath,'$ORIGIN/../lib' -Wl,-rpath,'$ORIGIN/lib' "${libraries[@]}" -o out/bb-gpu-capabilities
-if [[ ${1:-} == --test ]]; then
+if [[ $run_tests -eq 1 ]]; then
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${march_opt[@]}" "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -lm -o out/pad-test
     out/pad-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${march_opt[@]}" -I. -Isrc tests/test_runtime.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test

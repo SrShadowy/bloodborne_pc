@@ -1,5 +1,6 @@
 """Unit tests for the Desenvolvimento (Development) tab and log level filtering."""
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -376,6 +377,20 @@ class LauncherDevUITests(unittest.TestCase):
         self.assertEqual(common.INI_DEFAULTS.get("discord_client_id"),
                          common.DISCORD_CLIENT_ID)
 
+    def test_disable_gyro_setting_and_env(self):
+        import bbport_launcher_common as common
+        self.assertEqual(common.INI_DEFAULTS.get("disable_gyro"), "0")
+
+        s_off = dict(common.DEFAULTS)
+        s_off["disable_gyro"] = "0"
+        env_off = common.game_environment(s_off)
+        self.assertNotIn("BB_DISABLE_GYRO", env_off)
+
+        s_on = dict(common.DEFAULTS)
+        s_on["disable_gyro"] = "1"
+        env_on = common.game_environment(s_on)
+        self.assertEqual(env_on.get("BB_DISABLE_GYRO"), "1")
+
     def test_thd_account_fallback(self):
         # A settings file without the THD sign-in still plays with account.json's account.
         import tempfile
@@ -416,6 +431,26 @@ class LauncherDevUITests(unittest.TestCase):
         self.assertIsNotNone(win.discord_cid_row)
         self.assertEqual(win.discord_cid_row.get_text(), "123456")
         self.assertEqual(win.ini.get("discord_client_id"), "123456")
+
+    def test_apu_memory_preset_applies_30fps_and_memory_caps(self):
+        from unittest import mock
+        s = dict(DEFAULTS, game_dir="/tmp", memory_preset="apu")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            env = game_environment(s)
+            self.assertEqual(env["BB_MEMORY_PRESET"], "apu")
+            self.assertEqual(env["BB_FPS"], "30")
+            self.assertEqual(env["BB_FPS_LIMIT"], "30")
+            self.assertEqual(env["BB_VRAM_LIMIT_MB"], "2048")
+            self.assertEqual(env["BB_AUTO_MIP_CLAMP"], "1")
+            self.assertEqual(env["BB_STREAM_BUFFER_MB"], "32")
+            self.assertEqual(env["BB_CONSTANT_RING_MB"], "16")
+            self.assertEqual(env["BB_STAGING_KEEP_MB"], "128")
+            self.assertEqual(env["BB_IMAGE_RECYCLE_MB"], "64")
+            # Explicit FPS choice in the launcher still wins over the APU 30 FPS default.
+            s_explicit = dict(s, fps_mode="60", fps_limit=60)
+            env_explicit = game_environment(s_explicit)
+            self.assertEqual(env_explicit["BB_FPS"], "60")
+            self.assertEqual(env_explicit["BB_FPS_LIMIT"], "60")
 
 
 if __name__ == "__main__":

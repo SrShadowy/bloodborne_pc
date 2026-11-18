@@ -13,6 +13,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -36,6 +37,7 @@ public:
     void Open();
     /// Writes what is queued, then stops the writer.
     void Close();
+    ~BlobStore();
     [[nodiscard]] bool IsOpened() const {
         return opened;
     }
@@ -53,6 +55,8 @@ public:
     void Load(BlobType type, const std::string& name, std::vector<u8>& data);
     void Load(BlobType type, const std::string& name, std::vector<u32>& data);
     void ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func);
+    void ForEachBlobIf(BlobType type, const std::function<bool(std::string_view stem)>& pred,
+                       const std::function<void(std::vector<u8>&& data)>& func);
     void ForEachBlobPath(BlobType type, const std::function<bool(const std::filesystem::path&, std::vector<u8>&&)>& func); // [extra]
 
 private:

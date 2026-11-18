@@ -1,37 +1,32 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include <cstdio>
+#include <array>
 #include <cassert>
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/renderer_vulkan/vk_frame_generation.h"
-#include "video_core/renderer_vulkan/upscaler/frame_generation_helpers.h"
+#include <cstdio>
 #include "bbport_settings.h"
+#include "render/scheduler.h"
+#include "textures/image.h"
+#include "upscale/vk_frame_generation.h"
+#include "vulkan/instance.h"
 
 int main() {
-    std::printf("Testing FSR 3.1 Frame Generation manager...\n");
-    BbSettings::Get().frame_generation.store(true);
+    std::printf("Testing FSR 3.1 Frame Generation...\n");
+    auto& settings = BbSettings::Get();
+    settings.frame_generation.store(BbSettings::FrameGenFsr3);
 
     Vulkan::Instance instance(0, false);
-    Vulkan::Scheduler scheduler(instance);
+    static vk::detail::DynamicLoader loader;
+    vk::detail::DispatchLoaderDynamic d;
+    d.init(loader.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));
+    d.init(instance.GetInstance());
+    d.init(instance.GetDevice());
     const auto device = instance.GetDevice();
     const auto allocator = instance.GetAllocator();
+    Vulkan::Scheduler scheduler(instance);
 
-    Vulkan::FrameGenerationManager fg(instance, scheduler);
-    std::printf("FrameGen Supported: %d (Problem: %s)\n", fg.IsSupported(),
-                fg.GetProblem() ? fg.GetProblem() : "none");
-    if (!fg.IsSupported()) {
-        std::printf("Frame Generation not supported on this GPU, test skipped.\n");
-        return 0;
-    }
+    constexpr u32 W = 1280, H = 720;
+    const vk::Format disp_format = vk::Format::eR8G8B8A8Unorm;
 
-    const u32 W = 1920, H = 1080;
-    const vk::Format disp_format = vk::Format::eB8G8R8A8Unorm;
-
-    const bool init_ok = fg.Initialize(W, H, W, H, disp_format, disp_format);
-    assert(init_ok);
-    assert(fg.IsActive());
-
-    VideoCore::UniqueImage depth_img(device, allocator);
+    VideoCore::HostImage depth_img(device, allocator);
     depth_img.Create({
         .imageType = vk::ImageType::e2D,
         .format = vk::Format::eD32Sfloat,
@@ -40,11 +35,12 @@ int main() {
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eDepthStencilAttachment,
+        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
+                 vk::ImageUsageFlagBits::eDepthStencilAttachment,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
 
-    VideoCore::UniqueImage motion_img(device, allocator);
+    VideoCore::HostImage motion_img(device, allocator);
     motion_img.Create({
         .imageType = vk::ImageType::e2D,
         .format = vk::Format::eR16G16Sfloat,
@@ -53,12 +49,22 @@ int main() {
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                 vk::ImageUsageFlagBits::eTransferSrc,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
+    auto motion_view = device.createImageViewUnique(
+        {
+            .image = vk::Image(motion_img),
+            .viewType = vk::ImageViewType::e2D,
+            .format = vk::Format::eR16G16Sfloat,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        },
+        nullptr, d).value;
 
-    VideoCore::UniqueImage current_color(device, allocator);
-    current_color.Create({
+    VideoCore::HostImage color_img(device, allocator);
+    color_img.Create({
+        .flags = vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage,
         .imageType = vk::ImageType::e2D,
         .format = disp_format,
         .extent = {W, H, 1},
@@ -66,70 +72,114 @@ int main() {
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst |
-                 vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled,
+        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                 vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc |
+                 vk::ImageUsageFlagBits::eTransferDst,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
 
-    for (int frame = 0; frame < 4; ++frame) {
-        auto cmdbuf = scheduler.CommandBuffer();
-
-        Vulkan::FrameGenerationManager::PrepareInputs prep{};
-        prep.cmdbuf = cmdbuf;
-        prep.depth_image = vk::Image(depth_img);
-        prep.depth_format = vk::Format::eD32Sfloat;
-        prep.motion_image = vk::Image(motion_img);
-        prep.interpolation_source_image = (frame % 2 == 0) ? fg.GetSourceImage(frame) : vk::Image{};
-        prep.interpolation_source_view = (frame % 2 == 0) ? fg.GetSourceView(frame) : vk::ImageView{};
-        prep.render_w = W;
-        prep.render_h = H;
-        prep.frame_time_ms = 16.6f;
-        prep.near_plane = 0.1f;
-        prep.far_plane = 3000.0f;
-        prep.fov_radians = 0.785f;
-        prep.camera_up[1] = 1.0f;
-        prep.camera_forward[2] = 1.0f;
-        prep.reset = (frame == 0);
-        prep.frame_id = frame;
-
-        const bool prep_ok = fg.RecordPrepare(prep);
-        assert(prep_ok);
-
-        Vulkan::FrameGenerationManager::DispatchInputs disp{};
-        disp.cmdbuf = cmdbuf;
-        disp.current_color_image = vk::Image(current_color);
-        disp.hudless_color_image = (frame % 2 == 0) ? fg.GetSourceImage(frame) : vk::Image{};
-        disp.output_image = fg.GetInterpolatedImage(frame);
-        disp.display_w = W;
-        disp.display_h = H;
-        disp.frame_time_ms = 16.6f;
-        disp.near_plane = 0.1f;
-        disp.far_plane = 3000.0f;
-        disp.fov_radians = 0.785f;
-        disp.reset = (frame == 0);
-        disp.frame_id = frame;
-
-        const bool disp_ok = fg.RecordDispatch(disp);
-        assert(disp_ok);
-
-        if (frame == 0) {
-            assert(!fg.CanPresentInterpolated(frame));
-        } else {
-            assert(fg.CanPresentInterpolated(frame));
-        }
-
-        Vulkan::SubmitInfo submit{};
-        scheduler.Flush(submit);
+    {
+        const auto cmd = scheduler.CommandBuffer();
+        const std::array<vk::ImageMemoryBarrier2, 3> transitions{{
+            {
+                .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask =
+                    vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                .oldLayout = vk::ImageLayout::eUndefined,
+                .newLayout = vk::ImageLayout::eGeneral,
+                .image = vk::Image(depth_img),
+                .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
+            },
+            {
+                .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask =
+                    vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                .oldLayout = vk::ImageLayout::eUndefined,
+                .newLayout = vk::ImageLayout::eGeneral,
+                .image = vk::Image(motion_img),
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            },
+            {
+                .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask =
+                    vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                .oldLayout = vk::ImageLayout::eUndefined,
+                .newLayout = vk::ImageLayout::eGeneral,
+                .image = vk::Image(color_img),
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            },
+        }};
+        cmd.pipelineBarrier2({.imageMemoryBarrierCount = u32(transitions.size()),
+                              .pImageMemoryBarriers = transitions.data()},
+                             d);
         scheduler.Finish();
-
-        fg.ClearInterpolatedFrame(frame);
-        assert(!fg.CanPresentInterpolated(frame));
-        
     }
 
-    fg.Destroy();
-    assert(!fg.IsActive());
+    Vulkan::FrameGeneration fg(instance, scheduler);
+    const char* problem = settings.frame_generation_problem.load();
+    std::printf("FrameGen Wanted: %d Provider: %d (Problem: %s)\n", fg.Wanted(), fg.Provider(),
+                problem ? problem : "none");
+    if (!fg.Wanted()) {
+        std::printf("Frame Generation not supported on this GPU, test skipped.\n");
+        return 0;
+    }
+    assert(fg.Provider() == BbSettings::FrameGenFsr3);
+    assert(fg.WantedCount() == 1);
 
-    std::puts("Frame Generation: context, prepare, dispatch, interpolation PASS");
+    constexpr VAddr display_addr = 0x10000000ULL;
+    for (int frame = 0; frame < 4; ++frame) {
+        Vulkan::FrameGeneration::Scene scene{};
+        scene.color = vk::Image(color_img);
+        scene.color_format = disp_format;
+        scene.width = W;
+        scene.height = H;
+        scene.depth = vk::Image(depth_img);
+        scene.depth_format = vk::Format::eD32Sfloat;
+        scene.motion = vk::Image(motion_img);
+        scene.motion_view = *motion_view;
+        scene.render_width = W;
+        scene.render_height = H;
+        scene.frame_ms = 16.6f;
+        scene.camera_near = 0.1f;
+        scene.camera_far = 3000.0f;
+        scene.vertical_fov = 0.785f;
+        scene.reset = (frame == 0);
+        scene.camera_up[1] = 1.0f;
+        scene.camera_right[0] = 1.0f;
+        scene.camera_forward[2] = 1.0f;
+
+        fg.CaptureScene(scene);
+        if (frame % 2 == 0) {
+            fg.CaptureHudless(vk::Image(color_img));
+        }
+        fg.Interpolate(vk::Image(color_img), display_addr);
+        scheduler.Flush();
+        scheduler.Finish();
+
+        std::array<Vulkan::FrameGeneration::Output, Vulkan::FrameGeneration::MaxGenerated> out{};
+        const u32 count = fg.TakeOutputs(display_addr, out);
+        if (frame == 0) {
+            assert(count == 0);
+        } else {
+            assert(count == 1);
+            assert(out[0].image && out[0].view);
+            assert(out[0].width == W && out[0].height == H && out[0].frame == u64(frame + 1));
+            if (out[0].wait_semaphore) {
+                const vk::SemaphoreWaitInfo wait_info{
+                    .semaphoreCount = 1,
+                    .pSemaphores = &out[0].wait_semaphore,
+                    .pValues = &out[0].wait_value,
+                };
+                assert(device.waitSemaphores(wait_info, UINT64_MAX, d) == vk::Result::eSuccess);
+                fg.ReleaseOutput(out[0].target, out[0].frame, {}, 0);
+            }
+            assert(fg.TakeOutputs(display_addr, out) == 0);
+        }
+    }
+
+    std::puts("Frame Generation: capture, hudless, interpolate, take/release output PASS");
     return 0;
 }

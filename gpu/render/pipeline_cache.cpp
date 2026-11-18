@@ -177,6 +177,9 @@ PipelineCache::~PipelineCache() {
     if (preload_compiler) {
         preload_compiler->Discard(); // a closing game does not wait for the rest
     }
+    preload_compiler.reset();
+    compiler.reset();
+    BbVkPipelineCache::Unregister(pipeline_cache.get()); // [extra]
 }
 
 bool PipelineCache::PrepareGraphicsPipeline(PipelineSelection& worker_sel) {

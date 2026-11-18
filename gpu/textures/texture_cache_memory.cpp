@@ -8,6 +8,7 @@
 #include "textures/image_spares.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
@@ -201,14 +202,21 @@ void TextureCache::RunGarbageCollector() {
 }
 
 void TextureCache::GarbageCollectImages() {
+    const u64 second = SteadySeconds();
     if (instance.CanReportMemoryUsage()) {
-        total_used_memory = instance.GetDeviceMemoryUsage();
-        // Integrated GPUs (Steam Deck): the usage covers system memory heaps holding much more
-        // than images, over the startup budget, so the marks follow the driver's current budget.
-        // A discrete card's marks are the ones recomputed once a second below: recomputing them
-        // here, from the preset's limit alone, used to undo the room left for an area load.
-        if (instance.IsIntegrated()) {
-            UpdateMemoryBudget(instance.GetDeviceMemoryBudgetNow());
+        const auto now = std::chrono::steady_clock::now();
+        if (last_mem_query == std::chrono::steady_clock::time_point{} || second != gc_second ||
+            total_used_memory >= pressure_gc_memory ||
+            now - last_mem_query >= std::chrono::milliseconds(50)) {
+            total_used_memory = instance.GetDeviceMemoryUsage();
+            // Integrated GPUs (Steam Deck): the usage covers system memory heaps holding much more
+            // than images, over the startup budget, so the marks follow the driver's current budget.
+            // A discrete card's marks are the ones recomputed once a second below: recomputing them
+            // here, from the preset's limit alone, used to undo the room left for an area load.
+            if (instance.IsIntegrated()) {
+                UpdateMemoryBudget(instance.GetDeviceMemoryBudgetNow());
+            }
+            last_mem_query = now;
         }
     }
     BbStats::gc_used_bytes.store(total_used_memory, std::memory_order_relaxed);
@@ -234,7 +242,6 @@ void TextureCache::GarbageCollectImages() {
 
     // Ages in seconds: gc_tick (a guest submission each, hundreds a second) at each of the last
     // 64 seconds. Once a second: near the driver's budget the collector evicts by submissions.
-    const u64 second = SteadySeconds();
     if (second != gc_second) {
         gc_second = second;
         // Small discrete cards: the marks follow the driver's current budget (the startup one was

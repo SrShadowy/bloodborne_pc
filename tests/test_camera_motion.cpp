@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Execute production camera motion SPIR-V: distant geometry, sky and stale object vectors.
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -24,13 +25,15 @@ int main() {
     std::array<vk::UniqueImageView,3> views;
     std::array<vk::DescriptorSetLayoutBinding,3> bindings{};
     for (u32 i=0;i<3;++i) {
-        const auto format=i==1 ? vk::Format::eR16G16Sfloat : vk::Format::eR32G32B32A32Sfloat;
+        const auto format=i==0 ? vk::Format::eR32G32B32A32Sfloat
+            : i==1 ? vk::Format::eR16G16Sfloat : vk::Format::eR32G32Uint;
+        const auto usage=i==1
+            ? (vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc)
+            : (vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
         images[i]=TestImage(device,instance.GetAllocator());
         images[i].Create({.imageType=vk::ImageType::e2D,.format=format,.extent={W,H,1},
             .mipLevels=1,.arrayLayers=1,.samples=vk::SampleCountFlagBits::e1,
-            .tiling=vk::ImageTiling::eOptimal,.usage=vk::ImageUsageFlagBits::eSampled |
-            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc |
-            vk::ImageUsageFlagBits::eTransferDst});
+            .tiling=vk::ImageTiling::eOptimal,.usage=usage});
         views[i]=device.createImageViewUnique({.image=vk::Image(images[i]),
             .viewType=vk::ImageViewType::e2D,.format=format,
             .subresourceRange={vk::ImageAspectFlagBits::eColor,0,1,0,1}},nullptr,d).value;
@@ -72,10 +75,15 @@ int main() {
     const auto run=[&](const char* label,float depth,float translation,float rotation,
                        float object_depth,u32 mode,float expected,bool jitter=false) {
         auto* pixels=static_cast<float*>(ai.pMappedData);
+        auto* object_pixels=reinterpret_cast<u32*>(pixels+N*4);
+        // camera_motion.comp decodes object_tex (R32G32_UINT) as packHalf2x16(vec2(2, 0)) and
+        // floatBitsToUint(depth) | 0x80000000u (valid bit in MSB).
+        constexpr u32 packed_mv=0x00004000u;
+        const u32 packed_depth=std::bit_cast<u32>(object_depth)|0x80000000u;
         for (u32 p=0;p<N;++p) {
             pixels[p*4]=depth;
-            pixels[N*4+p*4]=2.f; pixels[N*4+p*4+1]=0.f;
-            pixels[N*4+p*4+2]=1.f; pixels[N*4+p*4+3]=object_depth;
+            object_pixels[p*2]=packed_mv;
+            object_pixels[p*2+1]=packed_depth;
         }
         const auto cmd=scheduler.CommandBuffer();
         std::array<vk::ImageMemoryBarrier2,3> transitions{};

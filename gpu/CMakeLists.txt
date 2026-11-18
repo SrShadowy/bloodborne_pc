@@ -76,7 +76,7 @@ find_package(tsl-robin-map QUIET) # [extra] REQUIRED -> QUIET + FetchContent
 if(NOT tsl-robin-map_FOUND)
     # [extra] Header-only; MSYS2 clang64 has no package for it (same pattern as magic_enum above).
     include(FetchContent)
-    FetchContent_Declare(tsl-robin-map GIT_REPOSITORY https://github.com/Tessil/robin-map.git GIT_TAG v1.4.1)
+    FetchContent_Declare(tsl-robin-map GIT_REPOSITORY https://github.com/Tessil/robin-map.git GIT_TAG v1.4.1 GIT_SUBMODULES "") # [extra]
     FetchContent_MakeAvailable(tsl-robin-map)
 endif()
 find_package(xbyak QUIET) # [extra]
@@ -84,7 +84,7 @@ if(NOT xbyak_FOUND)
     # [extra] Header-only x86-64 JIT assembler; Linux gets it from the system (libxbyak-dev),
     # MSYS2 clang64 has no package (same pattern as magic_enum above).
     include(FetchContent)
-    FetchContent_Declare(xbyak GIT_REPOSITORY https://github.com/herumi/xbyak.git GIT_TAG v7.44)
+    FetchContent_Declare(xbyak GIT_REPOSITORY https://github.com/herumi/xbyak.git GIT_TAG v7.44 GIT_SUBMODULES "") # [extra]
     FetchContent_MakeAvailable(xbyak)
 endif()
 if(TARGET xbyak::xbyak AND NOT TARGET xbyak)
@@ -396,11 +396,12 @@ target_include_directories(assert-dump-test PRIVATE . shim)
 add_executable(effect-flags-test EXCLUDE_FROM_ALL ../tests/test_effect_flags.cpp)
 target_compile_options(effect-flags-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(effect-flags-test PRIVATE shim)
+file(GLOB BBPORT_STRINGS_SOURCES CONFIGURE_DEPENDS ../extra/management/i18n/*.cpp)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp
     shim/bbport_settings.cpp
-    ../extra/management/i18n/bbport_strings.cpp)
+    ${BBPORT_STRINGS_SOURCES})
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-target_include_directories(settings-test PRIVATE .. shim ../extra/management/i18n)
+target_include_directories(settings-test PRIVATE . .. shim ../extra/management/i18n)
 
 add_executable(bbt-table-test EXCLUDE_FROM_ALL ../tests/test_bbt_table.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_compile_options(bbt-table-test PRIVATE -UNDEBUG -fPIC)
@@ -438,6 +439,13 @@ add_executable(texture-cache-marks-test EXCLUDE_FROM_ALL ../tests/test_texture_c
 target_compile_options(texture-cache-marks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(texture-cache-marks-test PRIVATE .)
 
+# Guest memory Vulkan type selection (gpu/shim/bbport_guest_memory_types.h). Pure, no Vulkan
+# device: regression test for Intel UMA iGPUs (eDeviceLocal fallback) and discrete ReBAR GPUs.
+add_executable(guest-memory-types-test EXCLUDE_FROM_ALL ../tests/test_guest_memory_types.cpp)
+target_compile_options(guest-memory-types-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(guest-memory-types-test PRIVATE .)
+target_link_libraries(guest-memory-types-test PRIVATE Vulkan::Headers)
+
 # The stall report's thread dump (gpu/platform/win32/posix_win32.cpp, bb_win32_dump_threads). Only
 # runs on a stall in the real program, so this is the only place it is exercised: it must list the
 # threads and walk through the system DLLs to the frames of this exe (SHADOW_CHANGES.md entry 124).
@@ -470,9 +478,11 @@ target_include_directories(camera-motion-test PRIVATE . shim ${SHADER_INCLUDE} t
 target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_executable(frame-generation-test EXCLUDE_FROM_ALL ../tests/test_frame_generation.cpp ../tests/test_gpu_runtime_stubs.cpp)
-target_include_directories(frame-generation-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/fsr-vulkan/include)
+target_include_directories(frame-generation-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/fsr-vulkan/include)
 target_compile_options(frame-generation-test PRIVATE -UNDEBUG -fPIC)
-target_link_libraries(frame-generation-test PRIVATE bbgpu)
+set_source_files_properties(../tests/test_frame_generation.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(frame-generation-test PRIVATE bbgpu ffx-vulkan::portable)
 add_dependencies(frame-generation-test host_shaders)
 
 add_executable(translation-memory-test EXCLUDE_FROM_ALL ../tests/test_translation_memory.cpp
@@ -494,13 +504,13 @@ target_link_libraries(image-spares-test PRIVATE Vulkan::Headers GPUOpen::VulkanM
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp
-    ../extra/management/i18n/bbport_strings.cpp)
-target_include_directories(upscaler-support-test PRIVATE shim ../extra/management/i18n)
+    ${BBPORT_STRINGS_SOURCES})
+target_include_directories(upscaler-support-test PRIVATE . .. shim ../extra/management/i18n)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     upscale/fsr411/fsr411.cpp)
-target_include_directories(fsr4-bench PRIVATE upscale/fsr411)
+target_include_directories(fsr4-bench PRIVATE . upscale/fsr411)
 target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
 
 # bbport online module (gpu/bbnet20, libbbnet20.so): built when its libraries are there (shell.nix);
@@ -609,3 +619,33 @@ if (WIN32)
     target_link_libraries(shader-pack-test PRIVATE -mconsole pthread winmm onecore bcrypt)
 endif()
 
+add_executable(scheduler-suspend-test EXCLUDE_FROM_ALL ../tests/test_scheduler_suspend.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(scheduler-suspend-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include)
+target_compile_options(scheduler-suspend-test PRIVATE -UNDEBUG -fPIC)
+set_source_files_properties(../tests/test_scheduler_suspend.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(scheduler-suspend-test PRIVATE bbgpu Vulkan::Headers GPUOpen::VulkanMemoryAllocator)
+set_target_properties(scheduler-suspend-test PROPERTIES
+    BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib"
+    INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib")
+
+add_executable(perf-empirical-test EXCLUDE_FROM_ALL ../tests/test_perf_empirical.cpp)
+target_include_directories(perf-empirical-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
+target_compile_options(perf-empirical-test PRIVATE -iquote ${CMAKE_CURRENT_SOURCE_DIR}/.. -UNDEBUG -fPIC)
+target_link_libraries(perf-empirical-test PRIVATE bbgpu Vulkan::Headers GPUOpen::VulkanMemoryAllocator)
+target_link_options(perf-empirical-test PRIVATE -rdynamic)
+set_target_properties(perf-empirical-test PROPERTIES
+    BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib"
+    INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib")
+
+add_executable(recorder-rest-test EXCLUDE_FROM_ALL ../tests/test_recorder_rest.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(recorder-rest-test PRIVATE . shim ${SHADER_INCLUDE} third_party/gcn/include)
+target_compile_options(recorder-rest-test PRIVATE -UNDEBUG -fPIC -Wall -Wextra)
+set_source_files_properties(../tests/test_recorder_rest.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(recorder-rest-test PRIVATE bbgpu Vulkan::Headers GPUOpen::VulkanMemoryAllocator)
+set_target_properties(recorder-rest-test PROPERTIES
+    BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib"
+    INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib;\$ORIGIN/../../lib")

@@ -13,6 +13,7 @@
 #include "bbgpu/shaders/gpu_timestamp_comp.h"
 #include "vulkan/instance.h"
 #include "render/scheduler.h"
+#include "render/vk_barrier_helper.h"
 #include "vulkan/shader_module.h"
 
 namespace Vulkan {
@@ -30,20 +31,6 @@ struct Push {
 void Split(u64 value, u32 (&out)[2]) {
     out[0] = static_cast<u32>(value);
     out[1] = static_cast<u32>(value >> 32);
-}
-
-/// Everything before it before everything after it (a few timestamps a frame).
-void FullBarrier(vk::CommandBuffer cmdbuf) {
-    const vk::MemoryBarrier2 barrier{
-        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-    };
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .memoryBarrierCount = 1,
-        .pMemoryBarriers = &barrier,
-    });
 }
 } // namespace
 
@@ -165,7 +152,7 @@ bool GpuTimestamps::Write(VAddr address, bool end_of_pipe) {
         cmdbuf.copyQueryPoolResults(*pool, slot, 1, results->Handle(), slot * sizeof(u64),
                                     sizeof(u64),
                                     vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-        FullBarrier(cmdbuf);
+        BarrierCopyToCompute(cmdbuf);
         const vk::DescriptorBufferInfo info{results->Handle(), 0, NumSlots * sizeof(u64)};
         const vk::WriteDescriptorSet write{.dstBinding = 0,
                                            .descriptorCount = 1,
@@ -176,7 +163,7 @@ bool GpuTimestamps::Write(VAddr address, bool end_of_pipe) {
         cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push),
                              &push);
         cmdbuf.dispatch(1, 1, 1);
-        FullBarrier(cmdbuf);
+        BarrierComputeToUsers(cmdbuf);
     });
     ++written;
     return true;

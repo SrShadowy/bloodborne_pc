@@ -11,6 +11,7 @@
 #include <fstream>
 #include "shader/backend/spirv/emit_spirv.h"
 #include "shader/ir/ir_emitter.h"
+#include "shader/profile.h"
 #include "render/vk_gpu_labels.h"
 #include "vulkan/instance.h"
 #include "render/scheduler.h"
@@ -61,12 +62,12 @@ int main(int argc, char** argv) {
     entries[DstPage+1]=guest.bda+Page; entries[DstPage+1+GuestTable]=guest.bda+Page;
     // DstPage+2 is unmapped even though the descriptor includes it.
     auto* record=static_cast<u32*>(records.mapped);
-    const auto put_record=[&](u32 at,u32 base,u32 size,bool through) {
-        const u32 words[8]={base,0,size,u32(through),u32(trash.bda),u32(trash.bda>>32),GuestTable,0};
+    const auto put_record=[&](u32 at,u64 base,u32 size,bool through) {
+        const u32 words[8]={u32(base),u32(base>>32),size,u32(through),u32(trash.bda),u32(trash.bda>>32),GuestTable,0};
         std::memcpy(record+at,words,sizeof(words));
     };
-    put_record(0,SrcPage*Page,Page,false);
-    put_record(64,DstPage*Page,Bytes,true);
+    put_record(0,PageTableBase+u64(SrcPage)*Page,Page,false);
+    put_record(64,PageTableBase+u64(DstPage)*Page,Bytes,true);
 
     Info info{};
     info.hw_stage=HwStage::Compute; info.sw_stage=SwStage::Compute;

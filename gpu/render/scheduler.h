@@ -11,6 +11,7 @@
 #include "shim/bb_env.h"
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +29,7 @@
 #include "common/unique_function.h"
 #include "render/dynamic_state.h"
 #include "render/record_chunk.h"
+#include "render/recorder_rest.h"
 #include "render/vk_breadcrumbs.h"
 #include "vulkan/command_pool.h"
 #include "vulkan/timeline.h"
@@ -178,6 +180,7 @@ public:
             direct_recordings.fetch_add(1, std::memory_order_relaxed);
             TraceDirectRecording(__builtin_return_address(0));
         }
+        dynamic_state.Invalidate();
         return current_cmdbuf;
     }
 
@@ -221,6 +224,7 @@ public:
     /// everything it uses (capture by value): it may run later on the recording thread.
     template <typename Func>
     void Record(Func&& func) {
+        BreakPendingSuspend();
         ProducerScope producer{*this, "Record"};
         if (workers.empty() || direct_mode) {
             func(current_cmdbuf);
@@ -235,6 +239,15 @@ public:
             RetireChunk();
             const bool pushed = CurrentChunk().Push(std::forward<Func>(func));
             ASSERT(pushed);
+        }
+    }
+
+    /// Aborts any pending pass suspension (without losing resume state) before an external
+    /// stream boundary such as an occlusion query event.
+    void BreakPendingSuspend() {
+        if (pending_suspend.active) [[unlikely]] {
+            ++suspend_stats.fallback_barrier_or_cmd;
+            ResolvePendingSuspend(false, true);
         }
     }
 
@@ -301,6 +314,7 @@ public:
     /// been recorded (the same chunk). With threaded recording off, returns `data` itself.
     template <typename T>
     std::span<const T> RecordData(std::span<const T> data) {
+        BreakPendingSuspend();
         ProducerScope producer{*this, "RecordData"};
         if (!IsRecordingDeferred() || data.empty()) {
             return data;
@@ -327,10 +341,18 @@ public:
     struct CarriedScope {
         virtual void Suspend(bool inside_render_pass) = 0;
         virtual void Resume(bool inside_render_pass) = 0;
+        /// Whether this scope can resume inside a VK_RENDERING_RESUMING_BIT pass without running
+        /// outside-of-render-pass maintenance first (e.g. resetting query pool slots).
+        [[nodiscard]] virtual bool CanResumeInPass() const {
+            return true;
+        }
     protected:
         ~CarriedScope() = default;
     };
     void SetCarriedScope(CarriedScope* scope) {
+        if (carried_scope && carried_scope != scope) {
+            CarrySuspend(is_rendering);
+        }
         carried_scope = scope;
     }
     /// Waits until every recorded command is in the command buffer.
@@ -375,6 +397,24 @@ public:
     /// Whether BeginRendering(state) would start a new render pass.
     [[nodiscard]] bool WillBeginRendering(const RenderState& state) const {
         return !(is_rendering && render_state == state);
+    }
+
+    struct SuspendResumeStats {
+        u64 resumed = 0;
+        u64 fallback_barrier_or_cmd = 0;
+        u64 fallback_state = 0;
+        u64 fallback_query_reset = 0;
+        u64 fallback_submit_or_direct = 0;
+        u64 fallback_chunk_cap = 0;
+    };
+    [[nodiscard]] SuspendResumeStats GetSuspendResumeStats() const noexcept {
+        return suspend_stats;
+    }
+    [[nodiscard]] bool IsSuspendResumeEnabled() const noexcept {
+        return suspend_resume;
+    }
+    [[nodiscard]] bool IsRecorderResting() const noexcept {
+        return rest_mode.load(std::memory_order_relaxed);
     }
 
     /// CommandBuffer() calls that waited for a recording thread (BB_FRAME_STATS).
@@ -430,18 +470,19 @@ public:
 
 private:
     static constexpr u32 MaxSegments = SubmissionBatch::MaxSegments;
+    static constexpr size_t MaxHeldChunks = 4; ///< 512 KiB max staged open pass before fallback
 
     /// A recording thread. It owns a command pool (worker 0: the scheduler's) and records the
     /// segments i with i % workers.size() == its index.
-    struct Worker {
+    struct alignas(64) Worker {
         CommandPool* pool{};
         std::unique_ptr<CommandPool> own_pool;
         std::deque<std::unique_ptr<RecordChunk>> queue; ///< guarded by recorder_mutex
-        std::atomic<size_t> queued{0};                  ///< queue.size() for lock-free polling
-        bool busy = false;     ///< running a chunk (guarded by recorder_mutex)
-        bool sleeping = false; ///< waiting on cv (guarded by recorder_mutex)
+        bool busy = false;                              ///< running a chunk (guarded by recorder_mutex)
+        bool sleeping = false;                          ///< waiting on cv (guarded by recorder_mutex)
         std::condition_variable_any cv;
         std::jthread thread;
+        alignas(64) std::atomic<size_t> queued{0}; ///< queue.size() for lock-free polling
     };
 
     void AllocateWorkerCommandBuffers();
@@ -460,6 +501,10 @@ private:
         if (full) {
             segment_bytes += full->Size();
             full_chunks.push_back(std::move(full));
+            if (staging_pass && full_chunks.size() - staging_full_from >= MaxHeldChunks) {
+                ++suspend_stats.fallback_chunk_cap;
+                ReleasePassStaging(true);
+            }
         }
     }
 
@@ -500,6 +545,17 @@ private:
     /// Hands the current segment's chunks and the ordered chunks to the recording threads.
     void HandOver();
 
+    [[nodiscard]] bool CanStageSuspend() const noexcept;
+    [[nodiscard]] bool HasOrderedWork() const noexcept;
+    void ReleasePassStaging(bool flush_full_chunks);
+    void HandOverPrefixChunks();
+    bool EnqueueWorkerChunksLocked(Worker& worker, u32 segment, SubmissionBatch* target_batch,
+                                   std::span<std::unique_ptr<RecordChunk>> chunks);
+    bool EnqueueOrderedChunksLocked(Worker& worker, u32 segment, SubmissionBatch* target_batch,
+                                    std::unique_ptr<RecordChunk> next_ordered);
+    void ResolvePendingSuspend(bool suspend, bool call_carry_resume);
+    void FinishPassForSubmit();
+
     /// Runs `func()` on a recording thread, in order with the other ordered tasks (guest memory
     /// copies and the fence signals after them) and after every command recorded before it, in
     /// all segments: the guest sees its fences no earlier than in 0.2. Fences signalled ahead of
@@ -534,6 +590,7 @@ private:
     [[nodiscard]] bool OrderedReady() const;
 
     void RecorderThread(std::stop_token stoken, u32 index);
+    void UpdateAdaptiveRest();
 
     void SubmitExecution(SubmitInfo& info);
 
@@ -558,7 +615,7 @@ private:
     std::deque<PendingOp> pending_ops;
     std::recursive_mutex pending_ops_mutex;
     u32 pending_polls = 0;
-    std::atomic<u32> num_pending_ops{0}; ///< pending_ops.size(), checked without the lock
+    alignas(64) std::atomic<u32> num_pending_ops{0}; ///< pending_ops.size(), checked without the lock
     std::deque<PendingOp> priority_ops;
     std::mutex priority_ops_mutex;
     std::condition_variable_any priority_ops_cv;
@@ -580,23 +637,52 @@ private:
     bool frame_end_submission = false;
     u32 submission_in_frame = 0; ///< BB_GPU_PROFILE: submissions since the frame's last one
     bool async_submit = false; ///< BB_ASYNC_SUBMIT (default on)
-    std::atomic<u64> submitted_tick{0}; ///< the last tick handed to the queue (WaitSubmitted)
-    u32 current_segment = 0;
-    std::atomic<u32> active_worker{0}; ///< the worker of current_segment (it spins for work)
+    alignas(64) std::atomic<u64> submitted_tick{0}; ///< the last tick handed to the queue (WaitSubmitted)
+    alignas(64) std::atomic<u32> active_worker{0};  ///< the worker of current_segment (it spins for work)
+    alignas(64) u32 current_segment = 0;
     size_t segment_bytes = 0;          ///< closures of the current segment handed over or retired
     size_t split_bytes = 0;            ///< segment length at which the stream is cut
     bool resume_rendering = false;     ///< a cut closed the render pass with render_state
+    bool suspend_resume = false;       ///< BB_VK_SUSPEND_RESUME (eSuspending/eResuming across segments)
+    bool staging_pass = false;         ///< current open pass chunks are held until EndRendering/split
+    bool staging_resumed_load_op = false; ///< whether current pass downgraded eClear->eLoad after fallback
+    size_t staging_full_from = 0;      ///< index in full_chunks where staged pass chunks start
+    vk::RenderingFlags* staging_flags = nullptr; ///< flags inside the staged PassCmd in chunk memory
+    struct PendingSuspend {
+        bool active = false;
+        bool resumed_load_op = false;
+        u32 segment = 0;
+        SubmissionBatch* batch = nullptr;
+        vk::RenderingFlags* flags_ptr = nullptr;
+        std::vector<std::unique_ptr<RecordChunk>> chunks;
+    };
+    PendingSuspend pending_suspend;
+    SuspendResumeStats suspend_stats{};
     void* pass_end_caller = nullptr;   ///< BB_PASS_BREAK_TRACE: who ended the last render pass
     std::unique_ptr<RecordChunk> record_chunk;
     std::vector<std::unique_ptr<RecordChunk>> full_chunks;
     std::unique_ptr<RecordChunk> ordered_chunk;
     std::vector<std::unique_ptr<RecordChunk>> ordered_full;
-    std::mutex recorder_mutex;
+    alignas(64) std::mutex recorder_mutex;
     std::condition_variable_any recorder_idle_cv;
     std::deque<std::unique_ptr<RecordChunk>> ordered_queue; ///< guarded by recorder_mutex
-    std::atomic<size_t> ordered_queued{0};
-    bool ordered_running = false; ///< a thread runs ordered chunks (guarded by recorder_mutex)
+    alignas(64) std::atomic<size_t> ordered_queued{0};
+    alignas(64) bool ordered_running = false; ///< a thread runs ordered chunks (guarded by recorder_mutex)
     std::vector<std::unique_ptr<RecordChunk>> free_chunks;
+    alignas(64) std::atomic<bool> rest_mode{false}; ///< workers skip spin when frame has headroom
+    struct RestTracker {
+        RecorderRest::State state;
+        std::chrono::steady_clock::time_point last_at{};
+        u64 last_cp_ns = 0;
+        u64 last_cap_wait_ns = 0;
+        u64 last_present_wait_ns = 0;
+        u64 sync_wait_ns = 0;
+        u64 last_sync_wait_ns = 0;
+        u32 frames = 0;
+        bool loading = false;
+        bool initialized = false;
+    };
+    alignas(64) RestTracker rest_tracker;
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
     /// Direct_mode in a segment of its own (direct_pool), the recording threads going on
     /// with the segments before it.
@@ -613,8 +699,8 @@ private:
         }
     }
     std::unique_ptr<CommandPool> direct_pool; ///< used by the producer thread only
-    u64 host_copies_issued = 0;
-    std::atomic<u64> host_copies_done{0};
+    alignas(64) u64 host_copies_issued = 0;
+    alignas(64) std::atomic<u64> host_copies_done{0};
     /// Host copy sources by 64 KiB granule in a direct-mapped table: a slot is pending while its
     /// note is newer than the last completed WaitHostCopies; a slot two granules share is a
     /// wildcard (any granule mapping there counts as pending).
@@ -624,12 +710,12 @@ private:
     };
     static constexpr u32 HostCopySlots = 4096;
     static constexpr u64 HostCopyWildcard = ~u64(0);
-    std::mutex host_copy_sources_mutex;
+    alignas(64) std::mutex host_copy_sources_mutex;
     std::array<HostCopySlot, HostCopySlots> host_copy_slots{};
     u64 host_copy_source_seq = 0;
     u64 host_copy_sources_done = 0;  ///< notes up to this one are copied
     u64 host_copy_big_seq = 0;       ///< last note too large for the table (counts as everywhere)
-    std::atomic<u32> producer_tid{0};                 ///< ProducerScope: the thread inside
+    alignas(64) std::atomic<u32> producer_tid{0};      ///< ProducerScope: the thread inside
     std::atomic<const char*> producer_where{nullptr}; ///< and where
 };
 

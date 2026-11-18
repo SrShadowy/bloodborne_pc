@@ -71,6 +71,7 @@ public:
 
     void Suspend(bool inside_render_pass) override;
     void Resume(bool inside_render_pass) override;
+    [[nodiscard]] bool CanResumeInPass() const override;
 
 private:
     static constexpr u32 NumSlots = 4096;
@@ -109,7 +110,7 @@ private:
     const Instance& instance;
     Scheduler& scheduler;
     VideoCore::BufferCache& buffer_cache;
-    std::recursive_mutex mutex;
+    mutable std::recursive_mutex mutex;
     vk::UniqueQueryPool pool;
     std::unique_ptr<VideoCore::Buffer> results; ///< segment results copied for the resolve
     std::unique_ptr<VideoCore::Buffer> total;   ///< the running sample count (64-bit)
