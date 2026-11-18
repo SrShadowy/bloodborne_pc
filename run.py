@@ -187,6 +187,70 @@ def large_scene_memory(env, scene):
         setdefault(env, 'BB_DMEM_MB', '9152')
 
 
+def apply_memory_preset_defaults(env):
+    """Applies MemoryDev preset defaults (apu/low/medium) matching run.sh for standalone runs."""
+    preset = env.get('BB_MEMORY_PRESET')
+    if not preset:
+        candidates = []
+        if os.environ.get('APPDATA'):
+            candidates.append(Path(os.environ['APPDATA']) / 'bbport-launcher' / 'settings.json')
+        candidates.append(Path.home() / '.config' / 'bbport-launcher' / 'settings.json')
+        for path in candidates:
+            if path.is_file():
+                try:
+                    import json
+                    saved = json.loads(path.read_text(encoding='utf-8')).get('memory_preset', '')
+                    if saved:
+                        preset = saved
+                        break
+                except (OSError, ValueError):
+                    pass
+    preset = preset or 'high'
+    setdefault(env, 'BB_MEMORY_PRESET', preset)
+    if preset == 'apu':
+        for key, value in (
+            ('BB_GC_IDLE_SECONDS', '4'),
+            ('BB_GC_PRESSURE_IDLE_SECONDS', '2'),
+            ('BB_VRAM_LIMIT_MB', '2048'),
+            ('BB_GC_BUDGET_MB', '2048'),
+            ('BB_AUTO_MIP_CLAMP', '1'),
+            ('BB_GUEST_GPU_MEMORY', '1'),
+            ('BB_CHUNK_UPLOADS', '1'),
+            ('BB_CHUNK_TEXTURES', '1'),
+            ('BB_STREAM_BUFFER_MB', '32'),
+            ('BB_CONSTANT_RING_MB', '16'),
+            ('BB_STAGING_KEEP_MB', '128'),
+            ('BB_IMAGE_RECYCLE_MB', '64'),
+            ('BB_FRAME_GEN', '0'),
+            ('BB_FPS', '30'),
+            ('BB_FPS_LIMIT', '30'),
+            ('BB_UPSCALE_PRESET', '3'),
+            ('BB_SHADOW_DISTANCE', '0.4'),
+            ('BB_LIGHT_GRID_OPT', '1'),
+            ('BB_EFFECT_SSR', '0'),
+            ('BB_EFFECT_SSAO', '0'),
+            ('BB_EFFECT_DOF', '0'),
+            ('BB_EFFECT_MOTION_BLUR', '0'),
+            ('BB_EFFECT_BLOOM', '0'),
+        ):
+            setdefault(env, key, value)
+    elif preset == 'low':
+        for key, value in (
+            ('BB_GC_IDLE_SECONDS', '4'),
+            ('BB_GC_PRESSURE_IDLE_SECONDS', '2'),
+            ('BB_GC_BUDGET_MB', '3200'),
+            ('BB_AUTO_MIP_CLAMP', '1'),
+        ):
+            setdefault(env, key, value)
+    elif preset == 'medium':
+        for key, value in (
+            ('BB_GC_IDLE_SECONDS', '10'),
+            ('BB_GC_PRESSURE_IDLE_SECONDS', '3'),
+            ('BB_GC_BUDGET_MB', '5000'),
+        ):
+            setdefault(env, key, value)
+
+
 def precompile_shaders(extra_args=(), env=None, on_line=None):
     """Executes offline pipeline reconstruction and shader pack consolidation."""
     env = dict(os.environ if env is None else env)
@@ -317,6 +381,7 @@ def run(extra_args=(), env=None, on_line=None):
         if env.get('BB_AUTO_RENDER_RES') == '1':
             for name in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 env.pop(name, None)
+        apply_memory_preset_defaults(env)
         fps = env.get('BB_FPS', 'uncap')
         bindir = PACKAGE_DIR / 'bin'
         caps = bindir / 'bb-gpu-capabilities.exe'

@@ -11,7 +11,7 @@
 namespace BbGuestMemory::detail {
 /// A type the guest memory may use: AMD's device-uncached types exactly when asked for.
 bool TypeAllowed(vk::MemoryPropertyFlags flags) {
-    return bool(flags & vk::MemoryPropertyFlagBits::eDeviceUncachedAMD) == uncached;
+    return GuestMemoryTypeAllowed(flags, uncached);
 }
 
 /// bbport BB_GUEST_VRAM (experiment): direct memory in VRAM the CPU maps through the PCI BAR
@@ -67,24 +67,7 @@ bool ChunkInVram(u64 phys, u64 size) {
 }
 
 std::uint32_t FindType(std::uint32_t bits, bool in_vram) {
-    if (in_vram) {
-        const auto want = vk::MemoryPropertyFlagBits::eHostVisible |
-                          vk::MemoryPropertyFlagBits::eDeviceLocal;
-        for (std::uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i) {
-            if ((bits & (1u << i)) && (memory_properties.memoryTypes[i].propertyFlags & want) == want) {
-                return i;
-            }
-        }
-    }
-    const auto want = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCached;
-    for (std::uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i) {
-        const auto flags = memory_properties.memoryTypes[i].propertyFlags;
-        if ((bits & (1u << i)) && (flags & want) == want &&
-            !(flags & vk::MemoryPropertyFlagBits::eDeviceLocal) && TypeAllowed(flags)) {
-            return i;
-        }
-    }
-    return ~0u;
+    return SelectGuestMemoryType(memory_properties, bits, uncached, in_vram, false);
 }
 
 /// Uses of a chunk's buffer. With the layer's memory module the chunk buffers are what the GPU

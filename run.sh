@@ -199,6 +199,10 @@ if [[ ${BB_MEMORY_PRESET} == "apu" ]]; then
     export BB_GUEST_GPU_MEMORY=${BB_GUEST_GPU_MEMORY:-1}
     export BB_CHUNK_UPLOADS=${BB_CHUNK_UPLOADS:-1}
     export BB_CHUNK_TEXTURES=${BB_CHUNK_TEXTURES:-1}
+    export BB_STREAM_BUFFER_MB=${BB_STREAM_BUFFER_MB:-32}
+    export BB_CONSTANT_RING_MB=${BB_CONSTANT_RING_MB:-16}
+    export BB_STAGING_KEEP_MB=${BB_STAGING_KEEP_MB:-128}
+    export BB_IMAGE_RECYCLE_MB=${BB_IMAGE_RECYCLE_MB:-64}
     # Graphics optimizations for ~30 FPS on integrated APUs (Radeon 610M / 2 CUs):
     export BB_FRAME_GEN=${BB_FRAME_GEN:-0}
     export BB_FPS=${BB_FPS:-30}

@@ -436,7 +436,6 @@ bool DmaBufWorks(const Vulkan::Instance& instance) {
             return false;
         }
         const vk::Device dev = instance.GetDevice();
-        const vk::PhysicalDeviceMemoryProperties props = instance.GetPhysicalDevice().getMemoryProperties();
         constexpr u64 Size = 2 << 20, Offset = 1 << 20;
         const vk::ExternalMemoryBufferCreateInfo external{
             .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT,
@@ -451,15 +450,7 @@ bool DmaBufWorks(const Vulkan::Instance& instance) {
             return false;
         }
         const auto requirements = dev.getBufferMemoryRequirements(buffer);
-        std::uint32_t type = ~0u;
-        const auto want = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCached;
-        for (std::uint32_t i = 0; i < props.memoryTypeCount && type == ~0u; ++i) {
-            const auto flags = props.memoryTypes[i].propertyFlags;
-            if ((requirements.memoryTypeBits & (1u << i)) && (flags & want) == want &&
-                !(flags & vk::MemoryPropertyFlagBits::eDeviceLocal)) {
-                type = i;
-            }
-        }
+        const std::uint32_t type = FindType(requirements.memoryTypeBits, false);
         bool ok = false;
         vk::DeviceMemory memory{};
         int fd = -1;

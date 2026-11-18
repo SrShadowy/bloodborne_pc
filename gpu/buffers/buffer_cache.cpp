@@ -209,26 +209,55 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         std::printf("Guest memory: the layer's memory module binds the game's memory in place "
                     "(chunk buffers, no sparse arena for it; BB_LAYER_MEMORY=1)\n");
     }
-    const std::array<u32, 2> families = {instance.GetGraphicsQueueFamilyIndex(),
-                                         instance.GetReadbackQueueFamilyIndex()};
-    const bool shared = bool(instance.GetReadbackQueue()); // as Buffer creates the arenas
-    const vk::BufferCreateInfo probe_ci = {
-        .flags =
-            vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency,
-        .size = ARENA_PAGE_SIZE,
-        .usage = ARENA_USAGE,
-        .sharingMode = shared ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
-        .queueFamilyIndexCount = shared ? 2u : 0u,
-        .pQueueFamilyIndices = shared ? families.data() : nullptr,
-    };
-    const vk::DeviceBufferMemoryRequirements req_info = {
-        .pCreateInfo = &probe_ci,
-    };
-    const auto device = instance.GetDevice();
-    const auto reqs = device.getBufferMemoryRequirements(req_info).memoryRequirements;
-    block_size = Common::AlignUp(std::max<u64>(reqs.alignment, MIN_BLOCK_SIZE), reqs.alignment);
-    ASSERT_MSG(std::popcount(block_size) == 1, "Sparse block size {} is not a power of 2",
-               block_size);
+    if (!LayerMode() || instance.IsSparseResidencyBufferSupported()) {
+        const std::array<u32, 2> families = {instance.GetGraphicsQueueFamilyIndex(),
+                                             instance.GetReadbackQueueFamilyIndex()};
+        const bool shared = bool(instance.GetReadbackQueue()); // as Buffer creates the arenas
+        const vk::BufferCreateInfo probe_ci = {
+            .flags = vk::BufferCreateFlagBits::eSparseBinding |
+                     vk::BufferCreateFlagBits::eSparseResidency,
+            .size = ARENA_PAGE_SIZE,
+            .usage = ARENA_USAGE,
+            .sharingMode = shared ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
+            .queueFamilyIndexCount = shared ? 2u : 0u,
+            .pQueueFamilyIndices = shared ? families.data() : nullptr,
+        };
+        const vk::DeviceBufferMemoryRequirements req_info = {
+            .pCreateInfo = &probe_ci,
+        };
+        const auto device = instance.GetDevice();
+        const auto reqs = device.getBufferMemoryRequirements(req_info).memoryRequirements;
+        block_size = Common::AlignUp(std::max<u64>(reqs.alignment, MIN_BLOCK_SIZE), reqs.alignment);
+        ASSERT_MSG(std::popcount(block_size) == 1, "Sparse block size {} is not a power of 2",
+                   block_size);
+        const auto local_type = FindMemoryType(
+            instance.GetMemoryProperties(), vk::MemoryPropertyFlagBits::eDeviceLocal,
+            reqs.memoryTypeBits);
+        arena_memory_type_index = LayerMode() ? local_type.value_or(0u) : local_type.value();
+        arena_memory_type_bits = reqs.memoryTypeBits;
+        // BB_ARENA_VRAM_ONLY=1 (tests): the arena takes VRAM only, as NVIDIA's sparse buffers do
+        // (with BB_RESIDENCY_VRAM_LIMIT_MB: VRAM running out on such a card).
+        if (bb_env_on("BB_ARENA_VRAM_ONLY")) {
+            arena_memory_type_bits = 1u << arena_memory_type_index;
+        } else {
+            const auto& properties = instance.GetMemoryProperties();
+            for (u32 i = 0; i < properties.memoryTypeCount; ++i) {
+                const auto flags = properties.memoryTypes[i].propertyFlags;
+                if (((reqs.memoryTypeBits >> i) & 1) &&
+                    !(flags & vk::MemoryPropertyFlagBits::eDeviceLocal) &&
+                    (flags & vk::MemoryPropertyFlagBits::eHostVisible)) {
+                    arena_fallback_type_index = i;
+                    break;
+                }
+            }
+        }
+    } else {
+        // LayerMode uses chunk buffers rather than sparse arenas, so GPUs/drivers lacking
+        // sparseResidencyBuffer do not need a sparse probe or arena memory type.
+        block_size = 64_KB;
+        arena_memory_type_index = 0;
+        arena_memory_type_bits = 0;
+    }
     block_shift = std::bit_width(block_size) - 1;
     blocks_per_arena_page = ARENA_PAGE_SIZE / block_size;
     blocks_per_arena_page_shift = ARENA_PAGE_BITS - block_shift;
@@ -236,26 +265,6 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     group_use.assign(u64{1} << (ADDRESS_SPACE_BITS - USE_GROUP_BITS), 0);
     group_demoted.assign(group_use.size(), 0);
     layer_group_use.assign(group_use.size(), 0);
-    arena_memory_type_index =
-        FindMemoryType(instance.GetMemoryProperties(), vk::MemoryPropertyFlagBits::eDeviceLocal,
-                       reqs.memoryTypeBits)
-            .value();
-    arena_memory_type_bits = reqs.memoryTypeBits;
-    // BB_ARENA_VRAM_ONLY=1 (tests): the arena takes VRAM only, as NVIDIA's sparse buffers do
-    // (with BB_RESIDENCY_VRAM_LIMIT_MB: VRAM running out on such a card).
-    if (bb_env_on("BB_ARENA_VRAM_ONLY")) {
-        arena_memory_type_bits = 1u << arena_memory_type_index;
-    } else {
-        const auto& properties = instance.GetMemoryProperties();
-        for (u32 i = 0; i < properties.memoryTypeCount; ++i) {
-            const auto flags = properties.memoryTypes[i].propertyFlags;
-            if (((reqs.memoryTypeBits >> i) & 1) && !(flags & vk::MemoryPropertyFlagBits::eDeviceLocal) &&
-                (flags & vk::MemoryPropertyFlagBits::eHostVisible)) {
-                arena_fallback_type_index = i;
-                break;
-            }
-        }
-    }
 
     // The window of guest addresses the table covers (Shader::PageTableBase, PageTableSpan).
     const u64 bda_pagetable_size = (Shader::PageTableSpan >> block_shift) * sizeof(vk::DeviceAddress) *

@@ -219,6 +219,9 @@ public:
     bool IsShaderFloat16Supported() const {
         return vk12_features.shaderFloat16;
     }
+    bool IsSparseResidencyBufferSupported() const {
+        return features.sparseBinding && features.sparseResidencyBuffer;
+    }
     /// Low latency (NVIDIA Reflex): VK_NV_low_latency2 with VK_KHR_present_id are enabled.
     bool HasLowLatency() const {
         return ext.low_latency2;

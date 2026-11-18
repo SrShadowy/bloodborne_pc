@@ -118,3 +118,26 @@ class RestartResolutionTests(unittest.TestCase):
         rows = self.run_restarts(explicit=True)
         self.assertEqual([row['BB_RENDER_RES'] for row in rows], ['800x450'] * 3)
         self.assertTrue(all(row['BB_AUTO_RENDER_RES'] is None for row in rows))
+
+    def test_windows_run_py_memory_preset_apu_defaults(self):
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location('win_run', ROOT / 'run.py')
+        win_run = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(win_run)
+        env = {'BB_MEMORY_PRESET': 'apu'}
+        win_run.apply_memory_preset_defaults(env)
+        self.assertEqual(env['BB_FPS'], '30')
+        self.assertEqual(env['BB_VRAM_LIMIT_MB'], '2048')
+        self.assertEqual(env['BB_STREAM_BUFFER_MB'], '32')
+        self.assertEqual(env['BB_STAGING_KEEP_MB'], '128')
+        # Explicit overrides stay untouched, and high preset adds nothing extra.
+        env_custom = {'BB_MEMORY_PRESET': 'apu', 'BB_FPS': '60'}
+        win_run.apply_memory_preset_defaults(env_custom)
+        self.assertEqual(env_custom['BB_FPS'], '60')
+        env_high = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {'APPDATA': tmp, 'HOME': tmp}):
+                win_run.apply_memory_preset_defaults(env_high)
+        self.assertEqual(env_high.get('BB_MEMORY_PRESET'), 'high')
+        self.assertNotIn('BB_FPS', env_high)

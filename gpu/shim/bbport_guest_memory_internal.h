@@ -7,6 +7,7 @@
 #pragma once
 
 #include "bbport_guest_memory.h"
+#include "bbport_guest_memory_types.h"
 #include "shim/bb_env.h"
 
 #include <array>

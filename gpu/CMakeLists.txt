@@ -439,6 +439,13 @@ add_executable(texture-cache-marks-test EXCLUDE_FROM_ALL ../tests/test_texture_c
 target_compile_options(texture-cache-marks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(texture-cache-marks-test PRIVATE .)
 
+# Guest memory Vulkan type selection (gpu/shim/bbport_guest_memory_types.h). Pure, no Vulkan
+# device: regression test for Intel UMA iGPUs (eDeviceLocal fallback) and discrete ReBAR GPUs.
+add_executable(guest-memory-types-test EXCLUDE_FROM_ALL ../tests/test_guest_memory_types.cpp)
+target_compile_options(guest-memory-types-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(guest-memory-types-test PRIVATE .)
+target_link_libraries(guest-memory-types-test PRIVATE Vulkan::Headers)
+
 # The stall report's thread dump (gpu/platform/win32/posix_win32.cpp, bb_win32_dump_threads). Only
 # runs on a stall in the real program, so this is the only place it is exercised: it must list the
 # threads and walk through the system DLLs to the frames of this exe (SHADOW_CHANGES.md entry 124).
